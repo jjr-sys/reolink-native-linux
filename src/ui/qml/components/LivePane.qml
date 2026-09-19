@@ -35,10 +35,9 @@ Rectangle {
     property bool talkActive: false
     property bool floodOn: false // white-LED/floodlight on state (optimistic)
 
-    // Camera audio. The page grants sound to ONE pane at a time (mixing sixteen
-    // cameras is never wanted); this pane just reports the request and obeys.
-    property bool audioOn: false
-    signal audioToggled(int deviceRow)
+    // Camera audio follows the selected pane (the one with the accent border): the
+    // page selects exactly one at a time, so mixing sixteen cameras never happens.
+    readonly property bool audioOn: selected
 
     // User stream-quality preference: false = Fluent (sub), true = Clear (main).
     // This alone decides which stream plays — so the SD/HD toolbar toggle works in
@@ -360,6 +359,12 @@ Rectangle {
             anchors.centerIn: parent
             spacing: 6
             Text { text: root.label; color: "white"; font.pixelSize: 11 }
+            // Shows which camera you are hearing (only when it has sound to play).
+            Text {
+                visible: root.audioOn && player.hasAudio && !player.muted
+                text: "🔊"
+                font.pixelSize: 11
+            }
             Text {
                 visible: root.zoom > 1.01
                 text: root.zoom.toFixed(1) + "×"
@@ -484,14 +489,6 @@ Rectangle {
                 glyph: "⏺"; active: player.recording
                 tip: player.recording ? qsTr("Stop recording") : qsTr("Record video")
                 onActivated: player.recording ? player.stopRecording() : player.startRecording()
-            }
-            // Sound: only offered when the stream really carries an audio track.
-            ToolButton {
-                glyph: root.audioOn ? "🔊" : "🔇"
-                active: root.audioOn
-                enabledTool: player.hasAudio
-                tip: root.audioOn ? qsTr("Mute") : qsTr("Listen (unmute this camera)")
-                onActivated: root.audioToggled(root.deviceRow)
             }
             ToolButton {
                 glyph: "⊕"; active: root.zoom > 1.01

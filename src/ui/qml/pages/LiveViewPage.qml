@@ -18,8 +18,6 @@ Item {
     property int preset: 4
     property int maximizedIndex: -1
     property int selectedIndex: -1
-    // The one camera (device row) whose sound is on; -1 = all muted.
-    property int audioRow: -1
 
     // A maximized pane is effectively the single ("1") view, so light that button
     // up in the layout toolbar rather than the underlying grid preset.
@@ -156,10 +154,6 @@ Item {
                 page.selectedIndex -= removed;
             else if (page.selectedIndex >= first)
                 page.selectedIndex = -1;
-            if (page.audioRow > last)
-                page.audioRow -= removed;
-            else if (page.audioRow >= first)
-                page.audioRow = -1;
             // Slots hold row indices, which shift the same way.
             var s = page.paneSlots.slice();
             for (var i = 0; i < s.length; ++i) {
@@ -339,8 +333,6 @@ Item {
                     label: name
                     viewRotation: rotationOverride
                     selected: page.selectedIndex === index
-                    audioOn: page.audioRow === index
-                    onAudioToggled: (idx) => page.audioRow = page.audioRow === idx ? -1 : idx
                     pageActive: page.active && page.visible
                     // Sub-stream in the grid, main stream when maximized (DESIGN §5.7).
                     forceMain: isMaximized
