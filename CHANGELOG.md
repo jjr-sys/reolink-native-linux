@@ -29,6 +29,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
   go as fast as the link delivers the video, so 8× is realistic on the SD
   stream but not on HD over a slow link. Sound plays only at 1×. There is no
   reverse play: the cameras' streams only run forwards, so "back" jumps back.
+- The range is marked with one red record button: press for the start, press
+  again (now a stop icon) for the end, and the download dialog opens. The
+  ±10 second buttons say "-10s" and "+10s", and after one the last picture
+  stays up until the new position's first picture arrives.
 - **Snapshot button** on the playback page: saves a JPEG of the picture on
   screen (every playing pane in the grid) into the save folder, named like a
   clip, e.g. `Woorabinda_Kitchen_20260919_142000_snapshot.jpg`.

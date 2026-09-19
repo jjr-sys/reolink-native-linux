@@ -241,7 +241,7 @@ Item {
     Timer {
         interval: 1000; repeat: true
         running: player.state === StreamPlayer.Streaming || page.streamingPanes > 0
-        onTriggered: if (page.playheadSecs < 86399) page.playheadSecs += 1
+        onTriggered: if (page.playheadSecs < 86399) page.playheadSecs = Math.min(86399, page.playheadSecs + page.speed)
     }
 
     function refresh() {
@@ -322,11 +322,18 @@ Item {
             return;
         }
         if (!inRecording(sec)) {
+            page.holdFrame = false;
             player.stop();
             return;
         }
         if (page.hdMode) {
             page.playHd(sec);
+            return;
+        }
+        // Faster than real time: the NVR's HTTP stream is sent at 1x, so above that the
+        // sub stream comes over the native protocol, which is delivered ahead of time.
+        if (page.speed > 1) {
+            page.playHd(sec, false);
             return;
         }
         // Scrub against the sub stream: it is light and always landscape, so the
@@ -343,17 +350,18 @@ Item {
     // HD: stream the full-resolution main stream over native Baichuan (TCP 9000)
     // from this exact moment — realtime and frame-accurate, the way the official
     // apps do it (HTTP-FLV can't carry the HEVC main stream, cmd=Download is slow).
-    function playHd(sec) {
+    function playHd(sec, main) {
+        if (main === undefined) main = true;
         if (page.deviceRow < 0)
             return;
-        statusText.text = qsTr("HD");
+        if (main) statusText.text = qsTr("HD");
         // Seek the running session in place (no reconnect) when possible; else open
         // a fresh Baichuan session.
         if (player.state === StreamPlayer.Streaming
             && Devices.seekBaichuanPlayback(page.deviceRow, epochAt(sec)))
             return;
         player.loop = false;
-        Devices.startBaichuanPlayback(page.deviceRow, epochAt(sec), player, true);
+        Devices.startBaichuanPlayback(page.deviceRow, epochAt(sec), player, main);
     }
 
     property real _pendingPlayEpoch: 0  // play this once the day's search returns
@@ -375,12 +383,31 @@ Item {
         new Date(page.selYear, page.selMonth - 1, page.selDay).getTime() / 1000
     // Playback speed (1 = real time), shared by every pane.
     property real speed: 1.0
+    property real _prevSpeed: 1.0
+    onSpeedChanged: {
+        // Crossing 1x on the SD stream swaps HTTP for the native protocol (or back), so
+        // re-open at the current moment. Everything else just changes pacing on the fly.
+        var crossed = (_prevSpeed > 1) !== (speed > 1);
+        _prevSpeed = speed;
+        if (crossed && !page.hdMode && (player.state === StreamPlayer.Streaming || page.streamingPanes > 0))
+            page.playAt(page.playheadSecs);
+    }
     function speedText(v) { return (v === 0.25 ? "0.25" : v === 0.5 ? "0.5" : String(v)) + "×"; }
     // Jump the playhead by `secs` and carry on playing from there.
     function skip(secs) {
         var to = Math.max(0, Math.min(86399, page.playheadSecs + secs));
+        // Keep the last picture on screen until the new position's first picture arrives.
+        page.holdFrame = true;
+        holdTimer.restart();
+        for (var i = 0; i < paneRepeater.count; i++) {
+            var p = page.gridPane(i);
+            if (p) p.freeze();
+        }
         page.playAt(to);
     }
+    property bool holdFrame: false
+    // Never leave a picture frozen for long: an in-place seek does not change state.
+    Timer { id: holdTimer; interval: 6000; onTriggered: page.holdFrame = false }
     // Save a JPEG of the picture on screen: the one pane, or every playing pane in the grid.
     function snapshot() {
         var epoch = page.dayStartEpoch + Math.floor(page.playheadSecs);
@@ -405,7 +432,29 @@ Item {
     // Range for "Download range": marked on the timeline, in seconds into the day (-1 = unset).
     property real markStart: -1
     property real markEnd: -1
-    onDayStartEpochChanged: { markStart = -1; markEnd = -1; }
+    property bool rangeArmed: false   // the record button has marked a start and awaits the end
+    onDayStartEpochChanged: { markStart = -1; markEnd = -1; rangeArmed = false; }
+    function toggleRange() {
+        var now = Math.floor(page.playheadSecs);
+        if (!page.rangeArmed) {
+            page.markStart = now;
+            page.markEnd = -1;
+            page.rangeArmed = true;
+            statusText.text = qsTr("Range started at %1 — press stop to mark the end").arg(page.clockText(now));
+            return;
+        }
+        page.rangeArmed = false;
+        var s = page.markStart, e = now;
+        if (e < s) { var t = s; s = e; e = t; }   // playhead moved back: use the earlier one first
+        if (e - s < 2) {
+            page.markStart = -1; page.markEnd = -1;
+            statusText.text = qsTr("Range too short: nothing marked");
+            return;
+        }
+        page.markStart = s;
+        page.markEnd = e;
+        page.openDownloadDialog();
+    }
     // The camera whose site the range dialog opens for: the one on screen, or in a grid
     // the selected pane (else the first).
     readonly property int downloadRow: page.paneCount === 1 ? page.deviceRow
@@ -691,7 +740,7 @@ Item {
                         id: video
                         anchors.fill: parent
                         fillMode: VideoOutput.PreserveAspectFit
-                        visible: player.state === StreamPlayer.Streaming
+                        visible: player.state === StreamPlayer.Streaming || page.holdFrame
                         orientation: page.camRotation
                         transform: [
                             Scale {
@@ -761,10 +810,14 @@ Item {
                     muted: AudioPrefs.playbackMuted || !page.active || page.paneCount !== 1
                 }
 
+                Connections {
+                    target: player
+                    function onStateChanged() { if (player.state === StreamPlayer.Streaming) page.holdFrame = false; }
+                }
                 Column {
                     anchors.centerIn: parent
                     spacing: Theme.spacing
-                    visible: player.state !== StreamPlayer.Streaming
+                    visible: player.state !== StreamPlayer.Streaming && !page.holdFrame
                     BusyIndicator {
                         anchors.horizontalCenter: parent.horizontalCenter
                         running: player.state === StreamPlayer.Connecting
@@ -885,7 +938,7 @@ Item {
                 Layout.fillWidth: true
                 position: page.playheadSecs
                 markStart: page.markStart
-                markEnd: page.markEnd
+                markEnd: page.rangeArmed ? page.playheadSecs : page.markEnd
                 onSeek: (seconds) => page.playheadSecs = seconds  // move playhead only
                 onCommit: (seconds) => page.playAt(seconds)       // start playback on release
             }
@@ -896,11 +949,24 @@ Item {
                 component Ctl: Rectangle {
                     property string glyph: ""
                     property string tip: ""
+                    property string caption: ""   // small label along the bottom edge
+                    property color glyphColor: Theme.text
                     signal activated()
                     width: 34; height: 30; radius: Theme.radius
                     color: cHover.hovered ? Theme.surfaceAlt : Theme.surface
                     border.color: Theme.border
-                    Text { anchors.centerIn: parent; text: parent.glyph; color: Theme.text; font.pixelSize: 14 }
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: parent.caption !== "" ? 2 : (parent.height - height) / 2
+                        text: parent.glyph; color: parent.glyphColor
+                        font.pixelSize: parent.caption !== "" ? 13 : 14
+                    }
+                    Text {
+                        visible: parent.caption !== ""
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: parent.height - height - 2
+                        text: parent.caption; color: Theme.textMuted; font.pixelSize: 9
+                    }
                     HoverHandler { id: cHover }
                     ToolTip {
                         visible: cHover.hovered && tip !== ""
@@ -948,8 +1014,8 @@ Item {
                 }
                 // Skip back/forward 10 s, and playback speed. There is no reverse play: the
                 // camera streams only run forwards, so back means jumping back.
-                Ctl { glyph: "\u23ea"; tip: qsTr("Back 10 seconds"); onActivated: page.skip(-10) }
-                Ctl { glyph: "\u23e9"; tip: qsTr("Forward 10 seconds"); onActivated: page.skip(10) }
+                Ctl { glyph: "\u23ea"; caption: qsTr("-10s"); tip: qsTr("Back 10 seconds"); onActivated: page.skip(-10) }
+                Ctl { glyph: "\u23e9"; caption: qsTr("+10s"); tip: qsTr("Forward 10 seconds"); onActivated: page.skip(10) }
                 Rectangle {
                     width: 52; height: 30; radius: Theme.radius
                     color: spdHover.hovered ? Theme.surfaceAlt : Theme.surface
@@ -1016,24 +1082,24 @@ Item {
                 }
                 // Range: mark a start and an end on the timeline, then download it (for one
                 // camera or several at this site).
-                Ctl { glyph: "\u21e5"; tip: qsTr("Mark start of range at the playhead")
-                      onActivated: {
-                          page.markStart = Math.floor(page.playheadSecs);
-                          if (page.markEnd <= page.markStart) page.markEnd = -1;
-                      } }
-                Ctl { glyph: "\u21e4"; tip: qsTr("Mark end of range at the playhead")
-                      onActivated: {
-                          var e = Math.floor(page.playheadSecs);
-                          if (page.markStart < 0 || e > page.markStart) page.markEnd = e;
-                      } }
+                // One button for the range: press to mark the start, press again to mark the end
+                // (then the download dialog opens).
+                Ctl {
+                    glyph: page.rangeArmed ? "\u25a0" : "\u25cf"
+                    glyphColor: "#ff4d4d"
+                    tip: page.rangeArmed ? qsTr("Stop: mark the end of the range here")
+                                         : qsTr("Record: mark the start of a range here")
+                    onActivated: page.toggleRange()
+                }
                 Text {
                     visible: page.markStart >= 0
-                    text: page.markEnd > page.markStart
+                    text: page.rangeArmed ? qsTr("\u25cf from %1").arg(page.clockText(page.markStart))
+                        : page.markEnd > page.markStart
                         ? page.clockText(page.markStart) + " \u2013 " + page.clockText(page.markEnd)
                         : qsTr("from %1").arg(page.clockText(page.markStart))
-                    color: Theme.accent; font.pixelSize: 12
+                    color: page.rangeArmed ? "#ff4d4d" : Theme.accent; font.pixelSize: 12
                     Layout.alignment: Qt.AlignVCenter
-                    TapHandler { onTapped: { page.markStart = -1; page.markEnd = -1; } }
+                    TapHandler { onTapped: { page.markStart = -1; page.markEnd = -1; page.rangeArmed = false; } }
                 }
                 Rectangle {
                     width: dlRow.implicitWidth + 18; height: 30; radius: Theme.radius

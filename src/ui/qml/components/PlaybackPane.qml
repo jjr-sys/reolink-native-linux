@@ -30,6 +30,11 @@ Rectangle {
     property bool audioMuted: true
     property real volume: 1.0
     property bool audioActive: true
+    // Keep the last picture up while a skip re-opens the stream (see PlaybackPage.skip).
+    property bool holding: false
+    function freeze() { if (streaming) { holding = true; holdTimer.restart(); } }
+    Timer { id: holdTimer; interval: 6000; onTriggered: root.holding = false }
+    onStreamingChanged: if (streaming) holding = false
     property real speed: 1.0
     // Save the picture on screen as a JPEG named for this camera and the recorded
     // moment; returns the path, or "" if there is no picture yet.
@@ -75,13 +80,14 @@ Rectangle {
 
     function epochOf(sec) { return Math.floor(dayEpoch + sec); }
 
-    function playHd(sec) {
+    function playHd(sec, main) {
+        if (main === undefined) main = true;
         // Seek the running Baichuan session in place when possible (no
         // reconnect); otherwise open one at this moment.
         if (streaming && Devices.seekBaichuanPlayback(deviceRow, epochOf(sec)))
             return;
         player.loop = false;
-        Devices.startBaichuanPlayback(deviceRow, epochOf(sec), player, true);
+        Devices.startBaichuanPlayback(deviceRow, epochOf(sec), player, main);
     }
 
     function setHd(on) {
@@ -140,8 +146,8 @@ Rectangle {
             player.stop();
             return;
         }
-        if (hdActive) {
-            playHd(sec);
+        if (hdActive || speed > 1) {
+            playHd(sec, hdActive); // above 1x the sub stream also comes over the native protocol
             return;
         }
         var url = Devices.playbackUrl(deviceRow, epoch, false); // sub stream
@@ -189,7 +195,7 @@ Rectangle {
             id: video
             anchors.fill: parent
             fillMode: VideoOutput.PreserveAspectFit
-            visible: root.streaming
+            visible: root.streaming || root.holding
             orientation: root.viewRotation
             transform: [
                 Scale {
@@ -231,7 +237,7 @@ Rectangle {
     Column {
         anchors.centerIn: parent
         spacing: Theme.spacing
-        visible: !root.streaming
+        visible: !root.streaming && !root.holding
         BusyIndicator {
             anchors.horizontalCenter: parent.horizontalCenter
             running: player.state === StreamPlayer.Connecting
