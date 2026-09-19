@@ -122,6 +122,18 @@ void AudioPlayback::logSummary() const
                         << m_buf.droppedBytes() * 1000 / msToBytes(1000) << "ms dropped";
 }
 
+void AudioPlayback::setDelayMs(int ms)
+{
+    if (ms <= 0) {
+        m_buf.configure({msToBytes(kPrebufferMs), msToBytes(kMaxBufferMs), AudioDecoder::kBytesPerFrame,
+                         msToBytes(kMaxPrebufferMs)});
+        return;
+    }
+    // The sound card's own buffer adds latency, so start that much earlier; then no learning.
+    const qint64 pre = msToBytes(qMax(0, ms - kSinkBufferMs));
+    m_buf.configure({pre, pre + msToBytes(1500), AudioDecoder::kBytesPerFrame, 0});
+}
+
 qint64 AudioPlayback::queuedBytes() const
 {
     return m_buf.queuedBytes();

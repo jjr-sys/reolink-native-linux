@@ -182,21 +182,18 @@ void postFramesTick(const std::shared_ptr<Session> &s)
     QMetaObject::invokeMethod(p, [p] { emit p->framesDecodedChanged(); }, Qt::QueuedConnection);
 }
 
-// Deliver a decoded frame to the QML-owned sink, on the GUI thread where the sink
-// lives and is destroyed (finding: cross-thread sink teardown race).
-void deliverFrame(const std::shared_ptr<Session> &s, const QVideoFrame &frame)
+// Hand a decoded frame to the player on the GUI thread, where the QML-owned sink lives
+// and is destroyed (finding: cross-thread sink teardown race). The player either shows
+// it straight away or holds it on the playout schedule (delayUs > 0).
+void deliverFrame(const std::shared_ptr<Session> &s, const QVideoFrame &frame, qint64 ptsUs,
+                  qint64 delayUs, qint64 bytes)
 {
     QMutexLocker lock(&s->backMutex);
     if (!s->player)
         return;
     StreamPlayer *p = s->player;
     QMetaObject::invokeMethod(
-        p,
-        [s, frame] {
-            QMutexLocker sinkLock(&s->sinkMutex);
-            if (s->sink)
-                s->sink->setVideoFrame(frame);
-        },
+        p, [p, s, frame, ptsUs, delayUs, bytes] { p->applyFrameFromWorker(s, frame, ptsUs, delayUs, bytes); },
         Qt::QueuedConnection);
 }
 
@@ -338,10 +335,31 @@ void abortableSleepUs(Session *s, qint64 waitUs)
         av_usleep(static_cast<unsigned>(qMin<qint64>(remaining, 10000)));
 }
 
+// How far behind arrival smoothed live video runs. Long enough to ride out the stalls seen
+// on the routed links (up to about 0.8 s), and the same delay is applied to sound.
+constexpr qint64 kSmoothDelayUs = 1000000;
+constexpr qint64 kMinSmoothDelayUs = 250000;
+// Decoded frames waiting to be shown are held in memory; cap them per stream.
+constexpr qint64 kPlayoutBudgetBytes = 96ll * 1024 * 1024;
+
+// The picture delay for a stream: one second, or less if that many decoded frames would
+// not fit the memory budget (a big main stream). 0 when smoothing does not apply.
+qint64 smoothDelayFor(int width, int height, double fps)
+{
+    if (width <= 0 || height <= 0)
+        return 0;
+    if (fps < 1 || fps > 120)
+        fps = 15;
+    const double frameBytes = double(width) * height * 1.5;
+    const qint64 fits = qint64(double(kPlayoutBudgetBytes) / frameBytes / fps * 1e6);
+    return qBound(kMinSmoothDelayUs, qMin(kSmoothDelayUs, fits), kSmoothDelayUs);
+}
+
 // Convert one AVFrame to a QVideoFrame and hand it to the sink. Returns false on
 // an unrecoverable mapping failure (frame dropped).
 bool emitFrame(const std::shared_ptr<Session> &s, AVFrame *out,
-               QVideoFrameFormat::PixelFormat outFormat, QtVideo::Rotation rotation)
+               QVideoFrameFormat::PixelFormat outFormat, QtVideo::Rotation rotation,
+               qint64 ptsUs, qint64 delayUs)
 {
     QVideoFrameFormat format(QSize(out->width, out->height), outFormat);
     // Full-range (JPEG) YUV must be tagged or the sink renders it as limited range.
@@ -366,7 +384,8 @@ bool emitFrame(const std::shared_ptr<Session> &s, AVFrame *out,
                    out->data[plane] + y * out->linesize[plane], static_cast<size_t>(rowBytes));
     }
     videoFrame.unmap();
-    deliverFrame(s, videoFrame);
+    // Planar 4:2:0 is 1.5 bytes a pixel; close enough for the queue's memory budget.
+    deliverFrame(s, videoFrame, ptsUs, delayUs, qint64(out->width) * out->height * 3 / 2);
     return true;
 }
 
@@ -619,6 +638,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     bool streaming = *streamingOut;
     qint64 playbackStartUs = 0;
     qint64 firstPtsUs = AV_NOPTS_VALUE;
+    qint64 smoothDelayUs = 0; // chosen at the first smoothed frame
 
     // Drain one decoded frame at a time; shared by the normal and flush paths.
     auto receiveFrames = [&]() {
@@ -684,7 +704,19 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                     abortableSleepUs(s.get(), waitUs);
             }
 
-            if (emitFrame(s, out, outFormat, rotation)) {
+            // Live RTSP with smoothing on: give the frame its camera timestamp and the
+            // delay to hold it for. Anything else is shown the moment it arrives.
+            qint64 framePtsUs = AV_NOPTS_VALUE;
+            qint64 frameDelayUs = 0;
+            if (live && !packetSource && decoded->pts != AV_NOPTS_VALUE &&
+                s->smoothing.load(std::memory_order_relaxed)) {
+                framePtsUs = av_rescale_q(decoded->pts, stream->time_base, AVRational{1, 1000000});
+                if (smoothDelayUs == 0)
+                    smoothDelayUs = smoothDelayFor(decoded->width, decoded->height,
+                                                   av_q2d(stream->avg_frame_rate));
+                frameDelayUs = smoothDelayUs;
+            }
+            if (emitFrame(s, out, outFormat, rotation, framePtsUs, frameDelayUs)) {
                 const qint64 n = s->framesDecoded.fetch_add(1) + 1;
                 if (!streaming) {
                     streaming = true;
@@ -903,6 +935,73 @@ void StreamPlayer::setMuted(bool muted)
     emit mutedChanged();
 }
 
+void StreamPlayer::setSmoothing(bool on)
+{
+    if (m_smoothing == on)
+        return;
+    m_smoothing = on;
+    if (m_session)
+        m_session->smoothing.store(on); // takes effect on the next frame
+    emit smoothingChanged();
+}
+
+// Show one frame on the sink (GUI thread).
+void StreamPlayer::presentFrame(const QVideoFrame &frame)
+{
+    if (!m_session)
+        return;
+    QMutexLocker sinkLock(&m_session->sinkMutex);
+    if (m_session->sink)
+        m_session->sink->setVideoFrame(frame);
+}
+
+void StreamPlayer::applyFrameFromWorker(const std::shared_ptr<Session> &s, const QVideoFrame &frame,
+                                        qint64 ptsUs, qint64 delayUs, qint64 bytes)
+{
+    if (s != m_session)
+        return; // from a stream that has since been stopped or replaced
+    if (delayUs <= 0 || ptsUs == static_cast<qint64>(AV_NOPTS_VALUE)) {
+        presentFrame(frame);
+        return;
+    }
+    const int delayMs = int(delayUs / 1000);
+    if (delayMs != m_liveDelayMs) {
+        auto cfg = m_playout.config();
+        cfg.delayUs = delayUs;
+        cfg.maxDepthUs = delayUs * 5 / 2;
+        cfg.maxBytes = kPlayoutBudgetBytes;
+        m_playout.setConfig(cfg);
+        m_liveDelayMs = delayMs;
+        if (m_audioOut)
+            m_audioOut->setDelayMs(delayMs);
+    }
+    m_playout.push(frame, ptsUs, nowUs(), bytes);
+    servicePlayout();
+}
+
+// Show whatever is due, then wake up when the next frame is.
+void StreamPlayer::servicePlayout()
+{
+    QVideoFrame frame;
+    const qint64 now = nowUs();
+    if (m_playout.poll(now, frame))
+        presentFrame(frame);
+    const qint64 next = m_playout.nextDueUs();
+    if (next >= 0)
+        m_playoutTimer.start(int(qMax<qint64>(1, (next - now + 999) / 1000)));
+}
+
+void StreamPlayer::resetPlayout()
+{
+    m_playoutTimer.stop();
+    m_playout.clear();
+    if (m_liveDelayMs != 0) {
+        m_liveDelayMs = 0;
+        if (m_audioOut)
+            m_audioOut->setDelayMs(0);
+    }
+}
+
 void StreamPlayer::applyHasAudio(bool hasAudio)
 {
     if (m_hasAudio == hasAudio)
@@ -915,8 +1014,10 @@ void StreamPlayer::applyAudioFromWorker(const QByteArray &pcm)
 {
     if (m_muted)
         return; // muted after this chunk was queued
-    if (!m_audioOut)
+    if (!m_audioOut) {
         m_audioOut = std::make_unique<AudioPlayback>();
+        m_audioOut->setDelayMs(m_liveDelayMs); // match the picture delay, if any
+    }
     m_audioOut->write(pcm);
 }
 
@@ -970,7 +1071,13 @@ void StreamPlayer::stopRecording()
         m_session->recordRequested.store(false);
 }
 
-StreamPlayer::StreamPlayer(QObject *parent) : QObject(parent) {}
+StreamPlayer::StreamPlayer(QObject *parent) : QObject(parent)
+{
+    m_clock.start();
+    m_playoutTimer.setSingleShot(true);
+    m_playoutTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_playoutTimer, &QTimer::timeout, this, &StreamPlayer::servicePlayout);
+}
 
 StreamPlayer::~StreamPlayer()
 {
@@ -1068,6 +1175,7 @@ void StreamPlayer::start()
     if (m_source.isEmpty() && !m_pendingReader)
         return;
     stop();
+    resetPlayout();
 
     auto s = std::make_shared<Session>();
     s->player = this;
@@ -1078,6 +1186,7 @@ void StreamPlayer::start()
     s->loop.store(m_loop);
     s->retryOnError.store(m_retryOnError);
     s->audioWanted.store(!m_muted);
+    s->smoothing.store(m_smoothing);
     if (m_tap)
         m_tap->bind(s);
     applyHasAudio(false); // the new session reports its own track
@@ -1111,6 +1220,7 @@ void StreamPlayer::stop()
     }
     m_session->abort.store(true);
     m_session.reset();
+    resetPlayout();
     m_audioOut.reset(); // don't let buffered sound play on after the picture stopped
     applyHasAudio(false);
     if (m_recording) {

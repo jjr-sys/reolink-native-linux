@@ -82,6 +82,15 @@ public:
         }
     }
 
+    // Change the cushion sizes (a new stream mode). Keeps queued audio; the head start
+    // restarts from the new value.
+    void configure(Config config)
+    {
+        QMutexLocker lock(&m_mutex);
+        m_cfg = config;
+        m_prebuffer = config.prebufferBytes;
+    }
+
     void reset()
     {
         QMutexLocker lock(&m_mutex);

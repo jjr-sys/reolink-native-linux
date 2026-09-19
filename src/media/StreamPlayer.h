@@ -1,10 +1,15 @@
 #pragma once
 
+#include "VideoPlayoutQueue.h"
+
+#include <QElapsedTimer>
 #include <QMutex>
 #include <QObject>
 #include <QPointer>
 #include <QSize>
 #include <QString>
+#include <QTimer>
+#include <QVideoFrame>
 #include <QVideoSink>
 
 #include <QByteArray>
@@ -54,6 +59,11 @@ class StreamPlayer : public QObject
     Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
     // True once the stream is known to carry an audio track we can decode.
     Q_PROPERTY(bool hasAudio READ hasAudio NOTIFY hasAudioChanged)
+    // Live smoothing: hold the picture back about a second and show frames on their own
+    // timestamps, so a network stall or burst does not freeze and then rush the video.
+    // Only affects live RTSP; playback and native Baichuan are shown as they arrive.
+    // Sound is delayed by the same amount so lips stay in sync.
+    Q_PROPERTY(bool smoothing READ smoothing WRITE setSmoothing NOTIFY smoothingChanged)
 
 public:
     enum class State { Idle, Connecting, Streaming, Error, Stopped };
@@ -81,6 +91,9 @@ public:
         // Baichuan path report the track's existence once, from its first frame.
         std::atomic<bool> audioWanted{false};
         std::atomic<bool> announcedAudio{false};
+
+        // Live smoothing requested (see the property). Read by the worker per session.
+        std::atomic<bool> smoothing{false};
 
         // Recording taps this same demux session (DESIGN §5.5): no second stream.
         std::atomic<bool> recordRequested{false};
@@ -133,6 +146,9 @@ public:
     void setMuted(bool muted);
     bool hasAudio() const { return m_hasAudio; }
 
+    bool smoothing() const { return m_smoothing; }
+    void setSmoothing(bool on);
+
     // Native Baichuan carries audio in the same byte stream as video, but the video
     // path is a raw elementary stream with no room for it. The client feeds ADTS AAC
     // frames to this callback instead (thread-safe; valid after this player is gone,
@@ -153,6 +169,10 @@ public:
     void applyStateFromWorker(State state, const QString &error);
     void applyRecordingState(bool recording, const QString &path, const QString &error);
     void applyAudioFromWorker(const QByteArray &pcm);
+    // A decoded frame with its camera timestamp. delayUs > 0: hold it on the playout
+    // schedule; 0: show it now. `s` identifies the session so a stopped one is ignored.
+    void applyFrameFromWorker(const std::shared_ptr<Session> &s, const QVideoFrame &frame,
+                              qint64 ptsUs, qint64 delayUs, qint64 bytes);
     void applyHasAudio(bool hasAudio);
 
     struct AudioTap; // Baichuan audio entry point; defined in the .cpp
@@ -169,11 +189,16 @@ signals:
     void recordingChanged();
     void mutedChanged();
     void hasAudioChanged();
+    void smoothingChanged();
     void recordingSaved(const QString &path);
     void recordingFailed(const QString &error);
 
 private:
     void applyState(State state, const QString &error);
+    void presentFrame(const QVideoFrame &frame);
+    void servicePlayout();
+    void resetPlayout();
+    qint64 nowUs() const { return m_clock.nsecsElapsed() / 1000; }
 
     QString m_source;
     QSize m_expectedSize;
@@ -189,6 +214,11 @@ private:
     bool m_retryOnError = false;
     bool m_muted = true;
     bool m_hasAudio = false;
+    bool m_smoothing = false;
+    int m_liveDelayMs = 0; // the picture delay in force; 0 = none. Sound follows it.
+    QElapsedTimer m_clock;
+    QTimer m_playoutTimer;
+    VideoPlayoutQueue<QVideoFrame> m_playout;
     std::unique_ptr<AudioPlayback> m_audioOut; // created on the first audible chunk
     std::shared_ptr<AudioTap> m_tap;           // lazily created by audioFeed()
 

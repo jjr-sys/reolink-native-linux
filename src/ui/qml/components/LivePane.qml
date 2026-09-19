@@ -172,6 +172,8 @@ Rectangle {
     StreamPlayer {
         id: player
         videoSink: video.videoSink
+        // Hold the picture back ~1 s so network stalls do not show (playback is untouched).
+        smoothing: true
         // Audible only while asked for AND actually on screen: a pane held briefly
         // after a layout change must not keep talking.
         // Also silent while we talk: the camera's own sound coming out of the

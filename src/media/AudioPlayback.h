@@ -34,6 +34,10 @@ public:
     // Stop and release the output device (queued audio is discarded).
     void stop();
 
+    // Delay sound to match a smoothed picture that runs `ms` behind arrival (0 = the
+    // default cushion). A fixed delay, no learning, so picture and sound stay in step.
+    void setDelayMs(int ms);
+
     // Bytes waiting in the jitter buffer (0 when stopped).
     qint64 queuedBytes() const;
     // Times sound ran out after it had started (each is an audible gap).
