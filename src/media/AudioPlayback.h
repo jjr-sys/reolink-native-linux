@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AudioJitterBuffer.h"
+
 #include <QByteArray>
 #include <QMediaDevices>
 #include <QObject>
@@ -15,10 +17,11 @@ namespace rl {
 // GUI-thread object: the QAudioSink lives here, and decoded chunks are handed to
 // write() from the worker via a queued call.
 //
-// This is live audio, so latency matters more than completeness. The sink's buffer
-// is small and a chunk that does not fit is dropped rather than queued, which keeps
-// sound within a fraction of a second of the picture instead of drifting behind after
-// a stall.
+// Camera audio reaches us in bursts (the demuxer reads in blocks, and video decode or a
+// busy GUI thread can hold audio back), while the sound card wants a steady stream.
+// Chunks therefore go into an AudioJitterBuffer that waits for a short head start before
+// sound comes out and re-buffers after any dry spell. The cost is a fixed delay of about
+// half a second, in exchange for continuous sound instead of gaps.
 class AudioPlayback : public QObject
 {
     Q_OBJECT
@@ -31,15 +34,19 @@ public:
     // Stop and release the output device (queued audio is discarded).
     void stop();
 
-    // Bytes currently queued in the sink (0 when stopped).
+    // Bytes waiting in the jitter buffer (0 when stopped).
     qint64 queuedBytes() const;
+    // Times sound ran out after it had started (each is an audible gap).
+    int underruns() const;
 
 private:
     bool ensureSink();
+    void logSummary() const;
 
     QMediaDevices m_devices; // follows the default output changing (e.g. Bluetooth)
-    std::unique_ptr<QAudioSink> m_sink;
-    QIODevice *m_io = nullptr;
+    AudioJitterBuffer m_buf;
+    std::unique_ptr<QIODevice> m_feed; // the sound card pulls from this
+    std::unique_ptr<QAudioSink> m_sink; // declared last: destroyed first, before the feed
 };
 
 } // namespace rl

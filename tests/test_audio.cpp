@@ -1,8 +1,13 @@
 #include "media/AudioDecoder.h"
+#include "media/AudioJitterBuffer.h"
 
 #include <QtTest>
 
+#include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <random>
+#include <vector>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -178,6 +183,131 @@ private slots:
         QVERIFY(aac.openAdtsAac());
         QVERIFY(aac.decode(QByteArray(64, char(0x55))).isEmpty());
         QVERIFY(aac.decode(QByteArray()).isEmpty());
+    }
+
+    // ---- AudioJitterBuffer: the choppy-audio regression. Decoded audio arrives in bursts
+    // while the sound card consumes at a fixed rate; without a buffer in between, every
+    // late or bunched chunk leaves a gap. These run on a virtual clock (no audio device):
+    // the consumer reads 10 ms every 10 ms, chunks arrive at the times each case gives.
+
+    // Feed `arrivalsMs` (64 ms chunks: what a 16 kHz AAC frame becomes at 48 kHz stereo)
+    // and read 10 ms every 10 ms for `runMs`. Returns the buffer for inspection.
+    static void simulate(rl::AudioJitterBuffer &buf, const std::vector<int> &arrivalsMs, int runMs)
+    {
+        const QByteArray chunk(3072 * 4, char(0x11));
+        std::vector<char> out(1920);
+        size_t next = 0;
+        for (int t = 0; t < runMs; t += 10) {
+            while (next < arrivalsMs.size() && arrivalsMs[next] <= t)
+                buf.write(chunk.constData(), chunk.size()), ++next;
+            buf.read(out.data(), qint64(out.size()));
+        }
+    }
+    static rl::AudioJitterBuffer::Config bufferConfig()
+    {
+        return {/*prebufferBytes*/ 48000 * 400 / 1000 * 4, /*maxBytes*/ 48000 * 1200 / 1000 * 4,
+                /*frameBytes*/ 4};
+    }
+
+    void jitterBufferStaysSilentUntilPrebufferIsFull()
+    {
+        rl::AudioJitterBuffer buf(bufferConfig());
+        const QByteArray chunk(3072 * 4, char(0x7F));
+        std::vector<char> out(1920, char(0x55));
+        for (int i = 0; i < 3; ++i) // 192 ms: under the 400 ms target
+            buf.write(chunk.constData(), chunk.size());
+        buf.read(out.data(), 1920);
+        QVERIFY(!buf.playing());
+        QCOMPARE(out[0], char(0)); // silence, and the request was filled in full
+        QCOMPARE(out[1919], char(0));
+        for (int i = 0; i < 4; ++i) // now 448 ms
+            buf.write(chunk.constData(), chunk.size());
+        buf.read(out.data(), 1920);
+        QVERIFY(buf.playing());
+        QCOMPARE(out[0], char(0x7F));
+    }
+
+    void jitterBufferAbsorbsBurstsAndJitter()
+    {
+        const int n = 200; // ~12.8 s
+        std::mt19937 rng(42);
+        std::uniform_int_distribution<int> jit(0, 60);
+
+        std::vector<int> jitter, stall, burst;
+        for (int i = 0; i < n; ++i)
+            jitter.push_back(100 + i * 64 + jit(rng));
+        std::sort(jitter.begin(), jitter.end());
+        for (int i = 0; i < n; ++i) { // a 200 ms GUI stall every 2 s: chunks pile up, then land together
+            int t = 100 + i * 64, ph = t % 2000;
+            stall.push_back(ph < 200 ? t - ph + 200 : t);
+        }
+        for (int i = 0; i < n; ++i) // four chunks at a time, as a demuxer reading in blocks delivers them
+            burst.push_back(100 + (i / 4) * 256);
+
+        const std::vector<int> *cases[] = {&jitter, &stall, &burst};
+        const char *names[] = {"jitter", "stall", "burst"};
+        for (int c = 0; c < 3; ++c) {
+            rl::AudioJitterBuffer buf(bufferConfig());
+            simulate(buf, *cases[c], (*cases[c]).back()); // stop before the feed ends
+            QVERIFY2(buf.underruns() == 0, names[c]);
+            QVERIFY2(buf.droppedBytes() == 0, names[c]);
+            QVERIFY2(buf.silenceBytes() == 0, names[c]);
+        }
+    }
+
+    void jitterBufferRebuffersAfterStarvation()
+    {
+        rl::AudioJitterBuffer buf(bufferConfig());
+        std::vector<int> a;
+        for (int i = 0; i < 20; ++i) // 1.3 s of steady audio, then nothing for a second
+            a.push_back(i * 64);
+        simulate(buf, a, 2600);
+        QCOMPARE(buf.underruns(), 1);
+        QVERIFY(!buf.playing());   // waiting to refill, not dribbling out fragments
+        QVERIFY(buf.silenceBytes() > 0);
+    }
+
+    // A stall longer than the head start costs one gap; the buffer then holds more in
+    // reserve, so the same stall again is absorbed.
+    void jitterBufferLearnsFromAStall()
+    {
+        rl::AudioJitterBuffer::Config cfg = bufferConfig();
+        cfg.maxPrebufferBytes = 48000 * 900 / 1000 * 4;
+        rl::AudioJitterBuffer buf(cfg);
+        const qint64 before = buf.prebufferBytes();
+        std::vector<int> a; // 500 ms stalls at 3 s and 6 s: chunks due meanwhile land together after
+        for (int i = 0; i < 150; ++i) {
+            int t = 100 + i * 64, ph = t % 3000;
+            a.push_back(ph < 500 && t >= 3000 ? t - ph + 500 : t);
+        }
+        simulate(buf, a, 5500); // through the first stall only
+        QCOMPARE(buf.underruns(), 1);
+        QVERIFY(buf.prebufferBytes() > before);
+        simulate(buf, a, 8000); // the second stall: no new gap
+        QCOMPARE(buf.underruns(), 1);
+    }
+
+    void jitterBufferDropsOldestPastTheCeiling()
+    {
+        rl::AudioJitterBuffer buf(bufferConfig());
+        QByteArray big(48000 * 3 * 4, '\0'); // 3 s at once, each 4-byte frame numbered
+        auto *f = reinterpret_cast<quint32 *>(big.data());
+        const quint32 frames = quint32(big.size() / 4);
+        for (quint32 i = 0; i < frames; ++i)
+            f[i] = i;
+        buf.write(big.constData(), big.size());
+
+        QVERIFY(buf.queuedBytes() <= 48000 * 1200 / 1000 * 4);
+        QVERIFY(buf.droppedBytes() > 0);
+        QCOMPARE(buf.droppedBytes() % 4, qint64(0)); // whole frames only
+        std::vector<char> out(4);
+        buf.read(out.data(), 4);
+        quint32 first;
+        std::memcpy(&first, out.data(), 4);
+        QVERIFY2(first > 0, "the oldest audio should be the part that was dropped");
+        // What remains is the newest run, contiguous up to the last frame written.
+        const quint32 expectFirst = frames - quint32(buf.queuedBytes() / 4) - 1;
+        QCOMPARE(first, expectFirst);
     }
 };
 
