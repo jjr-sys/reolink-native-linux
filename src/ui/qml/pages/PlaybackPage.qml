@@ -805,7 +805,6 @@ Item {
                     videoSink: video.videoSink
                     retryOnError: true
                     playback: true
-                    volume: AudioPrefs.volume
                     speed: page.speed
                     muted: AudioPrefs.playbackMuted || !page.active || page.paneCount !== 1
                 }
@@ -887,7 +886,6 @@ Item {
                         deviceRow: index      // fixed: the pane follows its camera
                         selected: page.audioRow === index
                         audioMuted: AudioPrefs.playbackMuted
-                        volume: AudioPrefs.volume
                         speed: page.speed
                         audioActive: page.active && page.paneCount === 4 && selected
                         onClicked: page.audioRow = (page.audioRow === index ? -1 : index)
@@ -997,20 +995,13 @@ Item {
                         }
                     }
                 }
-                // Sound: mute toggle and volume. Shown once the playing stream has an audio
+                // Sound: mute toggle. Shown once the playing stream has an audio
                 // track; in the grid it applies to the selected pane only.
                 Ctl {
                     visible: page.audioAvailable
                     glyph: AudioPrefs.playbackMuted ? "🔇" : "🔊"
                     tip: AudioPrefs.playbackMuted ? qsTr("Unmute") : qsTr("Mute")
                     onActivated: AudioPrefs.playbackMuted = !AudioPrefs.playbackMuted
-                }
-                Slider {
-                    visible: page.audioAvailable && !AudioPrefs.playbackMuted
-                    width: 90; height: 30
-                    from: 0; to: 1
-                    value: AudioPrefs.volume
-                    onMoved: AudioPrefs.volume = value
                 }
                 // Skip back/forward 10 s, and playback speed. There is no reverse play: the
                 // camera streams only run forwards, so back means jumping back.

@@ -311,20 +311,6 @@ Item {
                 font.pixelSize: 12
             }
 
-            // Loudness of the camera you are hearing (the selected tile); the same
-            // setting playback uses.
-            Text { text: "🔉"; color: Theme.textMuted; font.pixelSize: 13 }
-            Slider {
-                Layout.preferredWidth: 100
-                Layout.preferredHeight: 26
-                from: 0; to: 1
-                value: AudioPrefs.volume
-                onMoved: AudioPrefs.volume = value
-                ToolTip.visible: hovered
-                ToolTip.delay: 500
-                ToolTip.text: qsTr("Volume")
-            }
-
             Rectangle {
                 width: 34
                 height: 26

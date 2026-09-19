@@ -191,7 +191,6 @@ Rectangle {
         // after a layout change must not keep talking.
         // Also silent while we talk: the camera's own sound coming out of the
         // laptop would be picked up by the microphone and fed straight back.
-        volume: AudioPrefs.volume
         muted: !(root.audioOn && root.visible && root.pageActive && !talk.active)
     }
 

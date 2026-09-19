@@ -54,12 +54,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
 ### Added
 
 - **Sound in playback.** Recorded playback (single pane and the 4-camera grid)
-  now plays the camera's audio. A speaker button and volume slider appear next
+  now plays the camera's audio. A speaker (mute/unmute) button appears next
   to Stop once the stream has an audio track. Playback starts muted the first
-  time; after that your mute and volume choice is remembered. In the grid only
+  time; after that your choice is remembered. In the grid only
   the pane you click is audible (click it again to deselect).
-- **Volume slider in live view**, in the toolbar. It sets the loudness of the
-  selected tile and is the same setting playback uses.
 - **Previous / next paging in live view.** When there are more cameras than
   grid cells, the ◀ ▶ buttons and a "page / pages" label step through them, and
   wrap around. On a maximized camera the same buttons step to the previous or

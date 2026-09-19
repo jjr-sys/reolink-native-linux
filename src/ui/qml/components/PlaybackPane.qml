@@ -25,10 +25,9 @@ Rectangle {
     property int viewRotation: 0
     property string label: ""
     property bool selected: false
-    // Sound: the page owns the mute/volume choice and says whether THIS pane is the one
+    // Sound: the page owns the mute choice and says whether THIS pane is the one
     // to hear (in the 4-pane grid only the selected pane is audible).
     property bool audioMuted: true
-    property real volume: 1.0
     property bool audioActive: true
     // Keep the last picture up while a skip re-opens the stream (see PlaybackPage.skip).
     property bool holding: false
@@ -175,7 +174,6 @@ Rectangle {
         videoSink: video.videoSink
         retryOnError: true
         playback: true
-        volume: root.volume
         speed: root.speed
         // Off screen or not the chosen pane: no decode, no device held open.
         muted: root.audioMuted || !root.audioActive || !root.visible
