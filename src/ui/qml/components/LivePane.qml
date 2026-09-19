@@ -56,6 +56,9 @@ Rectangle {
     // streams stay RTSP (clean, and the NVR only allows ~1 Baichuan session).
     property string streamKey: ""
     property bool bcFallback: false // Baichuan slot busy → RTSP main for this round
+    // The NVR answered "stream not found" over RTSP (it relays some cameras, e.g. a
+    // third-party one, only over its native protocol) → use Baichuan for the sub stream.
+    property bool bcSub: false
 
     // These carry the DEVICE ROW, not the pane index: the page tracks which
     // camera is maximized/selected, so both survive a rearrange.
@@ -112,6 +115,8 @@ Rectangle {
         if (want) {
             if (effectiveMain && !bcFallback)
                 key = "bc:" + deviceRow;
+            else if (!effectiveMain && bcSub)
+                key = "bcs:" + deviceRow;
             else
                 key = Devices.liveUrl(deviceRow, effectiveMain);
         }
@@ -123,6 +128,9 @@ Rectangle {
         } else if (key.substring(0, 3) === "bc:") {
             player.loop = false;
             Devices.startBaichuanLive(root.deviceRow, player, true);
+        } else if (key.substring(0, 4) === "bcs:") {
+            player.loop = false;
+            Devices.startBaichuanLive(root.deviceRow, player, false);
         } else {
             // Set loop before start() so the worker sees the right value from
             // frame one (the declarative `loop:` binding can lag the handler).
@@ -140,7 +148,7 @@ Rectangle {
     // Talk ends with anything that takes the pane away from this camera: the camera
     // is swapped, the pane is hidden by a layout change, or the page is left —
     // the camera's speaker must never be left open behind the user's back.
-    onDeviceRowChanged: { talk.stop(); bcFallback = false; releaseStream(); updateSource(); }
+    onDeviceRowChanged: { talk.stop(); bcFallback = false; bcSub = false; releaseStream(); updateSource(); }
     onVisibleChanged: { if (!visible) talk.stop(); updateSource(); }
     onPageActiveChanged: { if (!pageActive) talk.stop(); updateSource(); }
     onEffectiveMainChanged: { bcFallback = false; updateSource(); }
@@ -155,6 +163,11 @@ Rectangle {
             if (player.state === StreamPlayer.Error && !root.bcFallback
                 && root.streamKey.substring(0, 3) === "bc:") {
                 root.bcFallback = true;
+                root.updateSource();
+            } else if (player.state === StreamPlayer.Error && !root.bcSub && !root.effectiveMain
+                       && root.streamKey.startsWith("rtsp://")
+                       && player.errorString.indexOf("Stream not found") === 0) {
+                root.bcSub = true;
                 root.updateSource();
             }
         }

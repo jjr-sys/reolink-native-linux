@@ -79,6 +79,7 @@ public:
         std::atomic<bool> abort{false};
         std::atomic<bool> loop{false};
         std::atomic<qint64> framesDecoded{0};
+        std::atomic<bool> lastWasError{false}; // the last state posted was Error
         QString source;
         QSize expectedSize; // declared size for rotation detection (see property)
 

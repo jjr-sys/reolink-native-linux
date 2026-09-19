@@ -165,6 +165,7 @@ QVideoFrameFormat::PixelFormat mapPixelFormat(int avFormat)
 // then cancels itself if the player is destroyed before the event is delivered.
 void postState(const std::shared_ptr<Session> &s, State st, const QString &err)
 {
+    s->lastWasError.store(st == State::Error);
     QMutexLocker lock(&s->backMutex);
     if (!s->player)
         return;
@@ -541,7 +542,13 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     if (rc < 0) {
         char buf[AV_ERROR_MAX_STRING_SIZE]{};
         av_strerror(rc, buf, sizeof(buf));
-        postState(s, State::Error, QString::fromUtf8(buf));
+        // A recorder answering "not found" for a camera's stream means it has no video
+        // from that camera (unreachable, or not a stream it can relay), not that the
+        // app is stuck: say so.
+        const QString reason = rc == AVERROR_HTTP_NOT_FOUND
+            ? QStringLiteral("Stream not found: the recorder has no video from this camera")
+            : QString::fromUtf8(buf);
+        postState(s, State::Error, reason);
         return !packetSource && (live || s->retryOnError.load());
     }
 
@@ -858,7 +865,10 @@ void runWorker(std::shared_ptr<Session> s)
         }
         if (!live && --retriesLeft <= 0)
             break;
-        postState(s, State::Connecting, QStringLiteral("reconnecting"));
+        // After a failed attempt keep showing why it failed while we retry, rather than
+        // flipping straight back to a "connecting" spinner that never explains itself.
+        if (!s->lastWasError.load())
+            postState(s, State::Connecting, QStringLiteral("reconnecting"));
         QDeadlineTimer wait(backoffMs);
         while (!wait.hasExpired() && !s->abort.load())
             QThread::msleep(50);
