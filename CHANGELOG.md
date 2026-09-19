@@ -30,7 +30,8 @@ not upstream's.
 - **Live audio from cameras.** The live grid, a maximized pane and pop-out
   windows can now play the camera's sound. In the grid, sound follows the
   selected tile (the one with the accent border): click a tile to hear it, and
-  the previous one goes silent, so only one camera is ever audible. A small
+  the previous one goes silent, so only one camera is ever audible. Click the
+  selected tile again to deselect it and mute. A small
   speaker marks the tile you are hearing. Pop-out windows start muted with a
   speaker button in the corner. Works over both RTSP (grid tiles) and native
   Baichuan (HD/maximized). AAC and G.711/PCM are decoded and resampled to

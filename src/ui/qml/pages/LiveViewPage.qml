@@ -346,8 +346,13 @@ Item {
                     // cameras, not cells, so they survive a rearrange.
                     onToggleMaximize: (idx) => {
                         page.maximizedIndex = page.maximizedIndex === idx ? -1 : idx;
+                        // A double-click arrives as click + double-click; the click may
+                        // just have deselected this tile. Maximizing keeps it selected.
+                        page.selectedIndex = idx;
                     }
-                    onClicked: (idx) => page.selectedIndex = idx
+                    // Click selects (blue border + sound); clicking the selected tile
+                    // again deselects it and mutes.
+                    onClicked: (idx) => page.selectedIndex = page.selectedIndex === idx ? -1 : idx
                     onPopOut: (row, lbl) => page.popOut(row, lbl)
                     onCameraDropped: (targetPane, row) => page.assignPane(targetPane, row)
 
