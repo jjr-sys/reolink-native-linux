@@ -67,6 +67,9 @@ class StreamPlayer : public QObject
     // Recorded playback: sound gets a short, fixed cushion so it stays in step with the
     // (already paced) picture, instead of live view's longer, self-adjusting one.
     // Loudness, 0..1 on a perceptual scale (a volume slider's value). Survives stop().
+    // Recorded-playback speed: 1 = real time; 0.25 to 8 are offered. Above 1 the picture
+    // can only go as fast as the link delivers it, and sound is muted at any speed but 1.
+    Q_PROPERTY(qreal speed READ speed WRITE setSpeed NOTIFY speedChanged)
     Q_PROPERTY(qreal volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(bool playback READ playback WRITE setPlayback NOTIFY playbackChanged)
 
@@ -80,6 +83,11 @@ public:
         std::atomic<bool> loop{false};
         std::atomic<qint64> framesDecoded{0};
         std::atomic<bool> lastWasError{false}; // the last state posted was Error
+        // Playback speed (1 = real time), shared with the player and the native client.
+        std::shared_ptr<std::atomic<double>> speed = std::make_shared<std::atomic<double>>(1.0);
+        // The most recent decoded picture, for saving a snapshot of what is on screen.
+        QMutex lastFrameMutex;
+        QVideoFrame lastFrame;
         QString source;
         QSize expectedSize; // declared size for rotation detection (see property)
 
@@ -155,6 +163,14 @@ public:
     bool smoothing() const { return m_smoothing; }
     void setSmoothing(bool on);
 
+    qreal speed() const { return m_speed->load(); }
+    void setSpeed(qreal speed);
+    // Shared with BaichuanClient so the native playback pacing follows the same setting.
+    std::shared_ptr<std::atomic<double>> speedCell() const { return m_speed; }
+
+    // Save the picture currently on screen as an image file. False if there is none.
+    Q_INVOKABLE bool saveSnapshot(const QString &path);
+
     qreal volume() const { return m_volume; }
     void setVolume(qreal volume);
 
@@ -206,6 +222,7 @@ signals:
     void smoothingChanged();
     void playbackChanged();
     void volumeChanged();
+    void speedChanged();
     void recordingSaved(const QString &path);
     void recordingFailed(const QString &error);
 
@@ -233,6 +250,7 @@ private:
     bool m_smoothing = false;
     bool m_playback = false;
     qreal m_volume = 1.0;
+    std::shared_ptr<std::atomic<double>> m_speed = std::make_shared<std::atomic<double>>(1.0);
     int m_liveDelayMs = 0; // the picture delay in force; 0 = none. Sound follows it.
     QElapsedTimer m_clock;
     QTimer m_playoutTimer;

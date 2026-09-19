@@ -30,6 +30,15 @@ Rectangle {
     property bool audioMuted: true
     property real volume: 1.0
     property bool audioActive: true
+    property real speed: 1.0
+    // Save the picture on screen as a JPEG named for this camera and the recorded
+    // moment; returns the path, or "" if there is no picture yet.
+    function snapshot(epoch) {
+        if (!streaming)
+            return "";
+        var path = Downloads.snapshotPath(deviceRow, epoch);
+        return path !== "" && player.saveSnapshot(path) ? path : "";
+    }
     readonly property bool hasAudio: player.hasAudio
     // This camera's recordings for the selected day ({start,end,type} seconds).
     property var segments: []
@@ -161,6 +170,7 @@ Rectangle {
         retryOnError: true
         playback: true
         volume: root.volume
+        speed: root.speed
         // Off screen or not the chosen pane: no decode, no device held open.
         muted: root.audioMuted || !root.audioActive || !root.visible
     }

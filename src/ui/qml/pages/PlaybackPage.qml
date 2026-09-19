@@ -365,11 +365,72 @@ Item {
     // Export a clip starting at the playhead (NVR downloads run below
     // realtime, so longer clips take a while — the button shows progress).
     function exportClip(secs) {
-        var epoch = new Date(page.selYear, page.selMonth - 1, page.selDay).getTime() / 1000
-                    + Math.floor(page.playheadSecs);
-        exportBtn.busy = true;
-        statusText.text = qsTr("Exporting clip…");
-        Devices.exportClip(page.deviceRow, epoch, secs);
+        var epoch = page.dayStartEpoch + Math.floor(page.playheadSecs);
+        if (Downloads.enqueue(page.deviceRow, epoch, epoch + secs) >= 0)
+            statusText.text = qsTr("Clip queued — see Downloads");
+    }
+
+    // Unix seconds at 00:00 of the day being watched.
+    readonly property real dayStartEpoch:
+        new Date(page.selYear, page.selMonth - 1, page.selDay).getTime() / 1000
+    // Playback speed (1 = real time), shared by every pane.
+    property real speed: 1.0
+    function speedText(v) { return (v === 0.25 ? "0.25" : v === 0.5 ? "0.5" : String(v)) + "×"; }
+    // Jump the playhead by `secs` and carry on playing from there.
+    function skip(secs) {
+        var to = Math.max(0, Math.min(86399, page.playheadSecs + secs));
+        page.playAt(to);
+    }
+    // Save a JPEG of the picture on screen: the one pane, or every playing pane in the grid.
+    function snapshot() {
+        var epoch = page.dayStartEpoch + Math.floor(page.playheadSecs);
+        var saved = [];
+        if (page.paneCount === 1) {
+            var path = Downloads.snapshotPath(page.deviceRow, epoch);
+            if (path !== "" && player.saveSnapshot(path))
+                saved.push(path);
+        } else {
+            for (var i = 0; i < paneRepeater.count; i++) {
+                var p = page.gridPane(i);
+                var f = p && p.visible ? p.snapshot(epoch) : "";
+                if (f !== "")
+                    saved.push(f);
+            }
+        }
+        statusText.text = saved.length === 0 ? qsTr("Nothing to save: no picture yet")
+            : saved.length === 1 ? qsTr("Snapshot saved: %1").arg(saved[0].split("/").pop())
+            : qsTr("%1 snapshots saved to %2").arg(saved.length).arg(Downloads.folder);
+    }
+
+    // Range for "Download range": marked on the timeline, in seconds into the day (-1 = unset).
+    property real markStart: -1
+    property real markEnd: -1
+    onDayStartEpochChanged: { markStart = -1; markEnd = -1; }
+    // The camera whose site the range dialog opens for: the one on screen, or in a grid
+    // the selected pane (else the first).
+    readonly property int downloadRow: page.paneCount === 1 ? page.deviceRow
+        : (page.audioRow >= 0 ? page.audioRow
+           : (page.gridRows.find(function (r) { return r >= 0; }) ?? -1))
+    function openDownloadDialog() {
+        if (page.downloadRow < 0)
+            return;
+        var s = page.markStart >= 0 ? page.markStart : Math.floor(page.playheadSecs);
+        var e = page.markEnd > s ? page.markEnd : s + 120;
+        dlDialog.openFor(page.downloadRow, page.dayStartEpoch, s, e);
+    }
+    function clockText(s) {
+        var v = Math.floor(s), pad = function (n) { return (n < 10 ? "0" : "") + n; };
+        return pad(Math.floor(v / 3600)) + ":" + pad(Math.floor(v / 60) % 60) + ":" + pad(v % 60);
+    }
+
+    DownloadDialog { id: dlDialog; onAccepted: dlPanel.open() }
+    Connections {
+        target: Downloads
+        function onItemFinished(id, state, message) {
+            statusText.text = state === "done" ? qsTr("Clip saved: %1").arg(message)
+                            : state === "failed" ? qsTr("Download failed: %1").arg(message)
+                            : qsTr("Download cancelled");
+        }
     }
 
     function openAt(hostId, channel, timestamp) {
@@ -696,6 +757,7 @@ Item {
                     retryOnError: true
                     playback: true
                     volume: AudioPrefs.volume
+                    speed: page.speed
                     muted: AudioPrefs.playbackMuted || !page.active || page.paneCount !== 1
                 }
 
@@ -773,6 +835,7 @@ Item {
                         selected: page.audioRow === index
                         audioMuted: AudioPrefs.playbackMuted
                         volume: AudioPrefs.volume
+                        speed: page.speed
                         audioActive: page.active && page.paneCount === 4 && selected
                         onClicked: page.audioRow = (page.audioRow === index ? -1 : index)
                         paneIndex: slot
@@ -821,6 +884,8 @@ Item {
                 id: timeline
                 Layout.fillWidth: true
                 position: page.playheadSecs
+                markStart: page.markStart
+                markEnd: page.markEnd
                 onSeek: (seconds) => page.playheadSecs = seconds  // move playhead only
                 onCommit: (seconds) => page.playAt(seconds)       // start playback on release
             }
@@ -881,6 +946,39 @@ Item {
                     value: AudioPrefs.volume
                     onMoved: AudioPrefs.volume = value
                 }
+                // Skip back/forward 10 s, and playback speed. There is no reverse play: the
+                // camera streams only run forwards, so back means jumping back.
+                Ctl { glyph: "\u23ea"; tip: qsTr("Back 10 seconds"); onActivated: page.skip(-10) }
+                Ctl { glyph: "\u23e9"; tip: qsTr("Forward 10 seconds"); onActivated: page.skip(10) }
+                Rectangle {
+                    width: 52; height: 30; radius: Theme.radius
+                    color: spdHover.hovered ? Theme.surfaceAlt : Theme.surface
+                    border.color: page.speed !== 1 ? Theme.accent : Theme.border
+                    Text { anchors.centerIn: parent; text: page.speedText(page.speed)
+                           color: page.speed !== 1 ? Theme.accent : Theme.text; font.pixelSize: 12 }
+                    HoverHandler { id: spdHover }
+                    ToolTip {
+                        visible: spdHover.hovered
+                        delay: 500
+                        x: (parent.width - width) / 2
+                        y: -height - 8
+                        contentItem: Text { text: qsTr("Playback speed (sound only plays at 1×)")
+                                            color: Theme.text; font.pixelSize: 11 }
+                        background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                    }
+                    TapHandler { onTapped: speedMenu.popup() }
+                    ThemedMenu {
+                        id: speedMenu
+                        ThemedMenuItem { text: page.speedText(0.25); onTriggered: page.speed = 0.25 }
+                        ThemedMenuItem { text: page.speedText(0.5);  onTriggered: page.speed = 0.5 }
+                        ThemedMenuItem { text: page.speedText(1);    onTriggered: page.speed = 1 }
+                        ThemedMenuItem { text: page.speedText(2);    onTriggered: page.speed = 2 }
+                        ThemedMenuItem { text: page.speedText(4);    onTriggered: page.speed = 4 }
+                        ThemedMenuItem { text: page.speedText(8);    onTriggered: page.speed = 8 }
+                    }
+                }
+                Ctl { glyph: "\ud83d\udcf7"; tip: qsTr("Save a snapshot of this moment")
+                      onActivated: page.snapshot() }
                 Ctl { glyph: "⏹"; tip: qsTr("Stop")
                       onActivated: { page._suppressResume = true;
                                      player.stop(); page.stopAllPanes(); } }
@@ -915,6 +1013,49 @@ Item {
                         ThemedMenuItem { text: qsTr("1 minute");  onTriggered: page.exportClip(60) }
                         ThemedMenuItem { text: qsTr("2 minutes"); onTriggered: page.exportClip(120) }
                     }
+                }
+                // Range: mark a start and an end on the timeline, then download it (for one
+                // camera or several at this site).
+                Ctl { glyph: "\u21e5"; tip: qsTr("Mark start of range at the playhead")
+                      onActivated: {
+                          page.markStart = Math.floor(page.playheadSecs);
+                          if (page.markEnd <= page.markStart) page.markEnd = -1;
+                      } }
+                Ctl { glyph: "\u21e4"; tip: qsTr("Mark end of range at the playhead")
+                      onActivated: {
+                          var e = Math.floor(page.playheadSecs);
+                          if (page.markStart < 0 || e > page.markStart) page.markEnd = e;
+                      } }
+                Text {
+                    visible: page.markStart >= 0
+                    text: page.markEnd > page.markStart
+                        ? page.clockText(page.markStart) + " \u2013 " + page.clockText(page.markEnd)
+                        : qsTr("from %1").arg(page.clockText(page.markStart))
+                    color: Theme.accent; font.pixelSize: 12
+                    Layout.alignment: Qt.AlignVCenter
+                    TapHandler { onTapped: { page.markStart = -1; page.markEnd = -1; } }
+                }
+                Rectangle {
+                    width: dlRow.implicitWidth + 18; height: 30; radius: Theme.radius
+                    color: dlHover.hovered ? Theme.surfaceAlt : Theme.surface
+                    border.color: Theme.border
+                    Text { id: dlRow; anchors.centerIn: parent; text: qsTr("Download range…")
+                           color: Theme.text; font.pixelSize: 12 }
+                    HoverHandler { id: dlHover }
+                    TapHandler { onTapped: page.openDownloadDialog() }
+                }
+                Rectangle {
+                    id: dlBtn
+                    width: dlBtnText.implicitWidth + 18; height: 30; radius: Theme.radius
+                    color: dlBtnHover.hovered ? Theme.surfaceAlt : Theme.surface
+                    border.color: Downloads.activeCount > 0 ? Theme.accent : Theme.border
+                    Text { id: dlBtnText; anchors.centerIn: parent
+                           text: Downloads.activeCount > 0 ? qsTr("\u2b07 Downloads (%1)").arg(Downloads.activeCount)
+                                                           : qsTr("\u2b07 Downloads")
+                           color: Theme.text; font.pixelSize: 12 }
+                    HoverHandler { id: dlBtnHover }
+                    TapHandler { onTapped: dlPanel.opened ? dlPanel.close() : dlPanel.open() }
+                    DownloadsPanel { id: dlPanel; x: 0; y: -height - 8 }
                 }
                 Item { Layout.fillWidth: true }
                 // Quality toggle: SD = light sub-stream (FLV) scrubbing; HD = full-res

@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <thread>
 
 class QTcpSocket;
@@ -60,6 +61,8 @@ public:
     // network thread). Set before start(); the raw video byte stream has no room for
     // it. Unset = audio is discarded.
     void setAudioHandler(std::function<void(const QByteArray &)> handler);
+    // Playback speed shared with the player (1 = real time). Read as frames are paced.
+    void setSpeedCell(std::shared_ptr<std::atomic<double>> cell) { m_speed = std::move(cell); }
 
     // Blocking read of decoded Annex-B bytes (for an AVIOContext read callback).
     // Returns the number of bytes written, 0 on clean end, or <0 on abort/error.
@@ -81,6 +84,7 @@ private:
     std::atomic<bool> m_abort{false};
 
     std::function<void(const QByteArray &)> m_audioHandler; // set before start()
+    std::shared_ptr<std::atomic<double>> m_speed;           // set before start(); may be empty
 
     QMutex m_mutex;
     QWaitCondition m_cond;

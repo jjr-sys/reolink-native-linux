@@ -395,6 +395,10 @@ bool emitFrame(const std::shared_ptr<Session> &s, AVFrame *out,
     }
     videoFrame.unmap();
     // Planar 4:2:0 is 1.5 bytes a pixel; close enough for the queue's memory budget.
+    {
+        QMutexLocker lock(&s->lastFrameMutex);
+        s->lastFrame = videoFrame; // shared, not copied
+    }
     deliverFrame(s, videoFrame, ptsUs, delayUs, qint64(out->width) * out->height * 3 / 2);
     return true;
 }
@@ -653,6 +657,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
 
     bool streaming = *streamingOut;
     qint64 playbackStartUs = 0;
+    double pacedSpeed = 1.0; // the speed the current pacing anchor was set at
     qint64 firstPtsUs = AV_NOPTS_VALUE;
     qint64 smoothDelayUs = 0; // chosen at the first smoothed frame
 
@@ -711,11 +716,16 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             if (!live && decoded->pts != AV_NOPTS_VALUE) {
                 const qint64 ptsUs =
                     av_rescale_q(decoded->pts, stream->time_base, AVRational{1, 1000000});
-                if (firstPtsUs == static_cast<qint64>(AV_NOPTS_VALUE) || ptsUs < firstPtsUs) {
+                const double speedNow = s->speed->load(std::memory_order_relaxed);
+                if (firstPtsUs == static_cast<qint64>(AV_NOPTS_VALUE) || ptsUs < firstPtsUs
+                    || speedNow != pacedSpeed) {
+                    // (Re)anchor here: first frame, a jump back, or a speed change.
                     firstPtsUs = ptsUs;
                     playbackStartUs = av_gettime_relative();
+                    pacedSpeed = speedNow;
                 }
-                const qint64 waitUs = (playbackStartUs + (ptsUs - firstPtsUs)) - av_gettime_relative();
+                const qint64 waitUs =
+                    (playbackStartUs + qint64(double(ptsUs - firstPtsUs) / pacedSpeed)) - av_gettime_relative();
                 if (waitUs > 0 && waitUs < 2000000)
                     abortableSleepUs(s.get(), waitUs);
             }
@@ -956,7 +966,7 @@ void StreamPlayer::setMuted(bool muted)
         return;
     m_muted = muted;
     if (m_session)
-        m_session->audioWanted.store(!muted);
+        m_session->audioWanted.store(!muted && speed() == 1.0);
     if (muted)
         m_audioOut.reset(); // release the device and drop queued sound at once
     emit mutedChanged();
@@ -1027,6 +1037,35 @@ void StreamPlayer::resetPlayout()
         if (m_audioOut)
             m_audioOut->setDelayMs(0);
     }
+}
+
+void StreamPlayer::setSpeed(qreal speed)
+{
+    speed = qBound<qreal>(0.25, speed, 8.0);
+    if (qFuzzyCompare(m_speed->load(), speed))
+        return;
+    m_speed->store(speed); // read per frame by both pacing loops
+    // Sound only makes sense at normal speed; drop what is queued when leaving it.
+    if (m_session)
+        m_session->audioWanted.store(!m_muted && speed == 1.0);
+    if (speed != 1.0)
+        m_audioOut.reset();
+    emit speedChanged();
+}
+
+bool StreamPlayer::saveSnapshot(const QString &path)
+{
+    if (!m_session)
+        return false;
+    QVideoFrame frame;
+    {
+        QMutexLocker lock(&m_session->lastFrameMutex);
+        frame = m_session->lastFrame;
+    }
+    if (!frame.isValid())
+        return false;
+    const QImage img = frame.toImage();
+    return !img.isNull() && img.save(path);
 }
 
 void StreamPlayer::setVolume(qreal volume)
@@ -1241,7 +1280,8 @@ void StreamPlayer::start()
     s->expectedSize = m_expectedSize;
     s->loop.store(m_loop);
     s->retryOnError.store(m_retryOnError);
-    s->audioWanted.store(!m_muted);
+    s->speed = m_speed;
+    s->audioWanted.store(!m_muted && speed() == 1.0);
     s->smoothing.store(m_smoothing);
     if (m_tap)
         m_tap->bind(s);

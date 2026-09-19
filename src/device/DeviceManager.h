@@ -2,6 +2,7 @@
 
 #include "core/CredentialStore.h"
 #include "core/Database.h"
+#include "DownloadSource.h"
 #include "protocol/ReolinkApi.h"
 // Not forward-declared on purpose — see the note by the other forward
 // declarations below.
@@ -171,6 +172,10 @@ public:
     // Save a main-stream clip covering [startEpoch, +durationSecs] into
     // ~/Videos/Reolink with a friendly name. Emits clipExported/clipExportFailed.
     Q_INVOKABLE void exportClip(int row, qint64 startEpoch, int durationSecs);
+
+    // What the downloads queue needs to fetch this camera's recordings (invalid if the
+    // device is not ready or has no recordings).
+    DownloadSource downloadSource(int row);
 
     // Native (Baichuan/TCP 9000) recorded playback: stream the recording from
     // startEpoch straight into `player` — realtime, frame-accurate, full HEVC main.

@@ -7,6 +7,7 @@
 #include <curl/curl.h>
 
 #include <cstdio>
+#include <memory>
 #include <mutex>
 
 namespace rl {
@@ -64,8 +65,32 @@ ReolinkHttpClient::~ReolinkHttpClient()
     logout();
 }
 
+namespace {
+// Lets curl abort a transfer the caller has cancelled.
+int cancelProgress(void *clientp, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+{
+    const auto *cancel = static_cast<const std::atomic<bool> *>(clientp);
+    return cancel && cancel->load() ? 1 : 0;
+}
+
+struct DownloadProgress {
+    const std::function<void(qint64, qint64)> *progress;
+    const std::atomic<bool> *cancel;
+};
+int downloadXfer(void *clientp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t, curl_off_t)
+{
+    const auto *p = static_cast<const DownloadProgress *>(clientp);
+    if (p->cancel && p->cancel->load())
+        return 1;
+    if (p->progress && *p->progress)
+        (*p->progress)(qint64(dlnow), qint64(dltotal));
+    return 0;
+}
+} // namespace
+
 ReolinkHttpClient::HttpResponse ReolinkHttpClient::post(const QString &url, const QByteArray &body,
-                                                        long totalTimeoutSec)
+                                                        long totalTimeoutSec,
+                                                        const std::atomic<bool> *cancel)
 {
     HttpResponse resp;
     CURL *curl = curl_easy_init();
@@ -77,6 +102,11 @@ ReolinkHttpClient::HttpResponse ReolinkHttpClient::post(const QString &url, cons
     const QByteArray urlUtf8 = url.toUtf8();
 
     curl_easy_setopt(curl, CURLOPT_URL, urlUtf8.constData());
+    if (cancel) {
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, cancelProgress);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, const_cast<std::atomic<bool> *>(cancel));
+    }
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.constData());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -140,7 +170,9 @@ ReolinkHttpClient::HttpResponse ReolinkHttpClient::get(const QString &url, long 
 }
 
 bool ReolinkHttpClient::downloadToFile(const QString &url, const QString &destPath,
-                                       long timeoutSec, QString *error)
+                                       long timeoutSec, QString *error,
+                                       const std::function<void(qint64, qint64)> &progress,
+                                       long stallSec, const std::atomic<bool> *cancel)
 {
     const QByteArray destUtf8 = destPath.toUtf8();
     FILE *fp = std::fopen(destUtf8.constData(), "wb");
@@ -162,10 +194,22 @@ bool ReolinkHttpClient::downloadToFile(const QString &url, const QString &destPa
     curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp); // default fwrite-to-FILE callback
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, kConnectTimeoutSec);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSec > 0 ? timeoutSec : kTotalTimeoutSec);
+    if (stallSec > 0) {
+        // No overall cap: only a transfer that has stalled (under 1 KB/s) gives up.
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, stallSec);
+    } else {
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSec > 0 ? timeoutSec : kTotalTimeoutSec);
+    }
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    DownloadProgress dp{&progress, cancel};
+    if (progress || cancel) {
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, downloadXfer);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &dp);
+    }
 
     const CURLcode rc = curl_easy_perform(curl);
     long status = 0;
@@ -177,7 +221,10 @@ bool ReolinkHttpClient::downloadToFile(const QString &url, const QString &destPa
     if (rc != CURLE_OK) {
         QFile::remove(destPath);
         if (error)
-            *error = QString::fromUtf8(curl_easy_strerror(rc));
+            *error = rc == CURLE_ABORTED_BY_CALLBACK ? QStringLiteral("cancelled")
+                   : rc == CURLE_OPERATION_TIMEDOUT && stallSec > 0
+                       ? QStringLiteral("the NVR stopped sending data")
+                       : QString::fromUtf8(curl_easy_strerror(rc));
         return false;
     }
     if (status < 200 || status >= 300) {
@@ -325,14 +372,29 @@ void ReolinkHttpClient::logout()
 
 api::BatchResult ReolinkHttpClient::call(const Json &commands)
 {
+    return callImpl(commands, 0, /*serial=*/true, nullptr);
+}
+
+api::BatchResult ReolinkHttpClient::callSlow(const Json &commands, long timeoutSec,
+                                             const std::atomic<bool> *cancel)
+{
+    return callImpl(commands, timeoutSec, /*serial=*/false, cancel);
+}
+
+api::BatchResult ReolinkHttpClient::callImpl(const Json &commands, long timeoutSec, bool serial,
+                                             const std::atomic<bool> *cancel)
+{
     api::BatchResult out;
     if (!commands.is_array() || commands.empty()) {
         out.error = QStringLiteral("call() requires a non-empty command array");
         return out;
     }
 
-    // One command exchange at a time per device — see the class comment.
-    QMutexLocker requestLock(&m_requestMutex);
+    // One command exchange at a time per device — see the class comment. A slow
+    // command opts out so it cannot hold everything else behind it for minutes.
+    std::unique_ptr<QMutexLocker<QMutex>> requestLock;
+    if (serial)
+        requestLock = std::make_unique<QMutexLocker<QMutex>>(&m_requestMutex);
 
     for (int attempt = 0; attempt < 2; ++attempt) {
         QString loginError;
@@ -347,7 +409,7 @@ api::BatchResult ReolinkHttpClient::call(const Json &commands)
         }
         const QString firstCmd = QString::fromStdString(jsonStr(commands.front(), "cmd"));
         const QString url = api::apiUrl(m_host, m_port, m_https, firstCmd, token);
-        const HttpResponse resp = post(url, QByteArray::fromStdString(commands.dump()));
+        const HttpResponse resp = post(url, QByteArray::fromStdString(commands.dump()), timeoutSec, cancel);
         if (!resp.ok) {
             setFailKind(FailKind::Transport);
             out.error = resp.error;

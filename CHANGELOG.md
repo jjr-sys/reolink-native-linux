@@ -6,6 +6,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the project is pre-1.0, minor versions may still change behaviour.
 
+## [0.4.0-jjr] — 2026-09-19
+
+### Added
+
+- **Downloads manager.** Mark a start and an end on the playback timeline
+  (⇥ and ⇤ buttons, at the playhead), then **Download range…** to save it. Any
+  length: the old five-minute limit is gone. A range can cover several cameras
+  at one site; each camera is its own item. Downloads to one NVR run one at a
+  time (it serves one clip at a time), different NVRs in parallel.
+- **Downloads list** (⬇ Downloads button, with a count while anything is
+  waiting or running): camera, time range, status and progress for each item,
+  with Cancel (removes what was saved so far), Retry, Open folder and Remove.
+  The list lasts for the session; the files on disk are the lasting record.
+- **Save folder** setting, remembered (default `~/Videos/Reolink`), and file
+  names that include the site — `Woorabinda_Kitchen_20260919_142000.mp4` — so
+  two cameras with the same name at different sites can't clash. An existing
+  file is never overwritten.
+- The old **Export clip** menu (15 s to 2 min) now goes through the same queue.
+- **Playback speed** menu (0.25×, 0.5×, 1×, 2×, 4×, 8×) and **back / forward
+  10 seconds** buttons, for one pane or the whole grid. Faster speeds can only
+  go as fast as the link delivers the video, so 8× is realistic on the SD
+  stream but not on HD over a slow link. Sound plays only at 1×. There is no
+  reverse play: the cameras' streams only run forwards, so "back" jumps back.
+- **Snapshot button** on the playback page: saves a JPEG of the picture on
+  screen (every playing pane in the grid) into the save folder, named like a
+  clip, e.g. `Woorabinda_Kitchen_20260919_142000_snapshot.jpg`.
+- The **timeline** shows the time (with seconds) while you drag the red playhead
+  as well as when you hover, and shades the range you have marked.
+
+### Changed
+
+- When a range spans more than one of the NVR's recording files, each file is
+  saved as its own part (`…_part1.mp4`, `…_part2.mp4`) rather than only the
+  first being kept.
+- Long downloads no longer stop after a fixed time; they give up only when the
+  NVR stops sending data for 90 seconds. The NVR cuts a clip before it starts
+  sending (about 1.6 seconds per minute of footage), which the list shows as
+  "Preparing". A download also checks there is enough free disk space first.
+
 ## [0.3.0-jjr] — 2026-09-19
 
 ### Added

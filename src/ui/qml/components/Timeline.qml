@@ -32,6 +32,14 @@ Rectangle {
     property var lanes: []
     property real zoom: 1.0              // 1 = whole day; >1 zooms in
     property real viewStart: 0           // left edge, seconds
+    // Range marked for download, seconds into the day (-1 = not set).
+    property real markStart: -1
+    property real markEnd: -1
+
+    function clockText(sec) {
+        var s = Math.max(0, Math.floor(sec)), pad = function (n) { return String(n).padStart(2, "0"); };
+        return pad(Math.floor(s / 3600)) + ":" + pad(Math.floor(s / 60) % 60) + ":" + pad(s % 60);
+    }
 
     // seek fires continuously while pressing/dragging (move the playhead);
     // commit fires once on release (start playback there).
@@ -152,6 +160,19 @@ Rectangle {
         }
     }
 
+    // Marked range: shaded between the two marks, with an edge at each.
+    Rectangle {
+        visible: root.markStart >= 0
+        x: Math.max(0, root.xForSec(root.markStart))
+        width: root.markEnd > root.markStart
+            ? Math.max(2, Math.min(root.width, root.xForSec(root.markEnd)) - x) : 2
+        y: 0
+        height: root.height
+        color: "#332ecc71"
+        border.color: "#2ecc71"
+        z: 4
+    }
+
     // Playhead
     Rectangle {
         x: root.xForSec(root.position)
@@ -163,10 +184,30 @@ Rectangle {
         visible: root.position >= root.viewStart && root.position <= root.viewStart + root.visibleSpan
     }
 
+    // Time readout beside the playhead while it is being dragged.
+    Rectangle {
+        id: dragTip
+        visible: track.pressed && track.mode === 1
+        x: Math.min(Math.max(0, root.xForSec(root.position) - width / 2), root.width - width)
+        y: 2
+        z: 7
+        radius: 3
+        color: "#cc000000"
+        width: dragText.implicitWidth + 8
+        height: dragText.implicitHeight + 4
+        Text {
+            id: dragText
+            anchors.centerIn: parent
+            color: "#ff8a8a"
+            font.pixelSize: 11
+            text: root.clockText(root.position)
+        }
+    }
+
     // Hover time readout
     Rectangle {
         id: hoverTip
-        visible: hover.hovered
+        visible: hover.hovered && !dragTip.visible
         x: Math.min(Math.max(0, hover.point.position.x - width / 2), root.width - width)
         y: 2
         z: 5
@@ -179,11 +220,7 @@ Rectangle {
             anchors.centerIn: parent
             color: "white"
             font.pixelSize: 10
-            text: {
-                var s = root.secForX(hover.point.position.x);
-                var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-                return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
-            }
+            text: root.clockText(root.secForX(hover.point.position.x))
         }
     }
     HoverHandler { id: hover }

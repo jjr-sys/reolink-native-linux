@@ -335,6 +335,7 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
     const bool pace = m_p.startEpoch > 0;
     QElapsedTimer clock;
     quint32 firstMicros = 0;
+    double pacedSpeed = 1.0; // speed the pacing anchor was set at
     parser.onVideo = [&](const BcMediaParser::VideoFrame &f) {
         if (f.codec != BcMediaParser::Codec::Unknown) {
             QMutexLocker lock(&m_mutex);
@@ -357,7 +358,14 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
                 clock.start();
                 firstMicros = f.microseconds;
             }
-            const qint64 targetMs = (qint64(f.microseconds) - qint64(firstMicros)) / 1000;
+            const double speed = m_speed ? m_speed->load(std::memory_order_relaxed) : 1.0;
+            if (speed != pacedSpeed) { // a speed change: re-anchor at this frame
+                clock.restart();
+                firstMicros = f.microseconds;
+                pacedSpeed = speed;
+            }
+            const qint64 targetMs =
+                qint64(double(qint64(f.microseconds) - qint64(firstMicros)) / 1000.0 / pacedSpeed);
             const qint64 elapsed = clock.elapsed();
             if (targetMs < 0 || targetMs - elapsed > 10000) {
                 clock.restart(); // timestamp discontinuity/seek — rebase

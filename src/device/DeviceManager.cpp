@@ -1153,6 +1153,26 @@ void DeviceManager::requestHdClip(int row, qint64 startEpoch, int durationSecs)
     }));
 }
 
+DownloadSource DeviceManager::downloadSource(int row)
+{
+    DownloadSource s;
+    auto client = clientFor(row);
+    if (!client)
+        return s;
+    const Entry &e = m_entries.at(row);
+    if (e.rec.kind == QLatin1String("stream"))
+        return s;
+    s.hostId = e.rec.id;
+    s.site = e.rec.name;
+    s.camera = e.chanName.isEmpty() ? e.rec.name : e.chanName;
+    s.channel = e.channel;
+    s.host = e.rec.addr;
+    s.port = e.rec.port;
+    s.https = e.rec.https;
+    s.client = std::move(client);
+    return s;
+}
+
 void DeviceManager::exportClip(int row, qint64 startEpoch, int durationSecs)
 {
     auto client = clientFor(row);
@@ -1237,6 +1257,7 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
 
     auto client = std::make_shared<BaichuanClient>(p);
     client->setAudioHandler(player->audioFeed()); // before start(): read by the worker
+    client->setSpeedCell(player->speedCell());
     client->start();
     if (startEpoch > 0) {
         m_playbackClient = client; // weak — for in-place seek; StreamPlayer owns lifetime

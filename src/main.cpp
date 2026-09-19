@@ -7,6 +7,7 @@
 #include "ui/TrayIcon.h"
 #include "device/DeviceDiscovery.h"
 #include "device/DeviceManager.h"
+#include "device/DownloadQueue.h"
 #include "device/EventManager.h"
 #include "media/StreamPlayer.h"
 #include "media/TalkSession.h"
@@ -153,6 +154,7 @@ int main(int argc, char *argv[])
     rl::EventManager events(&database, &devices);
     rl::DeviceDiscovery discovery;
     rl::Updater updater;
+    rl::DownloadQueue downloads([&devices](int row) { return devices.downloadSource(row); });
     rl::TrayIcon tray;
 
     qmlRegisterType<rl::StreamPlayer>("ReolinkApp.Core", 1, 0, "StreamPlayer");
@@ -161,6 +163,7 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Events", &events);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Discovery", &discovery);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Updater", &updater);
+    qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Downloads", &downloads);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Tray", &tray);
 
     QQmlApplicationEngine engine;

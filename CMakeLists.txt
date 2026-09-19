@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(reolink-client
-    VERSION 0.3.0
+    VERSION 0.4.0
     DESCRIPTION "Native Linux client for Reolink cameras and NVRs"
     LANGUAGES CXX)
 
@@ -36,6 +36,7 @@ add_library(reolink_core STATIC
     src/protocol/BcCrypto.h src/protocol/BcCrypto.cpp
     src/protocol/BaichuanClient.h src/protocol/BaichuanClient.cpp
     src/protocol/BaichuanControl.h src/protocol/BaichuanControl.cpp
+    src/device/DownloadPlan.h src/device/DownloadSource.h src/device/DownloadQueue.h src/device/DownloadQueue.cpp
     src/device/DeviceManager.h src/device/DeviceManager.cpp
     src/device/DeviceDiscovery.h src/device/DeviceDiscovery.cpp
     src/device/EventManager.h src/device/EventManager.cpp
@@ -94,6 +95,8 @@ set(APP_QML_FILES
     src/ui/qml/dialogs/ConfirmDialog.qml
     src/ui/qml/dialogs/DetectionZoneDialog.qml
     src/ui/qml/dialogs/ScheduleDialog.qml
+    src/ui/qml/dialogs/DownloadDialog.qml
+    src/ui/qml/components/DownloadsPanel.qml
 )
 # Strip the src/ui/qml/ prefix so module paths are clean (Main.qml, pages/..., etc.)
 foreach(qml_file IN LISTS APP_QML_FILES)
@@ -158,7 +161,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})
