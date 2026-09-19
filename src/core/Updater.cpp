@@ -18,7 +18,10 @@
 namespace rl {
 
 // The published repo. Releases are tagged vX.Y.Z with an x86_64 .AppImage asset.
-static constexpr auto kRepo = "TodesengelX/reolink-native-linux";
+// This is a fork with its own version line, so it checks the fork's releases —
+// pointing at upstream would offer its (audio-less, lower-featured) builds as
+// "updates". Until the fork publishes a release the check finds none and stays silent.
+static constexpr auto kRepo = "jjr-sys/reolink-native-linux";
 static constexpr qint64 kMinAppImageBytes = 1'000'000; // sanity floor for a good download
 
 static QList<int> versionParts(QString v)

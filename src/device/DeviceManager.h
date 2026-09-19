@@ -6,6 +6,7 @@
 // Not forward-declared on purpose — see the note by the other forward
 // declarations below.
 #include "media/StreamPlayer.h"
+#include "media/TalkSession.h"
 
 #include <QAbstractListModel>
 #include <QDateTime>
@@ -186,6 +187,12 @@ public:
     // reconnect. Returns false if there's no live session for `row` (caller should
     // then startBaichuanPlayback instead).
     Q_INVOKABLE bool seekBaichuanPlayback(int row, qint64 startEpoch);
+
+    // Two-way talk: open a Baichuan talk session to this camera's speaker and start
+    // streaming the microphone into it. `session` reports progress (Connecting ->
+    // Talking, or Error with a reason). Stop with session.stop(). No-op for a device
+    // that isn't ready or has no talk capability.
+    Q_INVOKABLE void startTalk(int row, rl::TalkSession *session);
 
     // Settings: fetch a batch of Get* commands (emits settingsLoaded with a map
     // of cmd -> value) and apply one Set* command (emits settingApplied).

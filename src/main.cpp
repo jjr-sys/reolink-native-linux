@@ -9,6 +9,7 @@
 #include "device/DeviceManager.h"
 #include "device/EventManager.h"
 #include "media/StreamPlayer.h"
+#include "media/TalkSession.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
@@ -31,7 +32,9 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName(QStringLiteral("reolink-linux"));
     QCoreApplication::setApplicationName(QStringLiteral("reolink-client"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.1.8"));
+    // Version comes from CMake (PROJECT_VERSION plus the fork tag, e.g. "0.2.0-jjr"),
+    // so the source can't drift from what a build reports.
+    QCoreApplication::setApplicationVersion(QStringLiteral(RL_APP_VERSION));
 
     // Give the app a real identity in the taskbar/dock. setDesktopFileName lets
     // Wayland compositors match the window to the installed .desktop file and
@@ -153,6 +156,7 @@ int main(int argc, char *argv[])
     rl::TrayIcon tray;
 
     qmlRegisterType<rl::StreamPlayer>("ReolinkApp.Core", 1, 0, "StreamPlayer");
+    qmlRegisterType<rl::TalkSession>("ReolinkApp.Core", 1, 0, "TalkSession");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Events", &events);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Discovery", &discovery);

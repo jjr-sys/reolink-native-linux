@@ -9,7 +9,7 @@ ApplicationWindow {
     width: 1400
     height: 860
     visible: typeof startHidden === "undefined" || !startHidden
-    title: qsTr("Reolink Client")
+    title: qsTr("Reolink Client (jjr fork)")
     color: Theme.window
 
     // Video fullscreen (official client: chrome disappears, grid fills the

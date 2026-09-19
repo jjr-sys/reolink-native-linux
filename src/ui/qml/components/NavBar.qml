@@ -34,6 +34,31 @@ Rectangle {
             Layout.topMargin: 3
         }
 
+        // This build is a fork, not the upstream release: say so where the version is.
+        Rectangle {
+            Layout.alignment: Qt.AlignVCenter
+            Layout.topMargin: 3
+            radius: 3
+            color: "transparent"
+            border.color: Theme.accent
+            border.width: 1
+            implicitWidth: forkLabel.implicitWidth + 10
+            implicitHeight: forkLabel.implicitHeight + 2
+            Text {
+                id: forkLabel
+                anchors.centerIn: parent
+                text: qsTr("FORK")
+                color: Theme.accent
+                font.pixelSize: 9
+                font.bold: true
+            }
+            HoverHandler { id: forkHover }
+            ToolTip.visible: forkHover.hovered
+            ToolTip.delay: 400
+            ToolTip.text: qsTr("jjr-sys fork of TodesengelX/reolink-native-linux (based on v0.1.8): "
+                               + "adds live camera audio and two-way talk")
+        }
+
         Item { width: Theme.spacing * 2; height: 1 }
 
         Repeater {

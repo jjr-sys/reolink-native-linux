@@ -73,6 +73,19 @@ public:
 
     bool isOpen() const;
 
+    // ---- Streaming a binary payload to the device (two-way talk) ---------------
+    // A fresh message id for a run of related sends (all binary chunks of one talk
+    // share one id, as the device expects).
+    quint32 nextMessId() { return (++m_messId) & 0xFFFFFF; }
+    // Send one message whose payload is opaque binary (Extension carries
+    // <binaryData>1</binaryData>). Fire-and-forget: replies are collected by
+    // drainReplies(). Returns false if the socket is gone.
+    bool sendBinary(quint32 cmdId, int channel, quint32 messId, const QByteArray &payload);
+    // Consume whatever the device has already sent, without waiting; returns the
+    // status code of the last reply seen (0 if none). Keeps the socket from backing
+    // up during a long send and surfaces the device rejecting the stream.
+    quint16 drainReplies();
+
 private:
     Params m_p;
     std::unique_ptr<QTcpSocket> m_sock;

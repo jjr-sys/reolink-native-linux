@@ -6,9 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the project is pre-1.0, minor versions may still change behaviour.
 
-## [Unreleased]
+## [0.2.0-jjr] — 2026-09-19
+
+First release of the **jjr-sys fork** of
+[TodesengelX/reolink-native-linux](https://github.com/TodesengelX/reolink-native-linux),
+based on upstream v0.1.8. The app reports itself as `0.2.0-jjr` and shows a
+FORK badge next to the version; the update check follows the fork's releases,
+not upstream's.
 
 ### Added
+
+- **Two-way talk.** The microphone button on a live pane now works: click to
+  start talking to that camera's speaker, click again to stop. Audio is
+  captured from the default microphone, resampled, IMA-ADPCM encoded and sent
+  over the native Baichuan talk channel (the format and block size are read from
+  the camera's own talk ability). The camera's playback is muted on your side
+  while you talk, so its speaker can't feed back into the microphone. Talk stops
+  automatically when the pane is hidden, re-pointed at another camera, or the
+  page is left, and always sends an explicit end-of-talk so the camera's speaker
+  is released. Failures (busy camera, no microphone, unsupported camera) show on
+  the tile.
 
 - **Live audio from cameras.** The live grid, a maximized pane and pop-out
   windows can now play the camera's sound. In the grid, sound follows the

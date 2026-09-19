@@ -27,6 +27,11 @@
     <category>Video</category>
   </categories>
   <releases>
+    <release version="0.2.0-jjr" date="2026-09-19">
+      <description>
+        <p>jjr-sys fork: adds live camera audio and two-way talk on top of upstream 0.1.8.</p>
+      </description>
+    </release>
     <release version="0.1.8" date="2026-08-12">
       <description><p>Fixes playback failing with a retrying black screen on systems with FFmpeg 8 or newer, playback stopping at every event marker, and a device re-add leaving its header stuck on "connecting". Event playback now starts five seconds before the moment.</p></description>
     </release>

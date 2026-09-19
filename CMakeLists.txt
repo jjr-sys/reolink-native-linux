@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(reolink-client
-    VERSION 0.1.8
+    VERSION 0.2.0
     DESCRIPTION "Native Linux client for Reolink cameras and NVRs"
     LANGUAGES CXX)
 
@@ -42,8 +42,19 @@ add_library(reolink_core STATIC
     src/media/StreamPlayer.h src/media/StreamPlayer.cpp
     src/media/AudioDecoder.h src/media/AudioDecoder.cpp
     src/media/AudioPlayback.h src/media/AudioPlayback.cpp
+    src/media/TalkCodec.h src/media/TalkCodec.cpp
+    src/media/TalkSession.h src/media/TalkSession.cpp
+    src/protocol/BaichuanTalk.h src/protocol/BaichuanTalk.cpp
     src/media/BcMediaParser.h src/media/BcMediaParser.cpp
 )
+# This is a fork (jjr-sys/reolink-native-linux) of TodesengelX/reolink-native-linux.
+# One source of truth for the version and the fork identity: PROJECT_VERSION above,
+# suffixed so a build can never be mistaken for the upstream release it descends from.
+set(RL_FORK_TAG "jjr")
+set(RL_UPSTREAM_BASE "0.1.8")
+target_compile_definitions(reolink_core PUBLIC
+    RL_APP_VERSION="${PROJECT_VERSION}-${RL_FORK_TAG}"
+    RL_UPSTREAM_BASE="${RL_UPSTREAM_BASE}")
 target_include_directories(reolink_core PUBLIC src third_party)
 target_link_libraries(reolink_core PUBLIC
     Qt6::Core Qt6::Gui Qt6::Sql Qt6::Multimedia Qt6::Concurrent Qt6::Network Qt6::DBus
@@ -145,7 +156,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})

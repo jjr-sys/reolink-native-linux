@@ -246,6 +246,39 @@ QByteArray BaichuanControl::transact(quint32 cmdId, int channel, const QByteArra
     return decryptReply(reply, m_aesKey);
 }
 
+bool BaichuanControl::sendBinary(quint32 cmdId, int channel, quint32 messId,
+                                 const QByteArray &payload)
+{
+    if (!isOpen())
+        return false;
+    const quint8 chId = channel < 0 ? 250 : static_cast<quint8>(channel + 1);
+    // The Extension is ciphered like any control body; the binary payload after it
+    // is sent as-is (only FullAES sessions cipher media, and those negotiate an
+    // <encryptLen> we never ask for on this path).
+    QByteArray ext = QByteArrayLiteral("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n"
+                                       "<Extension version=\"1.1\">\n<binaryData>1</binaryData>\n");
+    if (channel >= 0)
+        ext += QByteArrayLiteral("<channelId>") + QByteArray::number(channel) +
+               QByteArrayLiteral("</channelId>\n");
+    ext += QByteArrayLiteral("</Extension>\n");
+    m_sock->write(modernMessage(cmdId, chId, messId, bc::aesCfb(ext, m_aesKey, false), payload));
+    return m_sock->state() == QAbstractSocket::ConnectedState;
+}
+
+quint16 BaichuanControl::drainReplies()
+{
+    if (!isOpen())
+        return 0;
+    m_sock->flush();
+    if (m_sock->bytesAvailable() > 0 || m_sock->waitForReadyRead(0))
+        m_netBuf.append(m_sock->readAll());
+    quint16 last = 0;
+    Msg m;
+    while (parseMessage(m_netBuf, m))
+        last = m.status;
+    return last;
+}
+
 QByteArray BaichuanControl::get(quint32 cmdId, int channel, quint16 *statusOut)
 {
     return transact(cmdId, channel, QByteArray(), statusOut);

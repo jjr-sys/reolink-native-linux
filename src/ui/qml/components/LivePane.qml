@@ -32,7 +32,8 @@ Rectangle {
     property bool capSiren: false
     property bool capFloodlight: false
     property bool capTalk: false
-    property bool talkActive: false
+    // Two-way talk: driven by the TalkSession below; true from click until stopped.
+    readonly property bool talkActive: talk.active
     property bool floodOn: false // white-LED/floodlight on state (optimistic)
 
     // Camera audio follows the selected pane (the one with the accent border): the
@@ -136,9 +137,12 @@ Rectangle {
     }
     // A pane pointed at a different camera must let the old one go now — its
     // session is wanted elsewhere (a swap hands it straight to another pane).
-    onDeviceRowChanged: { bcFallback = false; releaseStream(); updateSource(); }
-    onVisibleChanged: updateSource()
-    onPageActiveChanged: updateSource()
+    // Talk ends with anything that takes the pane away from this camera: the camera
+    // is swapped, the pane is hidden by a layout change, or the page is left —
+    // the camera's speaker must never be left open behind the user's back.
+    onDeviceRowChanged: { talk.stop(); bcFallback = false; releaseStream(); updateSource(); }
+    onVisibleChanged: { if (!visible) talk.stop(); updateSource(); }
+    onPageActiveChanged: { if (!pageActive) talk.stop(); updateSource(); }
     onEffectiveMainChanged: { bcFallback = false; updateSource(); }
     Component.onCompleted: updateSource()
 
@@ -170,10 +174,15 @@ Rectangle {
         videoSink: video.videoSink
         // Audible only while asked for AND actually on screen: a pane held briefly
         // after a layout change must not keep talking.
-        muted: !(root.audioOn && root.visible && root.pageActive)
+        // Also silent while we talk: the camera's own sound coming out of the
+        // laptop would be picked up by the microphone and fed straight back.
+        muted: !(root.audioOn && root.visible && root.pageActive && !talk.active)
     }
 
-    Component.onDestruction: player.stop()
+    // Microphone -> this camera's speaker.
+    TalkSession { id: talk }
+
+    Component.onDestruction: { talk.stop(); player.stop(); }
 
     // ---- Drag and drop -----------------------------------------------------
     // Dropping a camera here re-points this cell at it. Nothing needs to stop
@@ -359,6 +368,12 @@ Rectangle {
             anchors.centerIn: parent
             spacing: 6
             Text { text: root.label; color: "white"; font.pixelSize: 11 }
+            // Live-microphone marker: you are transmitting to this camera.
+            Text {
+                visible: talk.state === TalkSession.Talking
+                text: "🎙"
+                font.pixelSize: 11
+            }
             // Shows which camera you are hearing (only when it has sound to play).
             Text {
                 visible: root.audioOn && player.hasAudio && !player.muted
@@ -404,6 +419,34 @@ Rectangle {
                 }
             }
         }
+    }
+
+    // ---- Talk status ---------------------------------------------------------
+    // Connecting, or why talking failed. Tap an error to dismiss it.
+    Rectangle {
+        visible: root.hasSource &&
+                 (talk.state === TalkSession.Error || talk.state === TalkSession.Connecting)
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: 30
+        radius: 3
+        color: talk.state === TalkSession.Error ? "#cc7a1f1f" : "#cc0d141b"
+        width: talkMsg.width + 16
+        height: talkMsg.implicitHeight + 8
+        z: 20
+        Text {
+            id: talkMsg
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, root.width - 36)
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            color: "white"
+            font.pixelSize: 11
+            text: talk.state === TalkSession.Error
+                  ? qsTr("Talk: %1").arg(talk.errorString)
+                  : qsTr("Connecting to camera speaker…")
+        }
+        TapHandler { onTapped: talk.stop() }
     }
 
     // ---- PTZ joystick overlay ---------------------------------------------
@@ -501,13 +544,14 @@ Rectangle {
                 tip: qsTr("PTZ controls")
                 onActivated: root.ptzOpen = !root.ptzOpen
             }
-            // Two-way talk (push-to-hold). Baichuan talk path is the primary
-            // transport (DESIGN §5.4) and wires in with the M12 protocol work;
-            // this toggles the UI state and mic intent today.
+            // Two-way talk over the Baichuan talk channel (DESIGN §5.4). Click to
+            // start, click again to stop; a failure shows on the tile.
             ToolButton {
-                glyph: "🎙"; active: root.talkActive; enabledTool: root.capTalk
-                tip: qsTr("Two-way talk (coming soon)")
-                onActivated: root.talkActive = !root.talkActive
+                glyph: "🎙"; active: talk.active; enabledTool: root.capTalk
+                tip: talk.state === TalkSession.Talking ? qsTr("Talking — click to stop")
+                   : talk.state === TalkSession.Connecting ? qsTr("Connecting…")
+                   : qsTr("Two-way talk (click to start, click again to stop)")
+                onActivated: talk.active ? talk.stop() : Devices.startTalk(root.deviceRow, talk)
             }
             ToolButton {
                 glyph: "📢"; enabledTool: root.capSiren

@@ -1260,6 +1260,23 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     player->start();
 }
 
+void DeviceManager::startTalk(int row, TalkSession *session)
+{
+    if (row < 0 || row >= m_entries.size() || !session)
+        return;
+    const Entry &e = m_entries.at(row);
+    if (e.rec.kind == QLatin1String("stream") || !e.primed || !e.talk)
+        return;
+
+    BaichuanTalk::Params p;
+    p.host = e.rec.addr;
+    p.port = 9000; // Baichuan port, separate from the HTTP API
+    p.username = e.rec.username;
+    p.password = e.password;
+    p.channel = e.channel;
+    session->start(p);
+}
+
 void DeviceManager::startBaichuanPlayback(int row, qint64 startEpoch, StreamPlayer *player,
                                           bool mainStream)
 {
