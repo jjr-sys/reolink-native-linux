@@ -1236,6 +1236,7 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     p.startEpoch = startEpoch; // <= 0 = live (cmd 3 Preview), else by-time playback
 
     auto client = std::make_shared<BaichuanClient>(p);
+    client->setAudioHandler(player->audioFeed()); // before start(): read by the worker
     client->start();
     if (startEpoch > 0) {
         m_playbackClient = client; // weak — for in-place seek; StreamPlayer owns lifetime

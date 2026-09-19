@@ -451,6 +451,60 @@ private slots:
         QCOMPARE(frames[0].microseconds, quint32(12345));
         QCOMPARE(frames[0].annexB, nal);
     }
+
+    // AAC audio ("05wb") is surfaced as its ADTS payload; ADPCM ("01wb") is framed
+    // and skipped; video around them is unaffected, and a frame split across appends
+    // is only reported once whole.
+    void bcMediaParserAudio()
+    {
+        auto audioFrame = [](const char *magic, const QByteArray &payload) {
+            QByteArray f;
+            f.append(magic, 4);
+            const quint16 n = static_cast<quint16>(payload.size());
+            f.append(char(n & 0xff)).append(char(n >> 8)); // payload_size
+            f.append(char(n & 0xff)).append(char(n >> 8)); // payload_size_b
+            f.append(payload);
+            f.append(QByteArray((8 - n % 8) % 8, 0));      // pad to 8
+            return f;
+        };
+        const QByteArray adts = QByteArrayLiteral("\xff\xf1\x4c\x40\x01\x1f\xfc\xaa\xbb\xcc"); // 10
+        const QByteArray nal = QByteArrayLiteral("\x00\x00\x00\x01\x65");
+        QByteArray pframe;
+        pframe.append("01dc");
+        pframe.append("H264");
+        putLE32(pframe, nal.size());
+        putLE32(pframe, 0);
+        putLE32(pframe, 0);
+        putLE32(pframe, 0);
+        pframe.append(nal);
+        pframe.append(QByteArray(3, 0));
+
+        rl::BcMediaParser mp;
+        QList<QByteArray> audio;
+        int video = 0;
+        mp.onAudio = [&](const QByteArray &a) { audio.append(a); };
+        mp.onVideo = [&](const rl::BcMediaParser::VideoFrame &) { ++video; };
+
+        const QByteArray aac = audioFrame("05wb", adts);
+        mp.append(aac.left(6));
+        QCOMPARE(audio.size(), 0); // incomplete
+        mp.append(aac.mid(6));
+        QCOMPARE(audio.size(), 1);
+        QCOMPARE(audio[0], adts); // payload only: no BC header, no padding
+
+        mp.append(audioFrame("01wb", QByteArray(20, 'x'))); // ADPCM: skipped
+        mp.append(pframe);                                  // video still parses after it
+        mp.append(audioFrame("05wb", adts));
+        QCOMPARE(audio.size(), 2);
+        QCOMPARE(video, 1);
+
+        // With no handler installed audio is silently consumed, never wedging the stream.
+        rl::BcMediaParser bare;
+        int v = 0;
+        bare.onVideo = [&](const rl::BcMediaParser::VideoFrame &) { ++v; };
+        bare.append(aac + pframe);
+        QCOMPARE(v, 1);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestProtocol)

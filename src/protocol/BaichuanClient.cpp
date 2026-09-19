@@ -309,9 +309,15 @@ bool BaichuanClient::seek(qint64 startEpoch)
     return true;
 }
 
+void BaichuanClient::setAudioHandler(std::function<void(const QByteArray &)> handler)
+{
+    m_audioHandler = std::move(handler);
+}
+
 void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint16 streamMsgNum)
 {
     BcMediaParser parser;
+    parser.onAudio = m_audioHandler; // empty = the parser skips audio
     bool started = false;
     // After a seek, discard old in-flight frames until an I-frame at the new
     // position (POSIX seconds); 0 = no seek pending.

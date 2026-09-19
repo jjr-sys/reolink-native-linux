@@ -8,6 +8,7 @@
 #include <QWaitCondition>
 
 #include <atomic>
+#include <functional>
 #include <thread>
 
 class QTcpSocket;
@@ -55,6 +56,11 @@ public:
     // false if the session has already ended (caller should start a fresh one).
     bool seek(qint64 startEpoch);
 
+    // Where the stream's AAC audio goes (one ADTS frame per call, on the client's
+    // network thread). Set before start(); the raw video byte stream has no room for
+    // it. Unset = audio is discarded.
+    void setAudioHandler(std::function<void(const QByteArray &)> handler);
+
     // Blocking read of decoded Annex-B bytes (for an AVIOContext read callback).
     // Returns the number of bytes written, 0 on clean end, or <0 on abort/error.
     int read(unsigned char *buf, int size);
@@ -73,6 +79,8 @@ private:
     Params m_p;
     std::thread m_thread;
     std::atomic<bool> m_abort{false};
+
+    std::function<void(const QByteArray &)> m_audioHandler; // set before start()
 
     QMutex m_mutex;
     QWaitCondition m_cond;

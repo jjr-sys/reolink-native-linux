@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the project is pre-1.0, minor versions may still change behaviour.
 
+## [Unreleased]
+
+### Added
+
+- **Live audio from cameras.** The live grid, a maximized pane and pop-out
+  windows can now play the camera's sound. Cameras start muted; a speaker
+  button on the pane toolbar (and in a pop-out window's corner) turns sound on,
+  and only one camera in the grid is audible at a time. The button only appears
+  when the stream actually carries an audio track. Works over both RTSP (grid
+  tiles) and native Baichuan (HD/maximized). AAC and G.711/PCM are decoded and
+  resampled to 48 kHz stereo; muted panes decode no audio at all. Playing to a
+  different output follows the system default (e.g. Bluetooth headphones).
+  Recorded clips and playback are still video-only.
+
 ## [0.1.8] — 2026-08-12
 
 ### Fixed

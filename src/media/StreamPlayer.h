@@ -7,12 +7,16 @@
 #include <QString>
 #include <QVideoSink>
 
+#include <QByteArray>
+
 #include <atomic>
 #include <functional>
 #include <memory>
 #include <thread>
 
 namespace rl {
+
+class AudioPlayback;
 
 // One live/playback stream: FFmpeg demux + decode on a dedicated worker thread,
 // frames delivered to a QML VideoOutput's QVideoSink (NV12/YUV420P upload path —
@@ -23,6 +27,11 @@ namespace rl {
 // read or DNS lookup can never freeze the UI. The Session outlives the StreamPlayer
 // until the worker drops its reference; a mutex-guarded back-pointer makes stale
 // frame/state callbacks safe no-ops after the StreamPlayer is gone.
+//
+// Audio: the same demux session carries the camera's audio track. It is decoded only
+// while unmuted (`muted` defaults to true), so a wall of muted tiles pays nothing for
+// it; the page decides which single pane is audible (DESIGN §5.3). Decoded PCM is
+// handed to an AudioPlayback on the GUI thread. Recording remains video-only.
 //
 // Sources: rtsp:// (live, TCP, low-latency flags), or any libavformat-openable
 // URL/file (used by tests and the "direct stream" device kind).
@@ -41,6 +50,10 @@ class StreamPlayer : public QObject
     Q_PROPERTY(bool loop READ loop WRITE setLoop NOTIFY loopChanged)
     Q_PROPERTY(bool retryOnError READ retryOnError WRITE setRetryOnError NOTIFY retryOnErrorChanged)
     Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
+    // Camera audio is muted unless a pane is explicitly made audible.
+    Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
+    // True once the stream is known to carry an audio track we can decode.
+    Q_PROPERTY(bool hasAudio READ hasAudio NOTIFY hasAudioChanged)
 
 public:
     enum class State { Idle, Connecting, Streaming, Error, Stopped };
@@ -63,6 +76,11 @@ public:
         // Retry on connection error even for non-live sources (playback FLV on a
         // connection-limited NVR often needs a couple of attempts).
         std::atomic<bool> retryOnError{false};
+
+        // Audio is decoded only while wanted (= !muted). announcedAudio makes the
+        // Baichuan path report the track's existence once, from its first frame.
+        std::atomic<bool> audioWanted{false};
+        std::atomic<bool> announcedAudio{false};
 
         // Recording taps this same demux session (DESIGN §5.5): no second stream.
         std::atomic<bool> recordRequested{false};
@@ -111,6 +129,16 @@ public:
     bool retryOnError() const { return m_retryOnError; }
     void setRetryOnError(bool v);
 
+    bool muted() const { return m_muted; }
+    void setMuted(bool muted);
+    bool hasAudio() const { return m_hasAudio; }
+
+    // Native Baichuan carries audio in the same byte stream as video, but the video
+    // path is a raw elementary stream with no room for it. The client feeds ADTS AAC
+    // frames to this callback instead (thread-safe; valid after this player is gone,
+    // where it does nothing). Hand it to BaichuanClient::setAudioHandler.
+    std::function<void(const QByteArray &)> audioFeed();
+
     Q_INVOKABLE void start();
     Q_INVOKABLE void stop();
 
@@ -124,6 +152,10 @@ public:
     // Public so the worker helpers can reach it; not part of the QML API.
     void applyStateFromWorker(State state, const QString &error);
     void applyRecordingState(bool recording, const QString &path, const QString &error);
+    void applyAudioFromWorker(const QByteArray &pcm);
+    void applyHasAudio(bool hasAudio);
+
+    struct AudioTap; // Baichuan audio entry point; defined in the .cpp
 
 signals:
     void sourceChanged();
@@ -135,6 +167,8 @@ signals:
     void loopChanged();
     void retryOnErrorChanged();
     void recordingChanged();
+    void mutedChanged();
+    void hasAudioChanged();
     void recordingSaved(const QString &path);
     void recordingFailed(const QString &error);
 
@@ -153,6 +187,10 @@ private:
     QString m_errorString;
     bool m_recording = false;
     bool m_retryOnError = false;
+    bool m_muted = true;
+    bool m_hasAudio = false;
+    std::unique_ptr<AudioPlayback> m_audioOut; // created on the first audible chunk
+    std::shared_ptr<AudioTap> m_tap;           // lazily created by audioFeed()
 
     // Set via QML before start(); copied into each new Session. Survives stop().
     QPointer<QVideoSink> m_pendingSink;

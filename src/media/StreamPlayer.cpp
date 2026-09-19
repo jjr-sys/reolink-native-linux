@@ -1,5 +1,7 @@
 #include "StreamPlayer.h"
 
+#include "AudioDecoder.h"
+#include "AudioPlayback.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 
@@ -196,6 +198,26 @@ void deliverFrame(const std::shared_ptr<Session> &s, const QVideoFrame &frame)
                 s->sink->setVideoFrame(frame);
         },
         Qt::QueuedConnection);
+}
+
+// Decoded PCM to the GUI thread, where the audio sink lives. A stale session's
+// audio (after stop/replace) is dropped by the same back-pointer check as frames.
+void postAudio(const std::shared_ptr<Session> &s, const QByteArray &pcm)
+{
+    QMutexLocker lock(&s->backMutex);
+    if (!s->player)
+        return;
+    StreamPlayer *p = s->player;
+    QMetaObject::invokeMethod(p, [p, pcm] { p->applyAudioFromWorker(pcm); }, Qt::QueuedConnection);
+}
+
+void postHasAudio(const std::shared_ptr<Session> &s, bool has)
+{
+    QMutexLocker lock(&s->backMutex);
+    if (!s->player)
+        return;
+    StreamPlayer *p = s->player;
+    QMetaObject::invokeMethod(p, [p, has] { p->applyHasAudio(has); }, Qt::QueuedConnection);
 }
 
 void postRecording(const std::shared_ptr<Session> &s, bool recording, const QString &path,
@@ -512,6 +534,20 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
         return false;
     }
     AVStream *stream = fmt->streams[videoIndex];
+
+    // The camera's audio track, if any (RTSP/FLV demux it alongside the video; the
+    // native Baichuan raw stream has none — its audio arrives via AudioTap instead).
+    // Decoding is deferred until the pane is unmuted.
+    const int audioIndex =
+        packetSource ? -1 : av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, videoIndex, nullptr, 0);
+    std::unique_ptr<AudioDecoder> audioDec;
+    if (audioIndex >= 0 && AudioDecoder::canDecode(fmt->streams[audioIndex]->codecpar))
+        postHasAudio(s, true);
+    else if (audioIndex >= 0)
+        qCInfo(lcMedia) << redacted(source) << "audio codec"
+                        << avcodec_get_name(fmt->streams[audioIndex]->codecpar->codec_id)
+                        << "not decodable — staying silent";
+
     const QtVideo::Rotation rotation = streamRotation(stream, s->expectedSize);
 
     const AVCodec *codec = avcodec_find_decoder(stream->codecpar->codec_id);
@@ -727,6 +763,24 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             finalizeRecording();
             return !packetSource && (live || s->retryOnError.load());
         }
+        if (packet->stream_index == audioIndex) {
+            if (s->audioWanted.load(std::memory_order_relaxed)) {
+                if (!audioDec) {
+                    audioDec = std::make_unique<AudioDecoder>();
+                    if (!audioDec->open(fmt->streams[audioIndex]->codecpar)) {
+                        audioDec.reset();
+                        s->audioWanted.store(false); // give up rather than retry per packet
+                    }
+                }
+                if (audioDec) {
+                    const QByteArray pcm = audioDec->decode(packet);
+                    if (!pcm.isEmpty())
+                        postAudio(s, pcm);
+                }
+            }
+            av_packet_unref(packet);
+            continue;
+        }
         if (packet->stream_index != videoIndex) {
             av_packet_unref(packet);
             continue;
@@ -774,6 +828,97 @@ void runWorker(std::shared_ptr<Session> s)
 }
 
 } // namespace
+
+// Entry point for Baichuan audio. The BaichuanClient's network thread calls push()
+// with one ADTS AAC frame at a time; it lives independently of the StreamPlayer (the
+// client outlives neither unpredictably) and reaches the player only through the
+// Session's back-pointer, so a late frame after teardown is a no-op.
+struct StreamPlayer::AudioTap {
+    QMutex mutex;                   // guards `session`
+    std::weak_ptr<Session> session; // the currently running session, if any
+    QMutex decMutex;                // guards `decoder`
+    std::unique_ptr<AudioDecoder> decoder;
+
+    void bind(const std::shared_ptr<Session> &s)
+    {
+        {
+            QMutexLocker lock(&mutex);
+            session = s;
+        }
+        QMutexLocker lock(&decMutex);
+        decoder.reset(); // new session, fresh decoder state
+    }
+
+    void push(const QByteArray &adts)
+    {
+        std::shared_ptr<Session> s;
+        {
+            QMutexLocker lock(&mutex);
+            s = session.lock();
+        }
+        if (!s)
+            return;
+        // Existence of an audio track is worth reporting even while muted, so the UI
+        // can offer an unmute control; decoding is what muting saves.
+        if (!s->announcedAudio.exchange(true))
+            postHasAudio(s, true);
+        if (!s->audioWanted.load(std::memory_order_relaxed))
+            return;
+        QByteArray pcm;
+        {
+            QMutexLocker lock(&decMutex);
+            if (!decoder) {
+                auto d = std::make_unique<AudioDecoder>();
+                if (!d->openAdtsAac()) {
+                    s->audioWanted.store(false);
+                    return;
+                }
+                decoder = std::move(d);
+            }
+            pcm = decoder->decode(adts);
+        }
+        if (!pcm.isEmpty())
+            postAudio(s, pcm);
+    }
+};
+
+std::function<void(const QByteArray &)> StreamPlayer::audioFeed()
+{
+    if (!m_tap)
+        m_tap = std::make_shared<AudioTap>();
+    // Capture the tap, never `this`: the client keeps this callback for as long as it
+    // runs, which can be past this player's destruction.
+    return [tap = m_tap](const QByteArray &adts) { tap->push(adts); };
+}
+
+void StreamPlayer::setMuted(bool muted)
+{
+    if (m_muted == muted)
+        return;
+    m_muted = muted;
+    if (m_session)
+        m_session->audioWanted.store(!muted);
+    if (muted)
+        m_audioOut.reset(); // release the device and drop queued sound at once
+    emit mutedChanged();
+}
+
+void StreamPlayer::applyHasAudio(bool hasAudio)
+{
+    if (m_hasAudio == hasAudio)
+        return;
+    m_hasAudio = hasAudio;
+    emit hasAudioChanged();
+}
+
+void StreamPlayer::applyAudioFromWorker(const QByteArray &pcm)
+{
+    if (m_muted)
+        return; // muted after this chunk was queued
+    if (!m_audioOut)
+        m_audioOut = std::make_unique<AudioPlayback>();
+    m_audioOut->write(pcm);
+}
 
 // applyStateFromWorker runs on the GUI thread (posted via invokeMethod).
 void StreamPlayer::applyStateFromWorker(State state, const QString &error)
@@ -932,6 +1077,10 @@ void StreamPlayer::start()
     s->expectedSize = m_expectedSize;
     s->loop.store(m_loop);
     s->retryOnError.store(m_retryOnError);
+    s->audioWanted.store(!m_muted);
+    if (m_tap)
+        m_tap->bind(s);
+    applyHasAudio(false); // the new session reports its own track
     {
         QMutexLocker lock(&s->sinkMutex);
         s->sink = m_pendingSink;
@@ -962,6 +1111,8 @@ void StreamPlayer::stop()
     }
     m_session->abort.store(true);
     m_session.reset();
+    m_audioOut.reset(); // don't let buffered sound play on after the picture stopped
+    applyHasAudio(false);
     if (m_recording) {
         m_recording = false;
         emit recordingChanged();

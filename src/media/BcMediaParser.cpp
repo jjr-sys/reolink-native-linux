@@ -94,7 +94,11 @@ int BcMediaParser::append(const QByteArray &mediaBytes)
             const int total = 8 + static_cast<int>(size) + padFor(size);
             if (m_buf.size() < total)
                 break;
-            m_buf.remove(0, total); // audio skipped in the video path
+            // "05wb" is AAC; its payload is a bare ADTS frame right after the 8-byte
+            // header. "01wb" (ADPCM) is framed the same way but not decoded.
+            if (b[1] == '5' && onAudio && size > 0)
+                onAudio(m_buf.mid(8, static_cast<int>(size)));
+            m_buf.remove(0, total);
             continue;
         }
 

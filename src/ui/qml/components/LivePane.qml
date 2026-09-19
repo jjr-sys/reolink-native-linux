@@ -35,6 +35,11 @@ Rectangle {
     property bool talkActive: false
     property bool floodOn: false // white-LED/floodlight on state (optimistic)
 
+    // Camera audio. The page grants sound to ONE pane at a time (mixing sixteen
+    // cameras is never wanted); this pane just reports the request and obeys.
+    property bool audioOn: false
+    signal audioToggled(int deviceRow)
+
     // User stream-quality preference: false = Fluent (sub), true = Clear (main).
     // This alone decides which stream plays — so the SD/HD toolbar toggle works in
     // every layout, including a maximized pane. Maximizing/restoring just seeds a
@@ -164,6 +169,9 @@ Rectangle {
     StreamPlayer {
         id: player
         videoSink: video.videoSink
+        // Audible only while asked for AND actually on screen: a pane held briefly
+        // after a layout change must not keep talking.
+        muted: !(root.audioOn && root.visible && root.pageActive)
     }
 
     Component.onDestruction: player.stop()
@@ -476,6 +484,14 @@ Rectangle {
                 glyph: "⏺"; active: player.recording
                 tip: player.recording ? qsTr("Stop recording") : qsTr("Record video")
                 onActivated: player.recording ? player.stopRecording() : player.startRecording()
+            }
+            // Sound: only offered when the stream really carries an audio track.
+            ToolButton {
+                glyph: root.audioOn ? "🔊" : "🔇"
+                active: root.audioOn
+                enabledTool: player.hasAudio
+                tip: root.audioOn ? qsTr("Mute") : qsTr("Listen (unmute this camera)")
+                onActivated: root.audioToggled(root.deviceRow)
             }
             ToolButton {
                 glyph: "⊕"; active: root.zoom > 1.01

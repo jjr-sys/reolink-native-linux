@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Window
+import QtQuick.Controls
 import QtMultimedia
 import ReolinkApp
 import ReolinkApp.Core
@@ -78,9 +79,13 @@ Window {
             }
         }
     }
+    // Camera audio: off until asked for (a popped-out window is usually one of
+    // several), and only offered when the stream carries a track.
+    property bool audioOn: false
     StreamPlayer {
         id: player
         videoSink: video.videoSink
+        muted: !win.audioOn
     }
     property bool bcFallback: false // Baichuan slot busy -> RTSP main this round
     function startStream() {
@@ -132,6 +137,23 @@ Window {
                 color: Theme.accent; font.pixelSize: 12
             }
         }
+    }
+
+    Rectangle { // listen / mute
+        visible: player.state === StreamPlayer.Streaming && player.hasAudio
+        anchors.top: parent.top; anchors.right: parent.right; anchors.margins: 8
+        width: 32; height: 28; radius: 4
+        color: win.audioOn ? Theme.accentDim : "#80000000"
+        Text {
+            anchors.centerIn: parent
+            text: win.audioOn ? "🔊" : "🔇"
+            color: "white"; font.pixelSize: 15
+        }
+        TapHandler { onTapped: win.audioOn = !win.audioOn }
+        HoverHandler { id: audioHover }
+        ToolTip.visible: audioHover.hovered
+        ToolTip.delay: 500
+        ToolTip.text: win.audioOn ? qsTr("Mute") : qsTr("Listen (unmute this camera)")
     }
 
     Shortcut { sequence: "Escape"; onActivated: win.close() }
