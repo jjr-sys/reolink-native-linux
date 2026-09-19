@@ -13,8 +13,48 @@ Dialog {
     anchors.centerIn: Overlay.overlay
     width: Math.min(460, (Overlay.overlay ? Overlay.overlay.width : 460) - 80)
     padding: Theme.spacing * 2
-    title: qsTr("Download range")
     background: Rectangle { color: Theme.surface; border.color: Theme.border; radius: Theme.radius }
+
+    header: Item {
+        implicitHeight: hdr.implicitHeight + 22
+        ColumnLayout {
+            id: hdr
+            x: Theme.spacing * 2; width: parent.width - Theme.spacing * 4
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 2
+            Text { text: qsTr("Download range"); color: Theme.text; font.pixelSize: 16; font.bold: true }
+            Text { text: dlg.siteName; color: Theme.textMuted; font.pixelSize: 12 }
+        }
+    }
+
+    component ThemedField: TextField {
+        color: Theme.text
+        selectionColor: Theme.accentDim
+        selectedTextColor: Theme.text
+        font.pixelSize: 13
+        horizontalAlignment: TextInput.AlignHCenter
+        background: Rectangle {
+            color: Theme.surfaceAlt
+            border.color: parent.activeFocus ? Theme.accent : Theme.border
+            radius: 4
+        }
+    }
+    component ActionButton: Rectangle {
+        property string label: ""
+        property bool primary: false
+        property bool enabledBtn: true
+        signal clicked()
+        implicitWidth: abTxt.implicitWidth + 24
+        implicitHeight: 30
+        radius: Theme.radius
+        opacity: enabledBtn ? 1 : 0.45
+        color: primary ? (abHover.hovered && enabledBtn ? Theme.accent : Theme.accentDim)
+                       : (abHover.hovered && enabledBtn ? Theme.surfaceAlt : Theme.surface)
+        border.color: primary ? Theme.accent : Theme.border
+        Text { id: abTxt; anchors.centerIn: parent; text: parent.label; color: Theme.text; font.pixelSize: 12 }
+        HoverHandler { id: abHover; enabled: parent.enabledBtn }
+        TapHandler { enabled: parent.enabledBtn; onTapped: parent.clicked() }
+    }
 
     property int hostId: -1         // the site whose cameras are offered
     property string siteName: ""
@@ -58,20 +98,34 @@ Dialog {
         return m > 0 ? qsTr("%1 min %2 s").arg(m).arg(s) : qsTr("%1 s").arg(s);
     }
 
+    // The cameras at this site, in the order the sidebar lists them.
+    readonly property var siteRows: {
+        var out = [];
+        for (var r = 0; r < Devices.count; ++r)
+            if (Devices.cameraInfo(r).hostId === dlg.hostId)
+                out.push(r);
+        return out;
+    }
+    function setAll(on) {
+        var p = ({});
+        if (on)
+            for (var i = 0; i < siteRows.length; ++i)
+                p[siteRows[i]] = true;
+        picked = p;
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: Theme.spacing
 
-        Text { text: dlg.siteName; color: Theme.textMuted; font.pixelSize: 12 }
-
         RowLayout {
             spacing: Theme.spacing
-            Text { text: qsTr("From"); color: Theme.text; font.pixelSize: 12 }
-            TextField { id: startField; implicitWidth: 92; inputMask: "99:99:99"; font.pixelSize: 12
-                        color: dlg.s0 >= 0 ? Theme.text : Theme.danger }
-            Text { text: qsTr("to"); color: Theme.text; font.pixelSize: 12 }
-            TextField { id: endField; implicitWidth: 92; inputMask: "99:99:99"; font.pixelSize: 12
-                        color: dlg.s1 > dlg.s0 ? Theme.text : Theme.danger }
+            Text { text: qsTr("From"); color: Theme.text; font.pixelSize: 13 }
+            ThemedField { id: startField; implicitWidth: 92; inputMask: "99:99:99;0"
+                          color: dlg.s0 >= 0 ? Theme.text : Theme.danger }
+            Text { text: qsTr("to"); color: Theme.text; font.pixelSize: 13 }
+            ThemedField { id: endField; implicitWidth: 92; inputMask: "99:99:99;0"
+                          color: dlg.s1 > dlg.s0 ? Theme.text : Theme.danger }
             Text {
                 text: dlg.rangeOk ? dlg.durationText(dlg.s1 - dlg.s0) : qsTr("End must be after start")
                 color: dlg.rangeOk ? Theme.textMuted : Theme.danger
@@ -79,24 +133,59 @@ Dialog {
             }
         }
 
-        Text { text: qsTr("Cameras"); color: Theme.text; font.pixelSize: 12; font.bold: true }
+        RowLayout {
+            Layout.fillWidth: true
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Cameras at %1 (%2 of %3)").arg(dlg.siteName).arg(dlg.pickedCount).arg(dlg.siteRows.length)
+                color: Theme.text; font.pixelSize: 13; font.bold: true
+                elide: Text.ElideRight
+            }
+            ActionButton { label: qsTr("All"); onClicked: dlg.setAll(true) }
+            ActionButton { label: qsTr("None"); onClicked: dlg.setAll(false) }
+        }
         ListView {
             id: cams
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(200, contentHeight)
+            Layout.preferredHeight: Math.min(280, contentHeight)
             clip: true
-            model: Devices
+            spacing: 2
+            model: dlg.siteRows
             delegate: CheckBox {
-                required property int index
-                required property string name
-                visible: Devices.cameraInfo(index).hostId === dlg.hostId
-                height: visible ? implicitHeight : 0
-                text: name
-                checked: !!dlg.picked[index]
+                id: cb
+                required property int modelData   // the camera's device row
+                width: cams.width
+                height: 30
+                checked: !!dlg.picked[modelData]
                 onToggled: {
                     var p = Object.assign({}, dlg.picked);
-                    if (checked) p[index] = true; else delete p[index];
+                    if (checked) p[modelData] = true; else delete p[modelData];
                     dlg.picked = p;
+                }
+                indicator: Rectangle {
+                    x: 6
+                    implicitWidth: 18; implicitHeight: 18
+                    anchors.verticalCenter: parent.verticalCenter
+                    radius: 4
+                    color: cb.checked ? Theme.accent : Theme.surfaceAlt
+                    border.color: cb.checked ? Theme.accent : Theme.textMuted
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u2713"; visible: cb.checked
+                        color: Theme.window; font.pixelSize: 12; font.bold: true
+                    }
+                }
+                contentItem: Text {
+                    text: Devices.cameraInfo(cb.modelData).name
+                    color: Theme.text
+                    font.pixelSize: 13
+                    leftPadding: 6 + cb.indicator.width + 8
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                }
+                background: Rectangle {
+                    radius: 4
+                    color: cb.hovered ? Theme.surfaceAlt : "transparent"
                 }
             }
         }
@@ -116,16 +205,17 @@ Dialog {
                 color: Theme.textMuted; font.pixelSize: 11
                 elide: Text.ElideMiddle
             }
-            Button { text: qsTr("Change…"); onClicked: folderDialog.open() }
+            ActionButton { label: qsTr("Change…"); onClicked: folderDialog.open() }
         }
 
         RowLayout {
             Layout.fillWidth: true
             Item { Layout.fillWidth: true }
-            Button { text: qsTr("Cancel"); onClicked: dlg.close() }
-            Button {
-                text: qsTr("Add to queue")
-                enabled: dlg.rangeOk && dlg.pickedCount > 0
+            ActionButton { label: qsTr("Cancel"); onClicked: dlg.close() }
+            ActionButton {
+                label: qsTr("Add to queue")
+                primary: true
+                enabledBtn: dlg.rangeOk && dlg.pickedCount > 0
                 onClicked: {
                     var rows = Object.keys(dlg.picked).map(Number).sort(function (a, b) { return a - b; });
                     for (var i = 0; i < rows.length; ++i)
