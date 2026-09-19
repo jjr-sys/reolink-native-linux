@@ -19,6 +19,11 @@ constexpr int kMaxPrebufferMs = 900;
 // Ceiling on queued audio. Past it the oldest is dropped so a long stall followed by a
 // burst cannot leave the sound seconds behind the picture.
 constexpr int kMaxBufferMs = 1500;
+// Recorded playback is paced to real time upstream, so a small fixed cushion is enough
+// and keeps sound close to the picture (cushion + sound card buffer, about 200 ms).
+constexpr int kPlaybackPrebufferMs = 100;
+// A burst (seek, stream start) past this drops the oldest so sound stays near the picture.
+constexpr int kPlaybackMaxBufferMs = 600;
 // The sound card's own buffer: kept short because the jitter buffer does the absorbing.
 constexpr int kSinkBufferMs = 100;
 
@@ -86,6 +91,8 @@ bool AudioPlayback::ensureSink()
     m_feed = std::make_unique<Feed>(m_buf);
     m_sink = std::make_unique<QAudioSink>(device, format);
     m_sink->setBufferSize(int(msToBytes(kSinkBufferMs)));
+    m_sink->setVolume(QtAudio::convertVolume(m_volume, QtAudio::LogarithmicVolumeScale,
+                                             QtAudio::LinearVolumeScale));
     m_sink->start(m_feed.get()); // pull mode: the card reads from the jitter buffer
     if (m_sink->error() != QAudio::NoError) {
         qCWarning(lcMedia) << "audio: could not start output on" << device.description();
@@ -125,13 +132,42 @@ void AudioPlayback::logSummary() const
 void AudioPlayback::setDelayMs(int ms)
 {
     if (ms <= 0) {
-        m_buf.configure({msToBytes(kPrebufferMs), msToBytes(kMaxBufferMs), AudioDecoder::kBytesPerFrame,
-                         msToBytes(kMaxPrebufferMs)});
+        m_buf.configure(defaultConfig());
         return;
     }
     // The sound card's own buffer adds latency, so start that much earlier; then no learning.
     const qint64 pre = msToBytes(qMax(0, ms - kSinkBufferMs));
     m_buf.configure({pre, pre + msToBytes(1500), AudioDecoder::kBytesPerFrame, 0});
+}
+
+AudioJitterBuffer::Config AudioPlayback::defaultConfig() const
+{
+    if (m_playbackMode)
+        return {msToBytes(kPlaybackPrebufferMs), msToBytes(kPlaybackMaxBufferMs),
+                AudioDecoder::kBytesPerFrame, 0};
+    return {msToBytes(kPrebufferMs), msToBytes(kMaxBufferMs), AudioDecoder::kBytesPerFrame,
+            msToBytes(kMaxPrebufferMs)};
+}
+
+void AudioPlayback::setPlaybackMode(bool on)
+{
+    if (m_playbackMode == on)
+        return;
+    m_playbackMode = on;
+    m_buf.configure(defaultConfig());
+}
+
+void AudioPlayback::setVolume(qreal volume)
+{
+    m_volume = qBound<qreal>(0.0, volume, 1.0);
+    if (m_sink)
+        m_sink->setVolume(QtAudio::convertVolume(m_volume, QtAudio::LogarithmicVolumeScale,
+                                                 QtAudio::LinearVolumeScale));
+}
+
+void AudioPlayback::flush()
+{
+    m_buf.reset();
 }
 
 qint64 AudioPlayback::queuedBytes() const

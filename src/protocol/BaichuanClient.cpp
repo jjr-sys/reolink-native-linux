@@ -317,8 +317,16 @@ void BaichuanClient::setAudioHandler(std::function<void(const QByteArray &)> han
 void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint16 streamMsgNum)
 {
     BcMediaParser parser;
-    parser.onAudio = m_audioHandler; // empty = the parser skips audio
     bool started = false;
+    // Recorded playback drops video until the first I-frame, and is paced on video only:
+    // audio ahead of that would play without a picture, or in a burst that overruns the
+    // sound buffer. So hold it back until the picture starts.
+    const bool holdAudio = m_p.startEpoch > 0;
+    if (m_audioHandler) // empty = the parser skips audio
+        parser.onAudio = [&, handler = m_audioHandler](const QByteArray &a) {
+            if (!holdAudio || started)
+                handler(a);
+        };
     // After a seek, discard old in-flight frames until an I-frame at the new
     // position (POSIX seconds); 0 = no seek pending.
     qint64 seekTarget = 0;
@@ -383,6 +391,8 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
             parser.reset();
             started = false;
             seekTarget = seekTo; // discard until an I-frame at the new position
+            if (m_audioHandler)
+                m_audioHandler(QByteArray()); // drop sound queued from the old position
             clock.invalidate();
             firstMicros = 0;
             QMutexLocker lock(&m_mutex);

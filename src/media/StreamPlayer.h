@@ -64,6 +64,11 @@ class StreamPlayer : public QObject
     // Only affects live RTSP; playback and native Baichuan are shown as they arrive.
     // Sound is delayed by the same amount so lips stay in sync.
     Q_PROPERTY(bool smoothing READ smoothing WRITE setSmoothing NOTIFY smoothingChanged)
+    // Recorded playback: sound gets a short, fixed cushion so it stays in step with the
+    // (already paced) picture, instead of live view's longer, self-adjusting one.
+    // Loudness, 0..1 on a perceptual scale (a volume slider's value). Survives stop().
+    Q_PROPERTY(qreal volume READ volume WRITE setVolume NOTIFY volumeChanged)
+    Q_PROPERTY(bool playback READ playback WRITE setPlayback NOTIFY playbackChanged)
 
 public:
     enum class State { Idle, Connecting, Streaming, Error, Stopped };
@@ -149,9 +154,16 @@ public:
     bool smoothing() const { return m_smoothing; }
     void setSmoothing(bool on);
 
+    qreal volume() const { return m_volume; }
+    void setVolume(qreal volume);
+
+    bool playback() const { return m_playback; }
+    void setPlayback(bool on);
+
     // Native Baichuan carries audio in the same byte stream as video, but the video
     // path is a raw elementary stream with no room for it. The client feeds ADTS AAC
-    // frames to this callback instead (thread-safe; valid after this player is gone,
+    // frames to this callback instead; an empty array means "seek: drop what is queued"
+    // (thread-safe; valid after this player is gone,
     // where it does nothing). Hand it to BaichuanClient::setAudioHandler.
     std::function<void(const QByteArray &)> audioFeed();
 
@@ -169,6 +181,7 @@ public:
     void applyStateFromWorker(State state, const QString &error);
     void applyRecordingState(bool recording, const QString &path, const QString &error);
     void applyAudioFromWorker(const QByteArray &pcm);
+    void applyAudioFlush();
     // A decoded frame with its camera timestamp. delayUs > 0: hold it on the playout
     // schedule; 0: show it now. `s` identifies the session so a stopped one is ignored.
     void applyFrameFromWorker(const std::shared_ptr<Session> &s, const QVideoFrame &frame,
@@ -190,6 +203,8 @@ signals:
     void mutedChanged();
     void hasAudioChanged();
     void smoothingChanged();
+    void playbackChanged();
+    void volumeChanged();
     void recordingSaved(const QString &path);
     void recordingFailed(const QString &error);
 
@@ -215,6 +230,8 @@ private:
     bool m_muted = true;
     bool m_hasAudio = false;
     bool m_smoothing = false;
+    bool m_playback = false;
+    qreal m_volume = 1.0;
     int m_liveDelayMs = 0; // the picture delay in force; 0 = none. Sound follows it.
     QElapsedTimer m_clock;
     QTimer m_playoutTimer;

@@ -25,6 +25,12 @@ Rectangle {
     property int viewRotation: 0
     property string label: ""
     property bool selected: false
+    // Sound: the page owns the mute/volume choice and says whether THIS pane is the one
+    // to hear (in the 4-pane grid only the selected pane is audible).
+    property bool audioMuted: true
+    property real volume: 1.0
+    property bool audioActive: true
+    readonly property bool hasAudio: player.hasAudio
     // This camera's recordings for the selected day ({start,end,type} seconds).
     property var segments: []
     // Bound to the page's shared playhead — drives the "no footage" verdict.
@@ -149,7 +155,15 @@ Rectangle {
 
     // Retry on connection error: NVRs are connection-limited and may
     // momentarily refuse a playback stream while others are opening.
-    StreamPlayer { id: player; videoSink: video.videoSink; retryOnError: true }
+    StreamPlayer {
+        id: player
+        videoSink: video.videoSink
+        retryOnError: true
+        playback: true
+        volume: root.volume
+        // Off screen or not the chosen pane: no decode, no device held open.
+        muted: root.audioMuted || !root.audioActive || !root.visible
+    }
     Component.onDestruction: player.stop()
 
     // ---- Video with digital zoom (same interaction as a live pane) --------

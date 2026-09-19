@@ -208,6 +208,15 @@ void postAudio(const std::shared_ptr<Session> &s, const QByteArray &pcm)
     QMetaObject::invokeMethod(p, [p, pcm] { p->applyAudioFromWorker(pcm); }, Qt::QueuedConnection);
 }
 
+void postAudioFlush(const std::shared_ptr<Session> &s)
+{
+    QMutexLocker lock(&s->backMutex);
+    if (!s->player)
+        return;
+    StreamPlayer *p = s->player;
+    QMetaObject::invokeMethod(p, [p] { p->applyAudioFlush(); }, Qt::QueuedConnection);
+}
+
 void postHasAudio(const std::shared_ptr<Session> &s, bool has)
 {
     QMutexLocker lock(&s->backMutex);
@@ -890,6 +899,14 @@ struct StreamPlayer::AudioTap {
         }
         if (!s)
             return;
+        if (adts.isEmpty()) { // seek: the decoder and queued sound belong to the old position
+            {
+                QMutexLocker lock(&decMutex);
+                decoder.reset();
+            }
+            postAudioFlush(s);
+            return;
+        }
         // Existence of an audio track is worth reporting even while muted, so the UI
         // can offer an unmute control; decoding is what muting saves.
         if (!s->announcedAudio.exchange(true))
@@ -1002,6 +1019,33 @@ void StreamPlayer::resetPlayout()
     }
 }
 
+void StreamPlayer::setVolume(qreal volume)
+{
+    volume = qBound<qreal>(0.0, volume, 1.0);
+    if (qFuzzyCompare(m_volume, volume))
+        return;
+    m_volume = volume;
+    if (m_audioOut)
+        m_audioOut->setVolume(volume);
+    emit volumeChanged();
+}
+
+void StreamPlayer::setPlayback(bool on)
+{
+    if (m_playback == on)
+        return;
+    m_playback = on;
+    if (m_audioOut)
+        m_audioOut->setPlaybackMode(on);
+    emit playbackChanged();
+}
+
+void StreamPlayer::applyAudioFlush()
+{
+    if (m_audioOut)
+        m_audioOut->flush();
+}
+
 void StreamPlayer::applyHasAudio(bool hasAudio)
 {
     if (m_hasAudio == hasAudio)
@@ -1016,6 +1060,8 @@ void StreamPlayer::applyAudioFromWorker(const QByteArray &pcm)
         return; // muted after this chunk was queued
     if (!m_audioOut) {
         m_audioOut = std::make_unique<AudioPlayback>();
+        m_audioOut->setPlaybackMode(m_playback);
+        m_audioOut->setVolume(m_volume);
         m_audioOut->setDelayMs(m_liveDelayMs); // match the picture delay, if any
     }
     m_audioOut->write(pcm);

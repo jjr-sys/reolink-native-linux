@@ -38,6 +38,18 @@ public:
     // default cushion). A fixed delay, no learning, so picture and sound stay in step.
     void setDelayMs(int ms);
 
+    // Recorded playback: the picture is already paced to real time, so sound only needs a
+    // short, fixed cushion to stay within a couple of hundred ms of it. Ignored while a
+    // live picture delay (setDelayMs > 0) is in force.
+    void setPlaybackMode(bool on);
+    // Drop queued sound but keep the output open (a seek: what is queued is from the
+    // old position).
+    void flush();
+
+    // Loudness on a 0..1 perceptual scale (the slider position); 1 is unattenuated.
+    void setVolume(qreal volume);
+    qreal volume() const { return m_volume; }
+
     // Bytes waiting in the jitter buffer (0 when stopped).
     qint64 queuedBytes() const;
     // Times sound ran out after it had started (each is an audible gap).
@@ -45,8 +57,11 @@ public:
 
 private:
     bool ensureSink();
+    AudioJitterBuffer::Config defaultConfig() const;
     void logSummary() const;
 
+    bool m_playbackMode = false;
+    qreal m_volume = 1.0;
     QMediaDevices m_devices; // follows the default output changing (e.g. Bluetooth)
     AudioJitterBuffer m_buf;
     std::unique_ptr<QIODevice> m_feed; // the sound card pulls from this

@@ -309,6 +309,49 @@ private slots:
         const quint32 expectFirst = frames - quint32(buf.queuedBytes() / 4) - 1;
         QCOMPARE(first, expectFirst);
     }
+
+    // Recorded playback: a short fixed cushion. Paced (real-time) arrival plays without
+    // gaps and sound starts within ~130 ms; a seek/start burst is capped near the picture.
+    static rl::AudioJitterBuffer::Config playbackConfig()
+    {
+        return {48000 * 100 / 1000 * 4, 48000 * 600 / 1000 * 4, 4, 0};
+    }
+
+    void playbackModeIsSteadyAndLowLatency()
+    {
+        rl::AudioJitterBuffer buf(playbackConfig());
+        std::vector<int> a;
+        for (int i = 0; i < 100; ++i)
+            a.push_back(i * 64);
+        simulate(buf, a, 6000);
+        QCOMPARE(buf.underruns(), 0);
+        QCOMPARE(buf.droppedBytes(), qint64(0));
+        QVERIFY(buf.queuedBytes() <= 48000 * 200 / 1000 * 4); // stays within ~200 ms of the feed
+
+        rl::AudioJitterBuffer first(playbackConfig());
+        int startMs = -1;
+        const QByteArray chunk(3072 * 4, char(0x11));
+        std::vector<char> out(1920);
+        for (int t = 0; t < 500 && startMs < 0; t += 10) {
+            if (t % 64 < 10)
+                first.write(chunk.constData(), chunk.size());
+            first.read(out.data(), 1920);
+            if (first.playing())
+                startMs = t;
+        }
+        QVERIFY2(startMs >= 0 && startMs <= 140, "sound should start within about 140 ms");
+    }
+
+    void playbackModeCapsASeekBurst()
+    {
+        rl::AudioJitterBuffer buf(playbackConfig());
+        const QByteArray big(48000 * 3 * 4, char(0x22)); // 3 s at once
+        buf.write(big.constData(), big.size());
+        QVERIFY(buf.queuedBytes() <= 48000 * 600 / 1000 * 4);
+        buf.reset(); // flush on seek
+        QCOMPARE(buf.queuedBytes(), qint64(0));
+        QVERIFY(!buf.playing());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestAudio)

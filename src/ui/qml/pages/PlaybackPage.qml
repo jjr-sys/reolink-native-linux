@@ -59,6 +59,18 @@ Item {
         category: "playback"
         property string gridArrangement: ""
     }
+    // Sound choice, remembered across sessions. Starts muted; volume is shared with live view.
+    Settings {
+        id: audioStore
+        category: "audio"
+        property bool playbackMuted: true
+        property real volume: 1.0
+    }
+    // Grid: the one pane you hear (device row), -1 = none. Clicking it again deselects.
+    property int audioRow: -1
+    readonly property bool audioAvailable: paneCount === 4
+        ? (audioRow >= 0 && !!gridPane(audioRow) && gridPane(audioRow).hasAudio)
+        : player.hasAudio
 
     // Panes are per-CAMERA (model: Devices), so these iterate device rows —
     // paneRepeater.itemAt(row) is that camera's pane wherever it sits.
@@ -685,7 +697,14 @@ Item {
 
                 // Retry on connection error: NVRs are connection-limited and may
                 // momentarily refuse the playback stream.
-                StreamPlayer { id: player; videoSink: video.videoSink; retryOnError: true }
+                StreamPlayer {
+                    id: player
+                    videoSink: video.videoSink
+                    retryOnError: true
+                    playback: true
+                    volume: audioStore.volume
+                    muted: audioStore.playbackMuted || !page.active || page.paneCount !== 1
+                }
 
                 Column {
                     anchors.centerIn: parent
@@ -758,6 +777,11 @@ Item {
                         y: isMax ? 0 : (slot >= 0 ? gridBox.slotY(slot) : 0)
                         z: isMax ? 10 : 0
                         deviceRow: index      // fixed: the pane follows its camera
+                        selected: page.audioRow === index
+                        audioMuted: audioStore.playbackMuted
+                        volume: audioStore.volume
+                        audioActive: page.active && page.paneCount === 4 && selected
+                        onClicked: page.audioRow = (page.audioRow === index ? -1 : index)
                         paneIndex: slot
                         label: name
                         viewRotation: rotationOverride
@@ -848,6 +872,21 @@ Item {
                             page.playAt(page.playheadSecs);
                         }
                     }
+                }
+                // Sound: mute toggle and volume. Shown once the playing stream has an audio
+                // track; in the grid it applies to the selected pane only.
+                Ctl {
+                    visible: page.audioAvailable
+                    glyph: audioStore.playbackMuted ? "🔇" : "🔊"
+                    tip: audioStore.playbackMuted ? qsTr("Unmute") : qsTr("Mute")
+                    onActivated: audioStore.playbackMuted = !audioStore.playbackMuted
+                }
+                Slider {
+                    visible: page.audioAvailable && !audioStore.playbackMuted
+                    width: 90; height: 30
+                    from: 0; to: 1
+                    value: audioStore.volume
+                    onMoved: audioStore.volume = value
                 }
                 Ctl { glyph: "⏹"; tip: qsTr("Stop")
                       onActivated: { page._suppressResume = true;
