@@ -28,6 +28,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
   buffer replaces live view's longer one), a seek no longer leaves a tail of
   sound from the old position, and audio waits for the first picture instead of
   playing ahead of it.
+- A camera the NVR can't relay over RTSP (a third-party camera on a Reolink NVR
+  answers "404 Stream Not Found") used to sit on "Connecting…" forever. The tile
+  now says why, keeps the message while it retries, and switches to the NVR's
+  native stream, which does carry the camera.
 - The live grid held at most 16 cameras, so a 17th could only be opened from
   the sidebar. It now holds up to 32.
 

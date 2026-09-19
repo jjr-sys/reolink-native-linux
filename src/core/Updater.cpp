@@ -1,6 +1,7 @@
 #include "Updater.h"
 
 #include "core/Log.h"
+#include "core/VersionCompare.h"
 
 #include <QCoreApplication>
 #include <QDesktopServices>
@@ -23,26 +24,6 @@ namespace rl {
 // "updates". Until the fork publishes a release the check finds none and stays silent.
 static constexpr auto kRepo = "jjr-sys/reolink-native-linux";
 static constexpr qint64 kMinAppImageBytes = 1'000'000; // sanity floor for a good download
-
-static QList<int> versionParts(QString v)
-{
-    v.remove(QLatin1Char('v')).remove(QLatin1Char(' '));
-    QList<int> out;
-    const auto segs = v.split(QLatin1Char('.'));
-    for (const QString &p : segs)
-        out << p.split(QLatin1Char('-')).first().toInt(); // drop any -beta suffix
-    return out;
-}
-
-static bool isNewer(const QString &latest, const QString &current)
-{
-    QList<int> a = versionParts(latest), b = versionParts(current);
-    while (a.size() < b.size()) a << 0;
-    while (b.size() < a.size()) b << 0;
-    for (int i = 0; i < a.size(); ++i)
-        if (a[i] != b[i]) return a[i] > b[i];
-    return false;
-}
 
 Updater::Updater(QObject *parent)
     : QObject(parent), m_net(new QNetworkAccessManager(this))
