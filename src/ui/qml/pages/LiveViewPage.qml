@@ -35,12 +35,39 @@ Item {
     readonly property int cols: preset === 1 ? 1 : preset === 4 ? 2 : (preset === 6 || preset === 9) ? 3 : 4
     readonly property int rows: preset === 1 ? 1 : (preset === 4 || preset === 6) ? 2 : preset === 9 ? 3 : 4
 
+    // ---- Paging ---------------------------------------------------------------
+    // With more cameras than the grid has cells, the grid shows one page of `preset`
+    // cameras at a time (in pane order). Paging never touches the saved arrangement.
+    property int gridPage: 0
+    readonly property int pageCount: Math.max(1, Math.ceil(Devices.count / preset))
+    readonly property int curPage: Math.min(gridPage, pageCount - 1)
+    readonly property int pageOffset: curPage * preset
+    onPresetChanged: gridPage = 0
+
+    // Previous/next: a maximized camera steps to its neighbour in pane order;
+    // otherwise the grid moves a page. Both wrap around.
+    function step(dir) {
+        if (maximizedIndex >= 0) {
+            var order = paneSlots.filter(r => r >= 0);
+            var i = order.indexOf(maximizedIndex);
+            if (order.length < 2 || i < 0)
+                return;
+            var row = order[(i + dir + order.length) % order.length];
+            maximizedIndex = row;
+            selectedIndex = row;
+        } else if (pageCount > 1) {
+            gridPage = (curPage + dir + pageCount) % pageCount;
+        }
+    }
+    readonly property bool canStep: maximizedIndex >= 0 ? Devices.count > 1 : pageCount > 1
+
     // ---- Which camera sits in which pane -----------------------------------
     // paneSlots[pane] = device row (-1 = empty). Without this the grid is a
     // straight 1:1 map of model order, so a camera can only ever appear in the
     // pane matching its position in the sidebar. Always kept at maxPanes long so
-    // an arrangement made in the 16-grid survives a trip through the 4-grid.
-    readonly property int maxPanes: 16
+    // an arrangement made in the 16-grid survives a trip through the 4-grid. Longer than
+    // the biggest grid so cameras beyond 16 can still be reached by paging.
+    readonly property int maxPanes: 32
     property var paneSlots: []
 
     function rowAt(pane) {
@@ -238,6 +265,66 @@ Item {
 
             Item { Layout.fillWidth: true }
 
+            // Previous / next camera (a maximized camera) or page of cameras.
+            Repeater {
+                model: [-1, 1]
+                Rectangle {
+                    required property int modelData
+                    visible: page.canStep
+                    width: 30
+                    height: 26
+                    radius: Theme.radius
+                    color: stepArea.containsMouse ? Theme.surfaceAlt : Theme.surface
+                    border.color: Theme.border
+                    Text {
+                        anchors.centerIn: parent
+                        text: parent.modelData < 0 ? "◀" : "▶"
+                        color: Theme.textMuted
+                        font.pixelSize: 11
+                    }
+                    MouseArea {
+                        id: stepArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: page.step(parent.modelData)
+                    }
+                    ToolTip {
+                        visible: stepArea.containsMouse
+                        delay: 500
+                        x: (parent.width - width) / 2
+                        y: parent.height + 6
+                        contentItem: Text {
+                            text: page.maximizedIndex >= 0
+                                ? (modelData < 0 ? qsTr("Previous camera") : qsTr("Next camera"))
+                                : (modelData < 0 ? qsTr("Previous page") : qsTr("Next page"))
+                            color: Theme.text; font.pixelSize: 11
+                        }
+                        background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                    }
+                }
+            }
+            Text {
+                visible: page.canStep && page.maximizedIndex < 0
+                text: qsTr("%1 / %2").arg(page.curPage + 1).arg(page.pageCount)
+                color: Theme.textMuted
+                font.pixelSize: 12
+            }
+
+            // Loudness of the camera you are hearing (the selected tile); the same
+            // setting playback uses.
+            Text { text: "🔉"; color: Theme.textMuted; font.pixelSize: 13 }
+            Slider {
+                Layout.preferredWidth: 100
+                Layout.preferredHeight: 26
+                from: 0; to: 1
+                value: AudioPrefs.volume
+                onMoved: AudioPrefs.volume = value
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
+                ToolTip.text: qsTr("Volume")
+            }
+
             Rectangle {
                 width: 34
                 height: 26
@@ -282,8 +369,10 @@ Item {
             // so a camera can sit in any cell. Positioning is explicit (not a
             // Grid) because the slot, not the child order, decides the cell.
             readonly property int gap: 4
-            function slotX(slot) { return (slot % page.cols) * (cellWidth + gap); }
-            function slotY(slot) { return Math.floor(slot / page.cols) * (cellHeight + gap); }
+            // `slot` is the pane's place in the arrangement; the current page's first
+            // pane sits at the top-left.
+            function slotX(slot) { return ((slot - page.pageOffset) % page.cols) * (cellWidth + gap); }
+            function slotY(slot) { return Math.floor((slot - page.pageOffset) / page.cols) * (cellHeight + gap); }
 
             // Empty slots: drawn under the camera panes so they are drop targets
             // for the cells no camera occupies.
@@ -291,12 +380,13 @@ Item {
                 model: page.preset
                 LivePane {
                     required property int index
-                    visible: page.maximizedIndex === -1 && page.rowAt(index) < 0
+                    readonly property int slot: page.pageOffset + index
+                    visible: page.maximizedIndex === -1 && page.rowAt(slot) < 0
                     width: gridArea.cellWidth
                     height: gridArea.cellHeight
-                    x: gridArea.slotX(index)
-                    y: gridArea.slotY(index)
-                    paneIndex: index
+                    x: gridArea.slotX(slot)
+                    y: gridArea.slotY(slot)
+                    paneIndex: slot
                     deviceRow: -1
                     onCameraDropped: (pane, row) => page.assignPane(pane, row)
                 }
@@ -323,7 +413,8 @@ Item {
                     // A maximized pane shows even when its slot is beyond the grid
                     // preset (e.g. camera 5 clicked while in the 4-grid).
                     visible: isMaximized ||
-                             (page.maximizedIndex === -1 && slot >= 0 && slot < page.preset)
+                             (page.maximizedIndex === -1 && slot >= page.pageOffset
+                              && slot < page.pageOffset + page.preset)
                     width: isMaximized ? gridArea.width : gridArea.cellWidth
                     height: isMaximized ? gridArea.height : gridArea.cellHeight
                     x: isMaximized || slot < 0 ? 0 : gridArea.slotX(slot)

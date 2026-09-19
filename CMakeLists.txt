@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(reolink-client
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "Native Linux client for Reolink cameras and NVRs"
     LANGUAGES CXX)
 
@@ -68,6 +68,7 @@ qt_add_executable(reolink-client src/main.cpp src/ui/TrayIcon.h src/ui/TrayIcon.
 set(APP_QML_FILES
     src/ui/qml/Main.qml
     src/ui/qml/Theme.qml
+    src/ui/qml/AudioPrefs.qml
     src/ui/qml/components/SideBar.qml
     src/ui/qml/components/NavBar.qml
     src/ui/qml/components/ThemedMenu.qml
@@ -100,6 +101,7 @@ foreach(qml_file IN LISTS APP_QML_FILES)
     set_source_files_properties(${qml_file} PROPERTIES QT_RESOURCE_ALIAS "${qml_alias}")
 endforeach()
 set_source_files_properties(src/ui/qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(src/ui/qml/AudioPrefs.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(reolink-client
     URI ReolinkApp

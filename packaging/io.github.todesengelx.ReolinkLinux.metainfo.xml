@@ -27,6 +27,11 @@
     <category>Video</category>
   </categories>
   <releases>
+    <release version="0.3.0-jjr" date="2026-09-19">
+      <description>
+        <p>jjr-sys fork: adds sound in recorded playback with mute and volume, a live-view volume slider, and previous/next paging of cameras.</p>
+      </description>
+    </release>
     <release version="0.2.0-jjr" date="2026-09-19">
       <description>
         <p>jjr-sys fork: adds live camera audio and two-way talk on top of upstream 0.1.8.</p>

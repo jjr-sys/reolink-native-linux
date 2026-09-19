@@ -87,6 +87,7 @@ Window {
         videoSink: video.videoSink
         // Hold the picture back ~1 s so network stalls do not show (playback is untouched).
         smoothing: true
+        volume: AudioPrefs.volume
         muted: !win.audioOn
     }
     property bool bcFallback: false // Baichuan slot busy -> RTSP main this round

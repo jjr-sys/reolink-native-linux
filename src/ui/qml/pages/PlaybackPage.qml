@@ -59,13 +59,6 @@ Item {
         category: "playback"
         property string gridArrangement: ""
     }
-    // Sound choice, remembered across sessions. Starts muted; volume is shared with live view.
-    Settings {
-        id: audioStore
-        category: "audio"
-        property bool playbackMuted: true
-        property real volume: 1.0
-    }
     // Grid: the one pane you hear (device row), -1 = none. Clicking it again deselects.
     property int audioRow: -1
     readonly property bool audioAvailable: paneCount === 4
@@ -702,8 +695,8 @@ Item {
                     videoSink: video.videoSink
                     retryOnError: true
                     playback: true
-                    volume: audioStore.volume
-                    muted: audioStore.playbackMuted || !page.active || page.paneCount !== 1
+                    volume: AudioPrefs.volume
+                    muted: AudioPrefs.playbackMuted || !page.active || page.paneCount !== 1
                 }
 
                 Column {
@@ -778,8 +771,8 @@ Item {
                         z: isMax ? 10 : 0
                         deviceRow: index      // fixed: the pane follows its camera
                         selected: page.audioRow === index
-                        audioMuted: audioStore.playbackMuted
-                        volume: audioStore.volume
+                        audioMuted: AudioPrefs.playbackMuted
+                        volume: AudioPrefs.volume
                         audioActive: page.active && page.paneCount === 4 && selected
                         onClicked: page.audioRow = (page.audioRow === index ? -1 : index)
                         paneIndex: slot
@@ -877,16 +870,16 @@ Item {
                 // track; in the grid it applies to the selected pane only.
                 Ctl {
                     visible: page.audioAvailable
-                    glyph: audioStore.playbackMuted ? "🔇" : "🔊"
-                    tip: audioStore.playbackMuted ? qsTr("Unmute") : qsTr("Mute")
-                    onActivated: audioStore.playbackMuted = !audioStore.playbackMuted
+                    glyph: AudioPrefs.playbackMuted ? "🔇" : "🔊"
+                    tip: AudioPrefs.playbackMuted ? qsTr("Unmute") : qsTr("Mute")
+                    onActivated: AudioPrefs.playbackMuted = !AudioPrefs.playbackMuted
                 }
                 Slider {
-                    visible: page.audioAvailable && !audioStore.playbackMuted
+                    visible: page.audioAvailable && !AudioPrefs.playbackMuted
                     width: 90; height: 30
                     from: 0; to: 1
-                    value: audioStore.volume
-                    onMoved: audioStore.volume = value
+                    value: AudioPrefs.volume
+                    onMoved: AudioPrefs.volume = value
                 }
                 Ctl { glyph: "⏹"; tip: qsTr("Stop")
                       onActivated: { page._suppressResume = true;

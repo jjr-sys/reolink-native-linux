@@ -6,6 +6,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the project is pre-1.0, minor versions may still change behaviour.
 
+## [0.3.0-jjr] — 2026-09-19
+
+### Added
+
+- **Sound in playback.** Recorded playback (single pane and the 4-camera grid)
+  now plays the camera's audio. A speaker button and volume slider appear next
+  to Stop once the stream has an audio track. Playback starts muted the first
+  time; after that your mute and volume choice is remembered. In the grid only
+  the pane you click is audible (click it again to deselect).
+- **Volume slider in live view**, in the toolbar. It sets the loudness of the
+  selected tile and is the same setting playback uses.
+- **Previous / next paging in live view.** When there are more cameras than
+  grid cells, the ◀ ▶ buttons and a "page / pages" label step through them, and
+  wrap around. On a maximized camera the same buttons step to the previous or
+  next camera.
+
+### Fixed
+
+- Playback sound now stays within about 200 ms of the picture (a short, fixed
+  buffer replaces live view's longer one), a seek no longer leaves a tail of
+  sound from the old position, and audio waits for the first picture instead of
+  playing ahead of it.
+- The live grid held at most 16 cameras, so a 17th could only be opened from
+  the sidebar. It now holds up to 32.
+
 ## [0.2.0-jjr] — 2026-09-19
 
 First release of the **jjr-sys fork** of
@@ -38,6 +63,11 @@ not upstream's.
   48 kHz stereo; muted panes decode no audio at all. Output follows the system
   default (e.g. Bluetooth headphones). Recorded clips and playback are still
   video-only.
+
+- **Smoother live view.** Live sound is buffered so it no longer chops, and
+  live RTSP video in grid tiles and pop-outs is held back about a second and
+  shown on its own timestamps, so a network stall or burst no longer freezes and
+  then rushes the picture. Sound follows the same delay.
 
 ## [0.1.8] — 2026-08-12
 
