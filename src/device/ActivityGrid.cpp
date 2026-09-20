@@ -45,6 +45,7 @@ ActivityGrid::ActivityGrid(DeviceManager *devices, QObject *parent)
     m_policy.setHostLookup([this](int row) -> qint64 {
         return m_devices->cameraInfo(row).value(QStringLiteral("hostId")).toLongLong();
     });
+    setTrackedTypes(m_tracked);
     m_timer.setInterval(1000);
     connect(&m_timer, &QTimer::timeout, this, &ActivityGrid::onTick);
     connect(m_devices, &DeviceManager::detectionEvent, this,
@@ -70,6 +71,24 @@ void ActivityGrid::setEnabled(bool on)
     }
     publish();
     emit enabledChanged();
+}
+
+void ActivityGrid::setTrackedTypes(const QStringList &types)
+{
+    QSet<Kind> kinds;
+    QStringList clean;
+    for (const QString &t : types) {
+        const Kind k = kindOf(t);
+        if (k != Kind::None && !kinds.contains(k)) {
+            kinds.insert(k);
+            clean.append(t);
+        }
+    }
+    m_policy.setTracked(kinds);
+    if (clean != m_tracked || types != m_tracked) {
+        m_tracked = clean;
+        emit trackedTypesChanged();
+    }
 }
 
 void ActivityGrid::setBaseline(const QVariantList &rows)

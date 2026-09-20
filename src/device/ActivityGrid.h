@@ -4,6 +4,7 @@
 
 #include <QObject>
 #include <QTimer>
+#include <QStringList>
 #include <QVariantList>
 
 namespace rl {
@@ -21,6 +22,8 @@ class ActivityGrid : public QObject
     // Per visible tile: { row, active, kind, replayFrom (epoch s, 0 = live), trigger (epoch s) }.
     Q_PROPERTY(QVariantList tiles READ tiles NOTIFY tilesChanged)
     Q_PROPERTY(int queued READ queued NOTIFY tilesChanged)
+    // Detection types that take tiles: any of person, vehicle, pet, visitor, motion.
+    Q_PROPERTY(QStringList trackedTypes READ trackedTypes WRITE setTrackedTypes NOTIFY trackedTypesChanged)
 
 public:
     explicit ActivityGrid(DeviceManager *devices, QObject *parent = nullptr);
@@ -29,6 +32,8 @@ public:
     void setEnabled(bool on);
     QVariantList tiles() const { return m_view; }
     int queued() const { return m_policy.queued(); }
+    QStringList trackedTypes() const { return m_tracked; }
+    void setTrackedTypes(const QStringList &types);
 
     // The camera rows the user's own layout shows in the visible tiles, in tile order.
     Q_INVOKABLE void setBaseline(const QVariantList &rows);
@@ -44,6 +49,7 @@ public:
 signals:
     void enabledChanged();
     void tilesChanged();
+    void trackedTypesChanged();
 
 private:
     void onDetection(qint64 hostId, int channel, const QString &type);
@@ -59,6 +65,8 @@ private:
     QVariantList m_view;
     QVector<qint64> m_replayFrom; // per tile, ms, 0 = live
     QVector<qint64> m_trigger;
+    QStringList m_tracked{QStringLiteral("person"), QStringLiteral("vehicle"),
+                          QStringLiteral("pet"), QStringLiteral("visitor")}; // motion is opt-in
     QString m_pendingScript; // mock script, started the first time Activity mode is on
 };
 

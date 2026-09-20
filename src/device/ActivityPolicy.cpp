@@ -10,8 +10,11 @@ void ActivityPolicy::setBaseline(const QVector<int> &rows)
     m_tiles.resize(rows.size());
     for (int i = 0; i < rows.size(); ++i) {
         TileState &t = m_tiles[i];
+        const bool changed = i >= old || t.baseline != rows.at(i);
         t.baseline = rows.at(i);
-        if (i >= old || !t.active)
+        // Only follow the user's own change; an idle tile that has picked up an
+        // activity camera keeps it (it goes when something needs the tile).
+        if (changed && !t.active)
             t.shown = rows.at(i);
     }
 }
@@ -67,7 +70,7 @@ void ActivityPolicy::detect(int row, Kind kind, qint64 now, qint64 trigger)
 {
     if (trigger < 0)
         trigger = now;
-    if (m_excluded.contains(row) || kind == Kind::None)
+    if (m_excluded.contains(row) || kind == Kind::None || (!m_trackAll && !m_tracked.contains(kind)))
         return;
     // Already on screen: mark it (or extend it) in place, never a second tile.
     const int t = tileShowing(row);
@@ -130,15 +133,14 @@ QVector<Change> ActivityPolicy::tick(qint64 now)
 {
     QVector<Change> out;
 
-    // 1. Release tiles whose hold is over.
-    QVector<int> released;
+    // 1. Release tiles whose hold is over. A released tile keeps its camera on screen
+    //    (no stream churn) and is simply the first choice when new activity needs a tile.
     for (int i = 0; i < m_tiles.size(); ++i) {
         TileState &t = m_tiles[i];
         if (t.active && !t.pinned && now >= t.holdUntil) {
             t.active = false;
             t.kind = Kind::None;
             t.idleSince = now;
-            released.append(i);
         } else if (t.active && t.pinned && now >= t.holdUntil) {
             t.active = false; // pinned tiles keep their camera; only the badge ends
             t.kind = Kind::None;
@@ -180,7 +182,6 @@ QVector<Change> ActivityPolicy::tick(qint64 now)
         t.shownSince = now;
         t.holdUntil = now + m_p.holdMs;
         t.triggerMs = q.trigger;
-        released.removeAll(tile);
         Change c;
         c.tile = tile;
         c.row = q.row;
@@ -192,24 +193,6 @@ QVector<Change> ActivityPolicy::tick(qint64 now)
         m_queue.removeIf([&](const Queued &e) { return e.seq == q.seq; });
     }
 
-    // 3. Released tiles still showing an activity camera go back to their baseline.
-    for (int tile : released) {
-        TileState &t = m_tiles[tile];
-        if (t.shown == t.baseline)
-            continue;
-        const qint64 host = hostOf(t.baseline);
-        if (!startAllowed(host, now)) {
-            t.active = true; // keep showing it a little longer; retried next tick
-            t.holdUntil = now + 200;
-            continue;
-        }
-        recordStart(host, now);
-        t.shown = t.baseline;
-        Change c;
-        c.tile = tile;
-        c.row = t.baseline;
-        out.append(c);
-    }
     return out;
 }
 

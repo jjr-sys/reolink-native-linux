@@ -6,6 +6,7 @@
 #include <QVector>
 
 #include <functional>
+#include <QtGlobal>
 
 // Activity-mode tile policy: which camera each live-grid tile shows while activity
 // (person / vehicle / pet / visitor / motion) is happening. Pure logic with an
@@ -18,12 +19,16 @@
 //     motion once that tile has been shown for its minimum time
 //   - pinned tiles are never replaced; a full grid queues (nothing is dropped)
 //   - at most maxStartsPerHost new streams per NVR per window
-//   - a released tile returns to its baseline camera
+//   - a tile whose hold is over keeps its camera; new activity takes the tile that has
+//     been inactive longest (a tile never used for activity counts as longest), so the
+//     same camera does not hop between tiles. Leaving Activity mode restores the layout
 // The caller applies the returned Changes (start the stream, replay or live) and
 // calls tick() about once a second.
 namespace rl::activity {
 
 enum class Kind { None = 0, Motion = 1, Person = 2, Vehicle = 3, Pet = 4, Visitor = 5 };
+
+inline size_t qHash(Kind k, size_t seed = 0) noexcept { return ::qHash(int(k), seed); }
 
 inline int priorityOf(Kind k) { return k == Kind::Motion ? 1 : (k == Kind::None ? 0 : 2); }
 
@@ -71,6 +76,8 @@ public:
     void setBaseline(const QVector<int> &rows);
     void setPinned(int tile, bool pinned);
     void setExcluded(int row, bool excluded);
+    // Which kinds of detection count; others are ignored. Default: all.
+    void setTracked(const QSet<Kind> &kinds) { m_tracked = kinds; m_trackAll = false; }
     void reset(); // leave Activity mode: forget the queue and any activity state
 
     // `trigger` is when the activity really began if that is earlier than `now` (the
@@ -102,6 +109,8 @@ private:
     QVector<TileState> m_tiles;
     QVector<Queued> m_queue;
     QSet<int> m_excluded;
+    QSet<Kind> m_tracked;
+    bool m_trackAll = true;
     QHash<qint64, QList<qint64>> m_starts;
     qint64 m_seq = 0;
 };

@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the project is pre-1.0, minor versions may still change behaviour.
 
+## [0.7.1-jjr] — 2026-09-20
+
+### Changed
+
+- **Activity mode: tiles stop hopping.** A tile keeps the camera it picked up
+  after its hold ends instead of snapping back to its own camera; when new
+  activity needs a tile it takes the one that has been inactive longest (a tile
+  never used for activity counts as longest). A camera that is already on screen
+  is highlighted where it is, never moved to a second tile. Leaving Activity mode
+  still restores your layout exactly.
+- **Choose what Activity mode tracks.** The ▾ beside the Activity button lists
+  Person, Vehicle, Pet, Doorbell visitor and Motion, remembered between runs.
+  Motion is off by default, since it fires the most.
+- The Live View grid is silent while the doorbell pop-up is showing.
+
 ## [0.7.0-jjr] — 2026-09-20
 
 ### Added

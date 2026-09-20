@@ -44,19 +44,62 @@ private slots:
         QCOMPARE(shown(p, ch[0].tile), 10);
     }
 
-    // Acceptance 2: hold respected, then the tile returns to its baseline camera.
-    void holdIsThirtySecondsThenReturnsToBaseline()
+    // Acceptance 2: hold respected. After it the tile keeps its camera on screen (no
+    // churn) but is free for new activity.
+    void holdIsThirtySecondsThenTheTileKeepsItsCameraButIsFree()
     {
         ActivityPolicy p = make();
         p.detect(10, Kind::Person, T0);
         const int tile = p.tick(T0)[0].tile;
         QVERIFY(p.tick(T0 + s(29)).isEmpty());
+        QVERIFY(p.tile(tile).active);
+        QVERIFY(p.tick(T0 + s(31)).isEmpty()); // nothing to switch back to
+        QVERIFY(!p.tile(tile).active);
         QCOMPARE(shown(p, tile), 10);
-        const auto ch = p.tick(T0 + s(31));
+    }
+
+    // The same camera again lands on the tile it already has, not a second one.
+    void sameCameraAfterTheHoldIsHighlightedWhereItIs()
+    {
+        ActivityPolicy p = make();
+        p.detect(10, Kind::Person, T0);
+        const int tile = p.tick(T0)[0].tile;
+        p.tick(T0 + s(40));
+        p.detect(10, Kind::Person, T0 + s(60));
+        QVERIFY(p.tick(T0 + s(60)).isEmpty());
+        QVERIFY(p.tile(tile).active);
+        QCOMPARE(shown(p, tile), 10);
+    }
+
+    // New activity replaces the tile that has been inactive longest.
+    void newActivityReplacesTheMostInactiveTile()
+    {
+        ActivityPolicy p = make();
+        p.setPinned(2, true);
+        p.setPinned(3, true);
+        p.detect(10, Kind::Person, T0);
+        const int a = p.tick(T0)[0].tile;   // tile 0 (all idle since never)
+        p.detect(11, Kind::Person, T0 + s(1));
+        const int b = p.tick(T0 + s(1))[0].tile; // the other free tile
+        QVERIFY(a != b);
+        p.tick(T0 + s(35)); // both released: a idle since 31 s, b since 32 s
+        p.detect(12, Kind::Person, T0 + s(40));
+        const auto ch = p.tick(T0 + s(40));
         QCOMPARE(ch.size(), 1);
-        QCOMPARE(ch[0].row, tile); // baseline of tile i is camera i in this fixture
-        QVERIFY(!ch[0].activity);
-        QCOMPARE(ch[0].replayFromMs, qint64(0));
+        QCOMPARE(ch[0].tile, a);            // idle longest
+        QCOMPARE(shown(p, b), 11);          // the other keeps its camera
+    }
+
+    void untrackedKindsAreIgnored()
+    {
+        ActivityPolicy p = make();
+        p.setTracked({Kind::Person});
+        p.detect(10, Kind::Motion, T0);
+        p.detect(11, Kind::Vehicle, T0);
+        QVERIFY(p.tick(T0).isEmpty());
+        QCOMPARE(p.queued(), 0);
+        p.detect(12, Kind::Person, T0);
+        QCOMPARE(p.tick(T0).size(), 1);
     }
 
     void retriggerExtendsTheHoldAndDoesNotDuplicate()
@@ -67,8 +110,10 @@ private slots:
         p.detect(10, Kind::Person, T0 + s(25));
         QVERIFY(p.tick(T0 + s(26)).isEmpty());
         QVERIFY(p.tick(T0 + s(50)).isEmpty()); // 25 + 30 = 55
+        QVERIFY(p.tile(tile).active);
+        p.tick(T0 + s(56));
+        QVERIFY(!p.tile(tile).active);
         QCOMPARE(shown(p, tile), 10);
-        QCOMPARE(p.tick(T0 + s(56)).size(), 1);
     }
 
     // A camera already on screen is marked active in place, not swapped into a second tile.
@@ -199,7 +244,9 @@ private slots:
         p.tick(T0 + s(31));                    // 11 shown now, from a 30 s-old queue wait
         QVERIFY(p.tick(T0 + s(45)).isEmpty()); // still held
         QCOMPARE(p.tile(3).shown, 11);
-        QCOMPARE(p.tick(T0 + s(62)).size(), 1);
+        QVERIFY(p.tile(3).active);
+        p.tick(T0 + s(62));
+        QVERIFY(!p.tile(3).active);
     }
 
     void excludedCamerasNeverTrigger()
@@ -211,15 +258,17 @@ private slots:
         QCOMPARE(p.queued(), 0);
     }
 
-    void replacingTheBaselineReturnsTilesToTheNewBaseline()
+    void changingTheBaselineMovesIdleTilesButNotHeldOnes()
     {
         ActivityPolicy p = make();
         p.detect(10, Kind::Person, T0);
         const int tile = p.tick(T0)[0].tile;
         p.setBaseline({5, 6, 7, 8});
-        const auto ch = p.tick(T0 + s(31));
-        QCOMPARE(ch.size(), 1);
-        QCOMPARE(ch[0].row, 5 + tile);
+        QCOMPARE(shown(p, tile), 10);          // held: keeps the activity camera
+        for (int t = 0; t < 4; ++t)
+            if (t != tile) QCOMPARE(shown(p, t), 5 + t);
+        p.setBaseline({5, 6, 7, 8});           // same baseline again changes nothing
+        QCOMPARE(shown(p, tile), 10);
     }
 
     // Acceptance 1 (no flicker): an activity tile is never replaced within its minimum

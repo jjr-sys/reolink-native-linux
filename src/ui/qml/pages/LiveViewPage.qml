@@ -206,6 +206,20 @@ Item {
     }
     property bool layoutRestored: false
 
+    // Which detections take tiles in Activity mode (comma-separated), remembered.
+    Settings {
+        id: activityStore
+        category: "activityMode"
+        property string types: "person,vehicle,pet,visitor"
+    }
+    function setActivityType(type, on) {
+        var cur = Activity.trackedTypes.filter(function (t) { return t !== type; });
+        if (on)
+            cur.push(type);
+        Activity.trackedTypes = cur;
+        activityStore.types = cur.join(",");
+    }
+
     function saveLayout() {
         if (!layoutRestored)
             return;
@@ -292,6 +306,7 @@ Item {
 
     Component.onCompleted: {
         restoreLayout();
+        Activity.trackedTypes = activityStore.types.length > 0 ? activityStore.types.split(",") : [];
         // RL_MOCK_ACTIVITY starts the page in Activity mode so a script can drive it.
         if (typeof mockActivity !== "undefined" && mockActivity)
             activityMode = true;
@@ -384,6 +399,81 @@ Item {
                         color: Theme.text; font.pixelSize: 11
                     }
                     background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                }
+            }
+
+            // Which detections count in Activity mode.
+            Rectangle {
+                width: 26
+                height: 26
+                radius: Theme.radius
+                color: typesArea.containsMouse || typesPopup.visible ? Theme.surfaceAlt : Theme.surface
+                border.color: Theme.border
+                Text { anchors.centerIn: parent; text: "▾"; color: Theme.textMuted; font.pixelSize: 11 }
+                MouseArea {
+                    id: typesArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: typesPopup.visible ? typesPopup.close() : typesPopup.open()
+                }
+                Popup {
+                    id: typesPopup
+                    y: parent.height + 4
+                    x: parent.width - width
+                    padding: 8
+                    background: Rectangle { color: Theme.surface; border.color: Theme.border; radius: Theme.radius }
+                    contentItem: Column {
+                        spacing: 2
+                        Text {
+                            text: qsTr("Activity mode tracks")
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                            bottomPadding: 4
+                        }
+                        Repeater {
+                            model: [
+                                { key: "person", label: qsTr("Person") },
+                                { key: "vehicle", label: qsTr("Vehicle") },
+                                { key: "pet", label: qsTr("Pet") },
+                                { key: "visitor", label: qsTr("Doorbell visitor") },
+                                { key: "motion", label: qsTr("Motion") }
+                            ]
+                            Rectangle {
+                                required property var modelData
+                                readonly property bool on: Activity.trackedTypes.indexOf(modelData.key) >= 0
+                                width: 190
+                                height: 28
+                                radius: 4
+                                color: rowHover.hovered ? Theme.surfaceAlt : "transparent"
+                                Row {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 6
+                                    spacing: 8
+                                    Rectangle {
+                                        width: 16; height: 16; radius: 3
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: parent.parent.on ? Theme.accent : Theme.surfaceAlt
+                                        border.color: parent.parent.on ? Theme.accent : Theme.border
+                                        Text {
+                                            anchors.centerIn: parent
+                                            visible: parent.parent.parent.on
+                                            text: "\u2713"; color: Theme.window; font.pixelSize: 11; font.bold: true
+                                        }
+                                    }
+                                    Text {
+                                        text: parent.parent.modelData.label
+                                        color: Theme.text
+                                        font.pixelSize: 12
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                }
+                                HoverHandler { id: rowHover }
+                                TapHandler { onTapped: page.setActivityType(parent.modelData.key, !parent.on) }
+                            }
+                        }
+                    }
                 }
             }
 
