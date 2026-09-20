@@ -167,6 +167,7 @@ ApplicationWindow {
                 LiveViewPage {
                     id: liveViewPage
                     active: nav.currentIndex === 0
+                    audioSuppressed: doorbell.active
                     fullscreen: window.videoFullscreen
                     onFullscreenToggled: window.videoFullscreen = !window.videoFullscreen
                     onPopOut: (row, lbl) => window.openPopout(row, lbl)

@@ -12,6 +12,7 @@ Item {
 
     property bool fullscreen: false
     property bool active: true      // true only while Live View is the shown page
+    property bool audioSuppressed: false // the doorbell pop-up is up: grid stays silent
     signal fullscreenToggled()
     signal popOut(int deviceRow, string label)
 
@@ -531,6 +532,7 @@ Item {
                     label: name
                     viewRotation: rotationOverride
                     selected: page.selectedIndex === index
+                    audioAllowed: !page.audioSuppressed
                     pageActive: page.active && page.visible
                     // Sub-stream in the grid, main stream when maximized (DESIGN §5.7).
                     forceMain: isMaximized

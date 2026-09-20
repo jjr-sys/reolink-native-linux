@@ -23,6 +23,7 @@ Rectangle {
     // Manual per-camera view rotation (degrees; sidebar right-click sets it).
     property int viewRotation: 0
     property bool pageActive: true // false when the Live View page isn't on screen
+    property bool audioAllowed: true // false while something else (the doorbell pop-up) has the sound
 
     // Activity mode: this camera holds a tile because of a detection. replayFrom
     // (epoch s, 0 = none) plays the recording from just before it; the Live button,
@@ -213,7 +214,7 @@ Rectangle {
         // after a layout change must not keep talking.
         // Also silent while we talk: the camera's own sound coming out of the
         // laptop would be picked up by the microphone and fed straight back.
-        muted: !(root.audioOn && root.visible && root.pageActive && !talk.active)
+        muted: !(root.audioOn && root.audioAllowed && root.visible && root.pageActive && !talk.active)
     }
 
     // Microphone -> this camera's speaker.
