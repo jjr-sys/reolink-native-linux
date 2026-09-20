@@ -11,8 +11,8 @@ import ReolinkApp.Core
 Rectangle {
     id: root
     color: Theme.paneBackground
-    border.color: selected ? Theme.accent : Theme.border
-    border.width: 1
+    border.color: activityKind !== "" ? "#f0a030" : selected ? Theme.accent : Theme.border
+    border.width: activityKind !== "" ? 3 : 1
     clip: true
 
     property int paneIndex: -1     // grid slot
@@ -23,6 +23,18 @@ Rectangle {
     // Manual per-camera view rotation (degrees; sidebar right-click sets it).
     property int viewRotation: 0
     property bool pageActive: true // false when the Live View page isn't on screen
+
+    // Activity mode: this camera holds a tile because of a detection. replayFrom
+    // (epoch s, 0 = none) plays the recording from just before it; the Live button,
+    // or the NVR refusing the extra session, drops back to the live picture.
+    property string activityKind: ""
+    property string activityText: ""
+    property real replayFrom: 0
+    property bool replayLive: false     // the user pressed Live
+    property bool replayFailed: false   // the replay could not start
+    readonly property bool replaying: replayFrom > 0 && !replayLive && !replayFailed
+    onReplayFromChanged: { replayLive = false; replayFailed = false; updateSource(); }
+    onReplayingChanged: updateSource()
 
     // Capabilities (from the Devices model; false for empty slots). Named cap*
     // to avoid colliding with the identically-named model roles in the delegate.
@@ -113,7 +125,9 @@ Rectangle {
         var want = deviceRow >= 0 && visible && pageActive;
         var key = "";
         if (want) {
-            if (effectiveMain && !bcFallback)
+            if (replaying)
+                key = "rp:" + deviceRow + ":" + replayFrom;
+            else if (effectiveMain && !bcFallback)
                 key = "bc:" + deviceRow;
             else if (!effectiveMain && bcSub)
                 key = "bcs:" + deviceRow;
@@ -125,6 +139,9 @@ Rectangle {
         streamKey = key;
         if (key === "") {
             player.stop();
+        } else if (key.substring(0, 3) === "rp:") {
+            player.loop = false;
+            Devices.startBaichuanPlayback(root.deviceRow, replayFrom, player, false);
         } else if (key.substring(0, 3) === "bc:") {
             player.loop = false;
             Devices.startBaichuanLive(root.deviceRow, player, true);
@@ -160,6 +177,11 @@ Rectangle {
     Connections {
         target: player
         function onStateChanged() {
+            // The NVR may refuse one more recorded-playback session: show live instead.
+            if (player.state === StreamPlayer.Error && root.streamKey.substring(0, 3) === "rp:") {
+                root.replayFailed = true;
+                return;
+            }
             if (player.state === StreamPlayer.Error && !root.bcFallback
                 && root.streamKey.substring(0, 3) === "bc:") {
                 root.bcFallback = true;
@@ -369,6 +391,42 @@ Rectangle {
     }
 
     // ---- Name + zoom badge -------------------------------------------------
+
+    // Why this camera is here (Activity mode): "Person · 14:02", with a Live button
+    // while the tile is replaying the moment.
+    Rectangle {
+        visible: root.activityKind !== ""
+        z: 20
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 6
+        radius: 3
+        color: "#e6f0a030"
+        width: badgeRow.implicitWidth + 12
+        height: badgeRow.implicitHeight + 6
+        Row {
+            id: badgeRow
+            anchors.centerIn: parent
+            spacing: 8
+            Text { text: root.activityText; color: "#101010"; font.pixelSize: 11; font.bold: true }
+            Text {
+                visible: root.replaying
+                text: qsTr("● Replay")
+                color: "#101010"
+                font.pixelSize: 11
+            }
+            Text {
+                visible: root.replaying
+                text: qsTr("Live ▸")
+                color: "#101010"
+                font.pixelSize: 11
+                font.bold: true
+                font.underline: true
+                TapHandler { onTapped: root.replayLive = true }
+            }
+        }
+    }
+
     Rectangle {
         visible: root.hasSource && player.state === StreamPlayer.Streaming
         anchors.top: parent.top

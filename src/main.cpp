@@ -8,6 +8,7 @@
 #include "device/DeviceDiscovery.h"
 #include "device/DeviceManager.h"
 #include "device/DownloadQueue.h"
+#include "device/ActivityGrid.h"
 #include "device/EventManager.h"
 #include "media/StreamPlayer.h"
 #include "media/TalkSession.h"
@@ -152,6 +153,7 @@ int main(int argc, char *argv[])
     rl::CredentialStore credentials;
     rl::DeviceManager devices(&database, &credentials);
     rl::EventManager events(&database, &devices);
+    rl::ActivityGrid activityGrid(&devices);
     rl::DeviceDiscovery discovery;
     rl::Updater updater;
     rl::DownloadQueue downloads([&devices](int row) { return devices.downloadSource(row); });
@@ -161,6 +163,10 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::TalkSession>("ReolinkApp.Core", 1, 0, "TalkSession");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Events", &events);
+    qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Activity", &activityGrid);
+    // RL_MOCK_ACTIVITY="person:1:3@2;motion:1:4@4" plays scripted detections (Activity mode only).
+    if (qEnvironmentVariableIsSet("RL_MOCK_ACTIVITY"))
+        activityGrid.runScript(qEnvironmentVariable("RL_MOCK_ACTIVITY"));
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Discovery", &discovery);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Updater", &updater);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Downloads", &downloads);
@@ -177,6 +183,8 @@ int main(int argc, char *argv[])
     // RL_MOCK_DOORBELL=<hostId>:<channel> points the mock at a real camera row.
     engine.rootContext()->setContextProperty(
         QStringLiteral("mockDoorbellTarget"), qEnvironmentVariable("RL_MOCK_DOORBELL"));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("mockActivity"), qEnvironmentVariableIsSet("RL_MOCK_ACTIVITY"));
     engine.rootContext()->setContextProperty(
         QStringLiteral("playbackAutoplay"), qEnvironmentVariableIsSet("RL_PLAYBACK_AUTOPLAY"));
     engine.rootContext()->setContextProperty(

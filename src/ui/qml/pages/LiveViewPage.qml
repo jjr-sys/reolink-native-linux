@@ -42,7 +42,7 @@ Item {
     readonly property int pageCount: Math.max(1, Math.ceil(Devices.count / preset))
     readonly property int curPage: Math.min(gridPage, pageCount - 1)
     readonly property int pageOffset: curPage * preset
-    onPresetChanged: gridPage = 0
+    onPresetChanged: { gridPage = 0; syncActivityBaseline(); }
 
     // Previous/next: a maximized camera steps to its neighbour in pane order;
     // otherwise the grid moves a page. Both wrap around.
@@ -70,10 +70,89 @@ Item {
     readonly property int maxPanes: 32
     property var paneSlots: []
 
-    function rowAt(pane) {
-        return pane >= 0 && pane < paneSlots.length ? paneSlots[pane] : -1;
+    // ---- Activity mode -----------------------------------------------------
+    // The user's arrangement (paneSlots) is the baseline and is never modified by
+    // Activity mode: viewSlots is what is drawn, paneSlots with the activity cameras
+    // laid over their tiles. Persistence and drag-and-drop only ever see paneSlots.
+    property bool activityMode: false
+    property var viewSlots: paneSlots
+    property var userPinnedTiles: ({})
+
+    function baselineRows() {
+        var r = [];
+        for (var i = 0; i < preset; ++i) {
+            var row = pageOffset + i < paneSlots.length ? paneSlots[pageOffset + i] : -1;
+            r.push(row);
+        }
+        return r;
     }
-    function paneOfRow(row) { return row < 0 ? -1 : paneSlots.indexOf(row); }
+    function recomputeView() {
+        if (!activityMode) {
+            viewSlots = paneSlots;
+            return;
+        }
+        var v = paneSlots.slice();
+        var tiles = Activity.tiles;
+        for (var t = 0; t < tiles.length; ++t) {
+            var row = tiles[t].row;
+            var idx = pageOffset + t;
+            if (row < 0 || v[idx] === row)
+                continue;
+            var elsewhere = v.indexOf(row);
+            if (elsewhere >= 0)
+                v[elsewhere] = -1;
+            v[idx] = row;
+        }
+        viewSlots = v;
+    }
+    function applyPins() {
+        var tiles = Activity.tiles;
+        for (var t = 0; t < tiles.length; ++t)
+            Activity.setPinned(t, tiles[t].row === selectedIndex || userPinnedTiles[t] === true);
+    }
+    function syncActivityBaseline() {
+        if (activityMode) {
+            Activity.setBaseline(baselineRows());
+            recomputeView();
+            applyPins();
+        }
+    }
+    // The activity detail for a camera row (null when it holds no tile for activity).
+    function activityOf(row) {
+        var tiles = Activity.tiles;
+        for (var t = 0; t < tiles.length; ++t)
+            if (activityMode && tiles[t].row === row && tiles[t].active)
+                return tiles[t];
+        return null;
+    }
+    function activityLabel(a, name) {
+        if (!a)
+            return "";
+        var k = a.kind.charAt(0).toUpperCase() + a.kind.slice(1);
+        var when = a.trigger > 0 ? Qt.formatTime(new Date(a.trigger * 1000), "HH:mm") : "";
+        return k + " · " + name + (when ? " · " + when : "");
+    }
+    onActivityModeChanged: {
+        Activity.enabled = activityMode;
+        userPinnedTiles = ({});
+        syncActivityBaseline();
+        recomputeView();
+    }
+    onGridPageChanged: syncActivityBaseline()
+    onPaneSlotsChanged: { syncActivityBaseline(); if (!activityMode) viewSlots = paneSlots; }
+    onSelectedIndexChanged: if (activityMode) applyPins()
+    Connections {
+        target: Activity
+        function onTilesChanged() {
+            page.recomputeView();
+            page.applyPins();
+        }
+    }
+
+    function rowAt(pane) {
+        return pane >= 0 && pane < viewSlots.length ? viewSlots[pane] : -1;
+    }
+    function paneOfRow(row) { return row < 0 ? -1 : viewSlots.indexOf(row); }
 
     // Put `row` in `pane`. If it is already on the grid the two panes trade
     // places, so a drag can never quietly drop a camera off the layout.
@@ -131,7 +210,7 @@ Item {
             return;
         var out = [];
         for (var i = 0; i < maxPanes; ++i) {
-            var r = rowAt(i);
+            var r = i < paneSlots.length ? paneSlots[i] : -1;
             if (r < 0) { out.push("-"); continue; }
             var c = Devices.cameraInfo(r);
             out.push(c && c.hostId !== undefined ? c.hostId + ":" + c.channel : "-");
@@ -210,7 +289,12 @@ Item {
         }
     }
 
-    Component.onCompleted: restoreLayout()
+    Component.onCompleted: {
+        restoreLayout();
+        // RL_MOCK_ACTIVITY starts the page in Activity mode so a script can drive it.
+        if (typeof mockActivity !== "undefined" && mockActivity)
+            activityMode = true;
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -264,6 +348,43 @@ Item {
             }
 
             Item { Layout.fillWidth: true }
+
+            // Activity mode: cameras with detections take over idle tiles. Your saved
+            // arrangement is left alone and comes back when this is turned off.
+            Rectangle {
+                width: activityLabel.implicitWidth + 20
+                height: 26
+                radius: Theme.radius
+                color: page.activityMode ? Theme.accentDim
+                     : activityArea.containsMouse ? Theme.surfaceAlt : Theme.surface
+                border.color: Theme.border
+                Text {
+                    id: activityLabel
+                    anchors.centerIn: parent
+                    text: page.activityMode && Activity.queued > 0
+                          ? qsTr("Activity +%1").arg(Activity.queued) : qsTr("Activity")
+                    color: page.activityMode ? Theme.text : Theme.textMuted
+                    font.pixelSize: 12
+                }
+                MouseArea {
+                    id: activityArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: page.activityMode = !page.activityMode
+                }
+                ToolTip {
+                    visible: activityArea.containsMouse
+                    delay: 500
+                    x: (parent.width - width) / 2
+                    y: parent.height + 6
+                    contentItem: Text {
+                        text: qsTr("Activity mode: cameras with people, vehicles, pets or motion take over idle tiles")
+                        color: Theme.text; font.pixelSize: 11
+                    }
+                    background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                }
+            }
 
             // Previous / next camera (a maximized camera) or page of cameras.
             Repeater {
@@ -431,7 +552,19 @@ Item {
                     // again deselects it and mutes.
                     onClicked: (idx) => page.selectedIndex = page.selectedIndex === idx ? -1 : idx
                     onPopOut: (row, lbl) => page.popOut(row, lbl)
-                    onCameraDropped: (targetPane, row) => page.assignPane(targetPane, row)
+                    onCameraDropped: (targetPane, row) => {
+                        page.assignPane(targetPane, row);
+                        if (page.activityMode) {
+                            var pinned = page.userPinnedTiles;
+                            pinned[targetPane - page.pageOffset] = true;
+                            page.userPinnedTiles = pinned;
+                            page.applyPins();
+                        }
+                    }
+                    readonly property var activity: page.activityOf(index)
+                    activityKind: activity ? activity.kind : ""
+                    activityText: page.activityLabel(activity, name)
+                    replayFrom: activity ? activity.replayFrom : 0
 
                     // Slide to the new cell so a swap reads as movement rather
                     // than two panes blinking into each other's places.
