@@ -29,6 +29,16 @@ Dialog {
             dialog.close();
             return;
         }
+        if (tabs.currentIndex === 2) {
+            if (frigateHostField.text.trim().length === 0) {
+                errorText = qsTr("Enter the Frigate server's IP address or hostname.");
+                return;
+            }
+            testing = true;
+            Devices.testFrigate(frigateHostField.text.trim(),
+                                frigatePortField.text.length > 0 ? parseInt(frigatePortField.text) : 5000);
+            return;
+        }
         if (addrField.text.trim().length === 0) {
             errorText = qsTr("Enter the device's IP address or hostname.");
             return;
@@ -49,6 +59,19 @@ Dialog {
             if (!dialog.visible || !dialog.testing)
                 return;
             dialog.testing = false;
+            if (tabs.currentIndex === 2) {
+                if (ok) {
+                    Devices.addFrigate(frigateNameField.text, frigateHostField.text.trim(),
+                                       frigatePortField.text.length > 0 ? parseInt(frigatePortField.text) : 5000);
+                    dialog.close();
+                } else if (problem === "transport") {
+                    dialog.errorText = qsTr("Can't reach %1 — check the address and port.")
+                        .arg(frigateHostField.text.trim()) + "\n" + message;
+                } else {
+                    dialog.errorText = message;
+                }
+                return;
+            }
             if (ok) {
                 Devices.addDevice(addrField.text.trim(), userField.text,
                                   passwordField.text, httpsCheck.checked,
@@ -195,6 +218,7 @@ Dialog {
             }
             ThemedTab { text: qsTr("Camera / NVR") }
             ThemedTab { text: qsTr("Stream URL") }
+            ThemedTab { text: qsTr("Frigate") }
         }
 
         StackLayout {
@@ -365,6 +389,33 @@ Dialog {
                     wrapMode: Text.WordWrap
                 }
             }
+
+            ColumnLayout {
+                spacing: Theme.spacing
+                ThemedField {
+                    id: frigateNameField
+                    placeholderText: qsTr("Display name (optional)")
+                }
+                RowLayout {
+                    ThemedField {
+                        id: frigateHostField
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("IP address or hostname")
+                    }
+                    ThemedField {
+                        id: frigatePortField
+                        placeholderText: qsTr("Port (5000)")
+                        validator: IntValidator { bottom: 1; top: 65535 }
+                    }
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: qsTr("A Frigate server without a login. Each of its cameras is added, with live view and detections.")
+                    color: Theme.textMuted
+                    font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                }
+            }
         }
 
         // Why the device couldn't be added, in place — the dialog stays open
@@ -385,6 +436,9 @@ Dialog {
         portField.text = "";
         streamNameField.text = "";
         streamUrlField.text = "";
+        frigateNameField.text = "";
+        frigateHostField.text = "";
+        frigatePortField.text = "";
         discoveredModel.clear();
         testing = false;
         errorText = "";

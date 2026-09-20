@@ -46,7 +46,7 @@ Rectangle {
                 ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r);
                 ctx.closePath();
             }
-            if (kind === "nvr") {
+            if (kind === "nvr" || kind === "frigate") {
                 rr(2, 5, 16, 10, 2.2); ctx.stroke();
                 ctx.beginPath();
                 ctx.moveTo(4.5, 8.5); ctx.lineTo(10, 8.5);
@@ -130,7 +130,7 @@ Rectangle {
                     var h = Devices.hostInfo(parseInt(section));
                     return (h && h.channelCount !== undefined) ? h : null;
                 }
-                property bool isNvr: host && host.kind === "nvr"
+                property bool isNvr: host && (host.kind === "nvr" || host.kind === "frigate")
                 readonly property bool inTrouble:
                     host && (host.problem === "unreachable" || host.problem === "auth"
                              || host.problem === "locked")
@@ -256,7 +256,7 @@ Rectangle {
                 readonly property bool inTrouble:
                     problem === "unreachable" || problem === "auth" || problem === "locked"
 
-                readonly property bool underNvr: kind === "nvr"
+                readonly property bool underNvr: kind === "nvr" || kind === "frigate"
                 readonly property bool hidden: underNvr && root.collapsed[hostId] === true
 
                 width: ListView.view.width

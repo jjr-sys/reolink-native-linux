@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the project is pre-1.0, minor versions may still change behaviour.
 
+## [0.7.0-jjr] — 2026-09-20
+
+### Added
+
+- **Frigate servers as a site.** Add Device has a new **Frigate** tab: enter
+  the server's address (port 5000, no login) and every enabled camera on it
+  appears in the sidebar under its own server heading, like an NVR's cameras.
+  Live view plays through Frigate's own video proxy, so no extra port needs to be
+  open.
+- **Frigate detections everywhere.** People, vehicles (car, truck, bus,
+  motorcycle, bicycle) and pets (dog, cat) that Frigate detects show in the
+  events inbox with a thumbnail, raise desktop notifications, and take tiles in
+  Activity mode. Detections are checked every 10 s; one person crossing the yard
+  is one event, not one per tracked object.
+- Frigate cameras have no talk, PTZ, settings, playback or download, and always
+  play their single stream.
+- `RL_FRIGATE_BACKFILL=<seconds>` treats the last N seconds of Frigate events as
+  new, for testing.
+
 ## [0.6.0-jjr] — 2026-09-20
 
 ### Added

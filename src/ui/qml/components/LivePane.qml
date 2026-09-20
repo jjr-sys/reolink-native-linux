@@ -127,9 +127,9 @@ Rectangle {
         if (want) {
             if (replaying)
                 key = "rp:" + deviceRow + ":" + replayFrom;
-            else if (effectiveMain && !bcFallback)
+            else if (effectiveMain && !bcFallback && !Devices.isDirectAt(deviceRow))
                 key = "bc:" + deviceRow;
-            else if (!effectiveMain && bcSub)
+            else if (!effectiveMain && bcSub && !Devices.isDirectAt(deviceRow))
                 key = "bcs:" + deviceRow;
             else
                 key = Devices.liveUrl(deviceRow, effectiveMain);

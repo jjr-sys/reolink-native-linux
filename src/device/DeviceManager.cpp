@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "core/Paths.h"
+#include "device/FrigateApi.h"
 #include "device/QuickReply.h"
 #include "media/StreamPlayer.h"
 #include "protocol/BaichuanClient.h"
@@ -52,6 +53,28 @@ int loadRotation(qint64 hostId, int channel)
 
 
 namespace {
+// Hosts that are not Reolink devices: no login, no Baichuan, no settings, no playback.
+// A "stream" is a bare URL; "frigate" is a Frigate server's cameras.
+bool isDirectKind(const QString &kind)
+{
+    return kind == QLatin1String("stream") || kind == QLatin1String("frigate");
+}
+
+// Downscaled JPEG in the thumbnail cache; false if it could not be written.
+bool saveEventThumbnail(const QByteArray &jpeg, const QString &path)
+{
+    const QImage img = QImage::fromData(jpeg);
+    bool ok = false;
+    if (!img.isNull())
+        ok = img.scaledToWidth(qMin(640, img.width()), Qt::SmoothTransformation)
+                 .save(path, "JPG", 85);
+    if (!ok) {
+        QFile f(path);
+        ok = f.open(QIODevice::WriteOnly) && f.write(jpeg) == jpeg.size();
+    }
+    return ok;
+}
+
 // Declared display size of a GetEnc stream ("mainStream"/"subStream"), e.g.
 // 7680x2160. Empty if absent/zero. Used to detect transmitted-rotated streams.
 QSize encStreamSize(const Json &enc, const char *stream)
@@ -175,6 +198,8 @@ void DeviceManager::pollDetections()
         }
     }
 
+    pollFrigate();
+
     // Poll each HOST with a SINGLE batched request covering all its online
     // channels — Reolink NVRs are connection-limited, so opening one connection
     // per channel (5+ at once) starves live/playback streams. One connection per
@@ -189,7 +214,7 @@ void DeviceManager::pollDetections()
     QVector<qint64> order;
     for (const Entry &e : m_entries) {
         // Offline entries stay in the poll: that's how we notice recovery.
-        if (e.rec.kind == QLatin1String("stream") || !e.client)
+        if (isDirectKind(e.rec.kind) || !e.client)
             continue;
         if (!byHost.contains(e.rec.id)) {
             byHost[e.rec.id] = HostPoll{e.client, {}, {}, {}};
@@ -669,6 +694,157 @@ void DeviceManager::postValidation(qint64 hostId, const Validation &v)
         this, [this, hostId, v] { applyValidation(hostId, v); }, Qt::QueuedConnection);
 }
 
+DeviceManager::Validation DeviceManager::validateFrigate(const HostRecord &rec)
+{
+    Validation v;
+    QString error;
+    const QByteArray body = frigate::httpGet(frigate::configUrl(rec.addr, rec.port), 10000, &error);
+    const Json cfg = Json::parse(body.toStdString(), nullptr, false);
+    const QStringList names = cfg.is_discarded() ? QStringList() : frigate::parseCameraNames(cfg);
+    if (names.isEmpty()) {
+        v.problem = Problem::Unreachable;
+        v.status = !error.isEmpty() ? error
+                   : cfg.is_discarded() ? tr("not a Frigate server")
+                                        : tr("Frigate has no enabled cameras");
+        return v;
+    }
+    v.online = true;
+    v.problem = Problem::None;
+    v.status = tr("online");
+    v.model = QStringLiteral("Frigate");
+    v.channelNum = 0; // stay a "frigate" host (channelNum > 1 would turn it into an NVR)
+    for (int i = 0; i < names.size(); ++i) {
+        ChannelResult cr;
+        cr.channel = i;
+        cr.name = names.at(i);
+        cr.online = true;
+        cr.codec = QStringLiteral("h264");
+        v.channels.append(cr);
+    }
+    return v;
+}
+
+void DeviceManager::addFrigate(const QString &name, const QString &host, int port)
+{
+    HostRecord rec;
+    rec.kind = QStringLiteral("frigate");
+    rec.name = name.trimmed().isEmpty() ? host : name.trimmed();
+    rec.addr = host;
+    rec.port = port > 0 ? port : 5000;
+    rec.https = false;
+    rec.id = m_db->addHost(rec);
+    if (rec.id < 0) {
+        emit deviceError(host, m_db->lastError());
+        return;
+    }
+    beginInsertRows({}, m_entries.size(), m_entries.size());
+    Entry e;
+    e.rec = rec;
+    e.chanName = rec.name;
+    e.status = tr("connecting…");
+    m_entries.append(e);
+    endInsertRows();
+    emit countChanged();
+    validateAsync(rec.id);
+}
+
+void DeviceManager::testFrigate(const QString &host, int port)
+{
+    const int portv = port > 0 ? port : 5000;
+    m_pending.addFuture(QtConcurrent::run([this, host, portv] {
+        QString error;
+        const QByteArray body = frigate::httpGet(frigate::configUrl(host, portv), 10000, &error);
+        const Json cfg = Json::parse(body.toStdString(), nullptr, false);
+        const QStringList names = cfg.is_discarded() ? QStringList() : frigate::parseCameraNames(cfg);
+        const bool ok = !names.isEmpty();
+        QString problem, message;
+        if (!ok) {
+            problem = error.isEmpty() ? QStringLiteral("protocol") : QStringLiteral("transport");
+            message = !error.isEmpty() ? error
+                      : cfg.is_discarded() ? tr("the address did not answer like a Frigate server")
+                                           : tr("Frigate has no enabled cameras");
+        }
+        const QString model = ok ? tr("%n camera(s)", "", names.size()) : QString();
+        QMetaObject::invokeMethod(
+            this,
+            [this, ok, message, model, problem] { emit testDeviceResult(ok, message, QString(), model, problem); },
+            Qt::QueuedConnection);
+    }));
+}
+
+// Frigate has no per-channel state to poll: one events request per server per cycle
+// raises the same detectionEvent the Reolink poller does, and its success is the
+// server's connectivity. The first cycle only records where "now" is on the server's
+// clock, so old history is never replayed as fresh activity.
+void DeviceManager::pollFrigate()
+{
+    QSet<qint64> done;
+    for (const Entry &e : m_entries) {
+        if (e.rec.kind != QLatin1String("frigate") || !e.primed || done.contains(e.rec.id))
+            continue;
+        done.insert(e.rec.id);
+        const qint64 hostId = e.rec.id;
+        const QString key = QStringLiteral("f") + QString::number(hostId);
+        if (m_pollInFlight.value(key, false))
+            continue;
+        m_pollInFlight[key] = true;
+        const QString host = e.rec.addr;
+        const int port = e.rec.port;
+        QHash<QString, int> channelOf;
+        QHash<int, bool> online;
+        for (const Entry &c : m_entries)
+            if (c.rec.id == hostId) {
+                channelOf.insert(c.chanName, c.channel);
+                online.insert(c.channel, true);
+            }
+        const bool initialized = m_frigateWatermark.contains(hostId);
+        const double after = m_frigateWatermark.value(hostId, 0.0);
+        m_pending.addFuture(QtConcurrent::run([this, hostId, key, host, port, channelOf, online,
+                                               initialized, after] {
+            QString error;
+            const QByteArray body = frigate::httpGet(
+                frigate::eventsUrl(host, port, after, initialized ? 50 : 1), 8000, &error);
+            const Json parsed = Json::parse(body.toStdString(), nullptr, false);
+            const bool ok = error.isEmpty() && !parsed.is_discarded() && parsed.is_array();
+            const QVector<frigate::Event> events = ok ? frigate::parseEvents(parsed) : QVector<frigate::Event>();
+            QMetaObject::invokeMethod(
+                this,
+                [this, hostId, key, ok, events, channelOf, online, initialized, after] {
+                    m_pollInFlight[key] = false;
+                    applyConnectivity(hostId, ok, online);
+                    if (!ok)
+                        return;
+                    if (!initialized) {
+                        // Newest event's start; with none yet, the server's clock is ours.
+                        m_frigateWatermark[hostId] = frigate::newWatermark(
+                            events.isEmpty() ? QDateTime::currentSecsSinceEpoch() : 0.0, events);
+                        // RL_FRIGATE_BACKFILL=<seconds>: treat the last N seconds of real
+                        // events as new, so the event path can be tested without waiting.
+                        const int backfill = qEnvironmentVariableIntValue("RL_FRIGATE_BACKFILL");
+                        if (backfill > 0)
+                            m_frigateWatermark[hostId] =
+                                static_cast<double>(QDateTime::currentSecsSinceEpoch() - backfill);
+                        return;
+                    }
+                    // Newest first from Frigate; raise oldest first.
+                    for (int i = events.size() - 1; i >= 0; --i) {
+                        const frigate::Event &ev = events.at(i);
+                        const QString type = frigate::typeForLabel(ev.label);
+                        if (ev.start <= after || type.isEmpty() || !channelOf.contains(ev.camera))
+                            continue;
+                        double &last = m_frigateLastRaised[QString::number(hostId) + u'/' + ev.camera + u'/' + type];
+                        if (!frigate::startsNewBurst(last, ev.start))
+                            continue;
+                        last = ev.start;
+                        emit detectionEvent(hostId, channelOf.value(ev.camera), type, ev.camera);
+                    }
+                    m_frigateWatermark[hostId] = frigate::newWatermark(after, events);
+                },
+                Qt::QueuedConnection);
+        }));
+    }
+}
+
 void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, bool storeNew)
 {
     const int row = rowForHostId(hostId);
@@ -706,6 +882,11 @@ void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, boo
                     m_validating.remove(hostId);
                 },
                 Qt::QueuedConnection);
+            return;
+        }
+
+        if (rec.kind == QLatin1String("frigate")) {
+            postValidation(hostId, validateFrigate(rec));
             return;
         }
 
@@ -854,7 +1035,7 @@ std::shared_ptr<ReolinkHttpClient> DeviceManager::clientFor(int row)
     if (row < 0 || row >= m_entries.size())
         return {};
     Entry &e = m_entries[row];
-    if (e.rec.kind == QLatin1String("stream") || !e.primed)
+    if (isDirectKind(e.rec.kind) || !e.primed)
         return {};
     if (!e.client)
         e.client = std::make_shared<ReolinkHttpClient>(e.rec.addr, e.rec.port, e.rec.https,
@@ -934,33 +1115,31 @@ void DeviceManager::snapshot(int row)
 void DeviceManager::captureEventThumbnail(qint64 hostId, int channel, qint64 eventId)
 {
     const int row = rowOfHostChannel(hostId, channel);
-    auto client = clientFor(row);
-    if (!client)
-        return; // silent: an event without a thumbnail still shows its placeholder
-    const int ch = channel;
-    m_pending.addFuture(QtConcurrent::run([this, client, ch, eventId] {
-        QString error;
-        const QByteArray jpeg = client->fetchSnapshot(ch, &error);
-        if (jpeg.isEmpty())
-            return;
-        // Downscale so 100 cached thumbnails stay small (a Snap off a 4K/8K
-        // camera can be several MB). Fall back to the raw bytes if decoding
-        // isn't possible.
-        QString path = Paths::thumbnailsDir() + QStringLiteral("/event_%1.jpg").arg(eventId);
-        const QImage img = QImage::fromData(jpeg);
-        bool ok = false;
-        if (!img.isNull())
-            ok = img.scaledToWidth(qMin(640, img.width()), Qt::SmoothTransformation)
-                     .save(path, "JPG", 85);
-        if (!ok) {
-            QFile f(path);
-            ok = f.open(QIODevice::WriteOnly) && f.write(jpeg) == jpeg.size();
-        }
-        if (!ok)
+    if (row < 0 || row >= m_entries.size())
+        return;
+    const QString path = Paths::thumbnailsDir() + QStringLiteral("/event_%1.jpg").arg(eventId);
+    auto finish = [this, eventId, path](const QByteArray &jpeg) {
+        // Downscale so 100 cached thumbnails stay small (a Snap off a 4K/8K camera can
+        // be several MB); silent on failure: an event without one keeps its placeholder.
+        if (jpeg.isEmpty() || !saveEventThumbnail(jpeg, path))
             return;
         QMetaObject::invokeMethod(
             this, [this, eventId, path] { emit eventThumbnailReady(eventId, path); },
             Qt::QueuedConnection);
+    };
+    const Entry &e = m_entries.at(row);
+    if (e.rec.kind == QLatin1String("frigate")) {
+        const QString url = frigate::latestFrameUrl(e.rec.addr, e.rec.port, e.chanName);
+        m_pending.addFuture(QtConcurrent::run([finish, url] { finish(frigate::httpGet(url, 8000)); }));
+        return;
+    }
+    auto client = clientFor(row);
+    if (!client)
+        return;
+    const int ch = channel;
+    m_pending.addFuture(QtConcurrent::run([client, ch, finish] {
+        QString error;
+        finish(client->fetchSnapshot(ch, &error));
     }));
 }
 
@@ -1048,7 +1227,7 @@ QString DeviceManager::playbackUrl(int row, qint64 startEpoch, bool mainStream)
     if (row < 0 || row >= m_entries.size() || startEpoch <= 0)
         return {};
     const Entry &e = m_entries.at(row);
-    if (e.rec.kind == QLatin1String("stream") || !e.primed)
+    if (isDirectKind(e.rec.kind) || !e.primed)
         return {};
     // The FLV endpoint only accepts a start on a recording-file boundary and uses
     // `seek` for the offset into that file — a mid-file start time is rejected. Snap
@@ -1088,7 +1267,7 @@ void DeviceManager::requestHdClip(int row, qint64 startEpoch, int durationSecs)
         return;
     }
     const Entry &e = m_entries.at(row);
-    if (e.rec.kind == QLatin1String("stream") || !e.primed) {
+    if (isDirectKind(e.rec.kind) || !e.primed) {
         emit hdClipFailed(row, tr("no recordings on this device"));
         return;
     }
@@ -1161,7 +1340,7 @@ DownloadSource DeviceManager::downloadSource(int row)
     if (!client)
         return s;
     const Entry &e = m_entries.at(row);
-    if (e.rec.kind == QLatin1String("stream"))
+    if (isDirectKind(e.rec.kind))
         return s;
     s.hostId = e.rec.id;
     s.site = e.rec.name;
@@ -1243,7 +1422,7 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     if (row < 0 || row >= m_entries.size() || !player)
         return;
     const Entry &e = m_entries.at(row);
-    if (e.rec.kind == QLatin1String("stream") || !e.primed)
+    if (isDirectKind(e.rec.kind) || !e.primed)
         return;
 
     BaichuanClient::Params p;
@@ -1287,7 +1466,7 @@ void DeviceManager::startTalk(int row, TalkSession *session)
     if (row < 0 || row >= m_entries.size() || !session)
         return;
     const Entry &e = m_entries.at(row);
-    if (e.rec.kind == QLatin1String("stream") || !e.primed || !e.talk)
+    if (isDirectKind(e.rec.kind) || !e.primed || !e.talk)
         return;
 
     BaichuanTalk::Params p;
@@ -1656,7 +1835,7 @@ void DeviceManager::fetchAlerts(int row)
         return;
     }
     const Entry &e = m_entries.at(row);
-    if (e.rec.kind == QLatin1String("stream") || !e.primed) {
+    if (isDirectKind(e.rec.kind) || !e.primed) {
         emit alertsLoaded(row, {});
         return;
     }
@@ -1727,7 +1906,7 @@ void DeviceManager::warmPushCache()
     int i = 0;
     for (int row = 0; row < m_entries.size(); ++row) {
         const Entry &e = m_entries.at(row);
-        if (e.rec.kind == QLatin1String("stream") || !e.primed)
+        if (isDirectKind(e.rec.kind) || !e.primed)
             continue;
         m_pushWarmed = true;   // a camera is ready; don't re-warm every poll cycle
         // Stagger so we never open several Baichuan settings sessions at once.
@@ -1775,7 +1954,7 @@ void DeviceManager::fetchRecSchedule(int row)
         return;
     }
     const Entry &e = m_entries.at(row);
-    if (e.rec.kind == QLatin1String("stream") || !e.primed) {
+    if (isDirectKind(e.rec.kind) || !e.primed) {
         emit recScheduleLoaded(row, {});
         return;
     }
@@ -1865,7 +2044,7 @@ void DeviceManager::fetchBcConfig(int row, int cmdId, const QString &reqBody)
         return;
     }
     const Entry &e = m_entries.at(row);
-    if (e.rec.kind == QLatin1String("stream") || !e.primed) {
+    if (isDirectKind(e.rec.kind) || !e.primed) {
         emit bcConfigLoaded(row, cmdId, {});
         return;
     }
@@ -1935,6 +2114,9 @@ QString DeviceManager::liveUrl(int row, bool mainStream)
     if (row < 0 || row >= m_entries.size())
         return {};
     const Entry &e = m_entries.at(row);
+
+    if (e.rec.kind == QLatin1String("frigate"))
+        return frigate::liveUrl(e.rec.addr, e.rec.port, e.chanName);
 
     if (e.rec.kind == QLatin1String("stream")) {
         if (e.rec.username.isEmpty() && e.password.isEmpty())

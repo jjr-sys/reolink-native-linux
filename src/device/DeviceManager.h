@@ -102,6 +102,10 @@ public:
 
     Q_INVOKABLE void addDevice(const QString &addr, const QString &username,
                                const QString &password, bool https = true, int port = 0);
+    // A Frigate server (http, no login): each enabled camera becomes a row.
+    Q_INVOKABLE void addFrigate(const QString &name, const QString &host, int port = 5000);
+    // Checks the address answers like Frigate; reports through testDeviceResult.
+    Q_INVOKABLE void testFrigate(const QString &host, int port = 5000);
     // Direct stream URL (rtsp://…, file …) — testing and generic-RTSP escape hatch.
     // Any embedded credentials are stripped to the keyring, not persisted in the DB.
     Q_INVOKABLE void addStreamUrl(const QString &name, const QString &url);
@@ -123,6 +127,14 @@ public:
             if (m_entries.at(i).rec.id == hostId && m_entries.at(i).channel == channel)
                 return i;
         return rowForHostId(hostId);
+    }
+    // A URL stream or Frigate camera: plays from liveUrl() only (no Baichuan HD path).
+    Q_INVOKABLE bool isDirectAt(int row) const
+    {
+        if (row < 0 || row >= m_entries.size())
+            return false;
+        const QString &k = m_entries.at(row).rec.kind;
+        return k == QLatin1String("stream") || k == QLatin1String("frigate");
     }
     Q_INVOKABLE bool isAdminAt(int row) const
     {
@@ -363,6 +375,8 @@ private:
     // on the GUI thread. storeNew persists newPassword to the keyring first.
     void validateAsync(qint64 hostId, const QString &newPassword = QString(),
                        bool storeNew = false);
+    Validation validateFrigate(const HostRecord &rec);
+    void pollFrigate();
     int rowForHostId(qint64 hostId) const;
     void warmPushCache();   // fetch each camera's push state once, staggered
     void applyConnectivity(qint64 hostId, bool transportOk, const QHash<int, bool> &chanOnline);
@@ -380,6 +394,8 @@ private:
     QTimer m_pollTimer;
     // Keyed by "hostId:channel" so each NVR camera is tracked independently.
     QHash<QString, api::DetectionState> m_lastDetection; // for 0->1 edge detection
+    QHash<qint64, double> m_frigateWatermark;            // newest Frigate event start seen (server clock)
+    QHash<QString, double> m_frigateLastRaised;          // host/camera/type -> start of last detection raised
     QHash<QString, bool> m_pollInFlight;                 // avoid overlapping polls
     QHash<int, int> m_pushEnabled;  // row -> push enable (1/0/-1) for notif gating
     QHash<qint64, int> m_hostFails; // consecutive poll transport failures per host
