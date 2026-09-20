@@ -226,6 +226,10 @@ public:
     // emits quickReplyPlayed. Both target the row's own NVR channel.
     Q_INVOKABLE void fetchQuickReplies(int row);
     Q_INVOKABLE void playQuickReply(int row, int clipId);
+    // Doorbell auto-reply (play a clip by itself when nobody answers): read the setting
+    // and its clip choices; change it (needs an administrator account).
+    Q_INVOKABLE void fetchAutoReply(int row);
+    Q_INVOKABLE void setAutoReply(int row, bool enable, int fileId, int timeout);
     // Toggle the camera's white-LED / floodlight on<->off. Reads GetWhiteLed first
     // so only the on/off state flips, leaving brightness and the auto/schedule mode
     // untouched. Emits settingApplied("SetWhiteLed", ...) for UI feedback.
@@ -292,6 +296,9 @@ signals:
     // the list could not be read at all (offline, refused, unsupported).
     void quickRepliesLoaded(int row, const QVariantList &clips, int maxFiles, const QString &error);
     void quickReplyPlayed(int row, int clipId, bool ok, const QString &error);
+    // setting: { enable, fileId (-1 = none), timeout }; empty with `error` set = unavailable.
+    void autoReplyLoaded(int row, const QVariantMap &setting, const QVariantList &clips, const QString &error);
+    void autoReplySaved(int row, bool ok, const QString &error);
     void alertsLoaded(int row, const QVariantMap &values);
     void bcConfigLoaded(int row, int cmdId, const QVariantMap &values);
     void recScheduleLoaded(int row, const QVariantMap &values);

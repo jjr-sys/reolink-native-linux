@@ -122,6 +122,7 @@ struct ChannelCaps {
     bool floodlight = false;
     bool battery = false;
     bool doorbell = false;
+    bool autoReply = false; // the device can play a stored clip by itself when a visitor presses
     bool supportsBalanced = false; // exposes a third ("Balanced") stream
 };
 struct Capabilities {

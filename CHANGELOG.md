@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the project is pre-1.0, minor versions may still change behaviour.
 
+## [0.9.0-jjr] — 2026-09-20
+
+### Added
+
+- **Doorbell auto-reply settings.** Settings, Detection / Alerts has a new
+  **Doorbell auto-reply** section for doorbells that support it: a switch, the
+  clip to play, and how long to wait for a person before replying. It reads the
+  setting from the device and shows what the device confirms after each change.
+  A doorbell with no clips stored says so, since there is nothing to play.
+
 ## [0.8.0-jjr] — 2026-09-20
 
 ### Added

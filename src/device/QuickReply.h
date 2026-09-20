@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QVariantMap>
 #include <QVector>
 #include <QXmlStreamReader>
 
@@ -99,6 +100,78 @@ inline QByteArray baichuanPlayBody(int channel, int fileId)
 inline bool baichuanStatusOk(quint16 status)
 {
     return status == 200 || status == 201 || status == 300;
+}
+
+// Auto-reply: play a clip by itself when the doorbell is pressed and nobody answers.
+struct AutoReply {
+    bool valid = false;
+    bool enable = false;
+    int fileId = -1;   // -1 = no clip chosen
+    int timeout = 15;  // seconds to wait for a person before replying
+};
+
+inline constexpr quint32 kBcAutoReplyGetCmd = 427;
+inline constexpr quint32 kBcAutoReplySetCmd = 428;
+
+// `value` of GetAutoReply: {"AutoReply": {"enable":0,"fileId":-1,"timeout":15}}.
+inline AutoReply parseHttpAutoReply(const nlohmann::json &value)
+{
+    AutoReply a;
+    if (!value.is_object() || !value.contains("AutoReply") || !value["AutoReply"].is_object())
+        return a;
+    const auto &j = value["AutoReply"];
+    a.valid = true;
+    a.enable = j.contains("enable") && j["enable"].is_number() && j["enable"].get<int>() != 0;
+    if (j.contains("fileId") && j["fileId"].is_number_integer())
+        a.fileId = j["fileId"].get<int>();
+    if (j.contains("timeout") && j["timeout"].is_number_integer())
+        a.timeout = j["timeout"].get<int>();
+    return a;
+}
+
+// Baichuan cmd 427 reply: <enable>, <audioId> (the file id), <timeout>.
+inline AutoReply parseBaichuanAutoReply(const QByteArray &xml)
+{
+    AutoReply a;
+    QXmlStreamReader r(xml);
+    bool haveEnable = false, haveAudio = false, haveTimeout = false; // first occurrence wins,
+    while (!r.atEnd()) {                                             // like the write side
+        r.readNext();
+        if (!r.isStartElement())
+            continue;
+        const QStringView n = r.name();
+        if (n == u"enable" && !haveEnable) {
+            a.enable = r.readElementText().toInt() != 0;
+            haveEnable = true;
+        } else if (n == u"audioId" && !haveAudio) {
+            a.fileId = r.readElementText().toInt();
+            haveAudio = true;
+        } else if (n == u"timeout" && !haveTimeout) {
+            a.timeout = r.readElementText().toInt();
+            haveTimeout = true;
+        }
+    }
+    const bool any = haveEnable || haveAudio || haveTimeout;
+    a.valid = any;
+    return a;
+}
+
+// SetAutoReply `param`: note the wrapper object, unlike the flat QuickReplyPlay.
+inline nlohmann::json httpAutoReplyParam(int channel, const AutoReply &a)
+{
+    return nlohmann::json{{"AutoReply",
+                           {{"channel", channel},
+                            {"enable", a.enable ? 1 : 0},
+                            {"fileId", a.fileId},
+                            {"timeout", a.timeout}}}};
+}
+
+// Fields to write into the cmd 427 config before sending it back as cmd 428.
+inline QVariantMap baichuanAutoReplyChanges(const AutoReply &a)
+{
+    return {{QStringLiteral("enable"), a.enable ? 1 : 0},
+            {QStringLiteral("audioId"), a.fileId},
+            {QStringLiteral("timeout"), a.timeout}};
 }
 
 } // namespace rl::quickreply

@@ -68,6 +68,45 @@ private slots:
         QVERIFY(b.contains("<id>5</id>"));
         QVERIFY(b.contains("<timeout>0</timeout>"));
     }
+    void autoReply_httpReadsTheDoorbellsRealShape()
+    {
+        // What the Woorabinda doorbell reported: off, no clip, 15 s.
+        const AutoReply a = parseHttpAutoReply(Json::parse(R"J({"AutoReply":{"channel":3,"enable":0,"fileId":-1,"timeout":15}})J"));
+        QVERIFY(a.valid);
+        QVERIFY(!a.enable);
+        QCOMPARE(a.fileId, -1);
+        QCOMPARE(a.timeout, 15);
+        QVERIFY(!parseHttpAutoReply(Json::parse(R"J({})J")).valid);
+    }
+    void autoReply_baichuanMapsAudioIdToFileId()
+    {
+        const AutoReply a = parseBaichuanAutoReply(
+            "<body><AutoReply><channelId>3</channelId><enable>1</enable><audioId>4</audioId><timeout>20</timeout></AutoReply></body>");
+        QVERIFY(a.valid);
+        QVERIFY(a.enable);
+        QCOMPARE(a.fileId, 4);
+        QCOMPARE(a.timeout, 20);
+        // A later repeat of a tag (e.g. inside a schedule block) must not win.
+        const AutoReply b = parseBaichuanAutoReply(
+            "<body><AutoReply><enable>0</enable><timeout>15</timeout><audioId>-1</audioId><sched><enable>1</enable><timeout>99</timeout></sched></AutoReply></body>");
+        QVERIFY(!b.enable);
+        QCOMPARE(b.timeout, 15);
+        QVERIFY(!parseBaichuanAutoReply("garbage").valid);
+    }
+    void autoReply_setBodyUsesTheWrapperObject()
+    {
+        AutoReply a;
+        a.enable = true; a.fileId = 2; a.timeout = 30;
+        const Json j = httpAutoReplyParam(3, a);
+        QCOMPARE(j["AutoReply"]["channel"].get<int>(), 3);
+        QCOMPARE(j["AutoReply"]["enable"].get<int>(), 1);
+        QCOMPARE(j["AutoReply"]["fileId"].get<int>(), 2);
+        QCOMPARE(j["AutoReply"]["timeout"].get<int>(), 30);
+        const QVariantMap m = baichuanAutoReplyChanges(a);
+        QCOMPARE(m["enable"].toInt(), 1);
+        QCOMPARE(m["audioId"].toInt(), 2);
+        QCOMPARE(m["timeout"].toInt(), 30);
+    }
     void fallbackCodes()
     {
         for (int c : {-4, -9, -12, -13, -17})

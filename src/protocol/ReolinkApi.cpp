@@ -260,6 +260,7 @@ Capabilities parseAbility(const Json &value)
                        capVer(chn, "whiteLed");
         c.battery = capVer(chn, "battery") || capVer(chn, "supportBattery");
         c.doorbell = capVer(chn, "supportVisitor") || capVer(chn, "supportDoorbell");
+        c.autoReply = capVer(chn, "supportAutoReply");
         // supportBalanced only; mainEncType is an encoder flag, NOT a third stream.
         c.supportsBalanced = capVer(chn, "supportBalanced");
         caps.talk = caps.talk || c.talk;

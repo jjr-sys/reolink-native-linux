@@ -1594,6 +1594,45 @@ void DeviceManager::applySetting(int row, const QString &setCommand, const QVari
     }));
 }
 
+namespace {
+// The doorbell's clips: HTTP first; an empty or refused HTTP list is cross-checked over
+// Baichuan, since an NVR can answer the HTTP list with nothing while the device has clips.
+// `error` is set only when neither path could be read at all.
+quickreply::ClipList fetchClipList(ReolinkHttpClient &client, const BaichuanControl::Params &p,
+                                   int ch, QString *error)
+{
+    namespace qr = quickreply;
+    qr::ClipList list;
+    const api::CommandResult r =
+        client.callOne(QStringLiteral("GetAudioFileList"), Json{{"channel", ch}}, 0);
+    if (r.ok)
+        list = qr::parseHttpList(r.value);
+    if (!list.clips.isEmpty())
+        return list;
+    BaichuanControl bc(p);
+    if (bc.open()) {
+        quint16 st = 0;
+        const QByteArray xml = bc.get(qr::kBcListCmd, ch, &st);
+        bc.close();
+        if (qr::baichuanStatusOk(st))
+            list = qr::parseBaichuanList(xml);
+        else if (!r.ok && error)
+            *error = QObject::tr("the device does not support quick replies (status %1)").arg(st);
+    } else if (!r.ok && error) {
+        *error = r.detail.isEmpty() ? QObject::tr("could not reach the device") : r.detail;
+    }
+    return list;
+}
+
+QVariantList clipsToVariant(const quickreply::ClipList &list)
+{
+    QVariantList clips;
+    for (const quickreply::Clip &c : list.clips)
+        clips.append(QVariantMap{{QStringLiteral("id"), c.id}, {QStringLiteral("name"), c.name}});
+    return clips;
+}
+} // namespace
+
 void DeviceManager::fetchQuickReplies(int row)
 {
     auto client = clientFor(row);
@@ -1605,37 +1644,103 @@ void DeviceManager::fetchQuickReplies(int row)
     BaichuanControl::Params p{e.rec.addr, 9000, e.rec.username, e.password};
     const int ch = e.channel;
     m_pending.addFuture(QtConcurrent::run([this, client, row, p, ch] {
-        namespace qr = quickreply;
-        qr::ClipList list;
         QString error;
-        const api::CommandResult r =
-            client->callOne(QStringLiteral("GetAudioFileList"), Json{{"channel", ch}}, 0);
-        if (r.ok)
-            list = qr::parseHttpList(r.value);
-        // An NVR can answer the HTTP list with nothing while the doorbell has clips, so
-        // an empty or refused HTTP list is always cross-checked over Baichuan.
-        if (list.clips.isEmpty()) {
-            BaichuanControl bc(p);
-            if (bc.open()) {
-                quint16 st = 0;
-                const QByteArray xml = bc.get(qr::kBcListCmd, ch, &st);
-                bc.close();
-                if (qr::baichuanStatusOk(st)) {
-                    list = qr::parseBaichuanList(xml);
-                } else if (!r.ok) {
-                    error = tr("the device does not support quick replies (status %1)").arg(st);
-                }
-            } else if (!r.ok) {
-                error = r.detail.isEmpty() ? tr("could not reach the device") : r.detail;
-            }
-        }
-        QVariantList clips;
-        for (const qr::Clip &c : list.clips)
-            clips.append(QVariantMap{{QStringLiteral("id"), c.id}, {QStringLiteral("name"), c.name}});
+        const quickreply::ClipList list = fetchClipList(*client, p, ch, &error);
+        const QVariantList clips = clipsToVariant(list);
         const int maxFiles = list.maxFiles;
         QMetaObject::invokeMethod(
             this,
             [this, row, clips, maxFiles, error] { emit quickRepliesLoaded(row, clips, maxFiles, error); },
+            Qt::QueuedConnection);
+    }));
+}
+
+// Auto-reply: the current setting plus the clips it can pick from. The setting is read
+// over HTTP, then Baichuan cmd 427 if HTTP does not answer.
+void DeviceManager::fetchAutoReply(int row)
+{
+    auto client = clientFor(row);
+    if (!client || row < 0 || row >= m_entries.size()) {
+        emit autoReplyLoaded(row, {}, {}, tr("device not ready"));
+        return;
+    }
+    const Entry &e = m_entries.at(row);
+    BaichuanControl::Params p{e.rec.addr, 9000, e.rec.username, e.password};
+    const int ch = e.channel;
+    m_pending.addFuture(QtConcurrent::run([this, client, row, p, ch] {
+        namespace qr = quickreply;
+        QString error;
+        qr::AutoReply a;
+        const api::CommandResult r =
+            client->callOne(QStringLiteral("GetAutoReply"), Json{{"channel", ch}}, 0);
+        if (r.ok)
+            a = qr::parseHttpAutoReply(r.value);
+        if (!a.valid) {
+            BaichuanControl bc(p);
+            if (bc.open()) {
+                quint16 st = 0;
+                const QByteArray xml = bc.get(qr::kBcAutoReplyGetCmd, ch, &st);
+                bc.close();
+                if (qr::baichuanStatusOk(st))
+                    a = qr::parseBaichuanAutoReply(xml);
+            }
+        }
+        QVariantList clips;
+        if (a.valid) {
+            QString clipError;
+            clips = clipsToVariant(fetchClipList(*client, p, ch, &clipError));
+        } else {
+            error = tr("this device does not offer auto-reply");
+        }
+        const QVariantMap setting{{QStringLiteral("enable"), a.enable},
+                                  {QStringLiteral("fileId"), a.fileId},
+                                  {QStringLiteral("timeout"), a.timeout}};
+        QMetaObject::invokeMethod(
+            this,
+            [this, row, setting, clips, error] { emit autoReplyLoaded(row, setting, clips, error); },
+            Qt::QueuedConnection);
+    }));
+}
+
+void DeviceManager::setAutoReply(int row, bool enable, int fileId, int timeout)
+{
+    auto client = clientFor(row);
+    if (!client || row < 0 || row >= m_entries.size()) {
+        emit autoReplySaved(row, false, tr("device not ready"));
+        return;
+    }
+    if (!m_entries.at(row).isAdmin) {
+        emit autoReplySaved(row, false, tr("requires an administrator account"));
+        return;
+    }
+    const Entry &e = m_entries.at(row);
+    BaichuanControl::Params p{e.rec.addr, 9000, e.rec.username, e.password};
+    const int ch = e.channel;
+    m_pending.addFuture(QtConcurrent::run([this, client, row, enable, fileId, timeout, p, ch] {
+        namespace qr = quickreply;
+        qr::AutoReply a;
+        a.valid = true;
+        a.enable = enable;
+        a.fileId = fileId;
+        a.timeout = timeout;
+        const api::CommandResult r =
+            client->callOne(QStringLiteral("SetAutoReply"), qr::httpAutoReplyParam(ch, a), 0);
+        bool ok = r.ok && (!r.value.is_object() || !r.value.contains("rspCode") ||
+                           r.value.value("rspCode", 200) == 200);
+        QString error;
+        if (!ok) {
+            // Same fallback as the clip list: try the native protocol.
+            BaichuanControl bc(p);
+            if (bc.open()) {
+                ok = bc.writeFields(qr::kBcAutoReplyGetCmd, qr::kBcAutoReplySetCmd, ch,
+                                    qr::baichuanAutoReplyChanges(a));
+                bc.close();
+            }
+            if (!ok)
+                error = r.detail.isEmpty() ? tr("the device refused the change") : r.detail;
+        }
+        QMetaObject::invokeMethod(
+            this, [this, row, ok, error] { emit autoReplySaved(row, ok, error); },
             Qt::QueuedConnection);
     }));
 }
@@ -1749,6 +1854,7 @@ QVariantMap DeviceManager::cameraInfo(int row) const
     m["capFloodlight"] = e.caps.floodlight;
     m["capBattery"] = e.caps.battery;
     m["capTalk"] = e.talk;
+    m["capAutoReply"] = e.caps.autoReply;
     m["rotationOverride"] = e.rotationOverride;
     return m;
 }

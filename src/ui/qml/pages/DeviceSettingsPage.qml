@@ -56,6 +56,19 @@ Item {
     // Per-AI-type detection config over Baichuan (cmd 342), keyed by type
     // (people/vehicle/dog_cat) -> flat map incl. sensitivity/stayTime.
     property var aiSens: ({})
+    // Doorbell auto-reply: { enable, fileId, timeout }, the clips to pick from, and why it
+    // could not be read (empty when fine). Only fetched for channels that report the ability.
+    property var autoReply: ({})
+    property var autoReplyClips: []
+    property string autoReplyError: ""
+    property bool autoReplyReady: false
+    readonly property bool hasAutoReply: page.deviceRow >= 0
+        && Devices.cameraInfo(page.deviceRow).capAutoReply === true
+    function saveAutoReply(enable, fileId, timeout) {
+        if (enable && fileId < 0 && page.autoReplyClips.length > 0)
+            fileId = page.autoReplyClips[0].id;   // a reply needs a clip: default to the first
+        Devices.setAutoReply(page.deviceRow, enable, fileId, timeout);
+    }
     // Recording config over Baichuan (cmd 54 flat map).
     property var rec: ({})
     property var recSched: ({})   // type -> 168-char weekly table (cmd 81)
@@ -87,6 +100,12 @@ Item {
                 var aiTypes = ["people", "vehicle", "dog_cat"];
                 for (var i = 0; i < aiTypes.length; i++)
                     Devices.fetchBcConfig(page.deviceRow, 342, page.aiBody(aiTypes[i]));
+                page.autoReply = ({});
+                page.autoReplyClips = [];
+                page.autoReplyError = "";
+                page.autoReplyReady = false;
+                if (page.hasAutoReply)
+                    Devices.fetchAutoReply(page.deviceRow);
             }
             if (page.category === "image") {
                 page.img = ({});
@@ -149,6 +168,20 @@ Item {
                 for (var i = 0; i < ts.length; i++)
                     Devices.fetchBcConfig(page.deviceRow, 342, page.aiBody(ts[i]));
             }
+        }
+        function onAutoReplyLoaded(row, setting, clips, error) {
+            if (row !== page.deviceRow)
+                return;
+            page.autoReply = setting;
+            page.autoReplyClips = clips;
+            page.autoReplyError = error;
+            page.autoReplyReady = true;
+        }
+        function onAutoReplySaved(row, ok, error) {
+            if (row !== page.deviceRow)
+                return;
+            page.status = ok ? qsTr("Auto-reply saved") : qsTr("Auto-reply: %1").arg(error);
+            Devices.fetchAutoReply(page.deviceRow);   // show what the device confirmed
         }
         function onAlertsLoaded(row, values) {
             if (row === page.deviceRow)
@@ -542,6 +575,77 @@ Item {
                 visible: page.alerts.ok === false
                 text: qsTr("Alert settings couldn't be read from the device.")
                 color: Theme.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
+            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; visible: page.hasAutoReply }
+            Text {
+                visible: page.hasAutoReply
+                text: qsTr("Doorbell auto-reply")
+                color: Theme.text; font.pixelSize: 13; font.bold: true
+            }
+            Text {
+                visible: page.hasAutoReply && !page.autoReplyReady
+                text: qsTr("Loading\u2026")
+                color: Theme.textMuted; font.pixelSize: 11
+            }
+            Text {
+                visible: page.hasAutoReply && page.autoReplyReady && page.autoReplyError !== ""
+                text: qsTr("Auto-reply couldn't be read: %1").arg(page.autoReplyError)
+                color: Theme.danger; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
+            }
+            SwitchRow {
+                visible: page.hasAutoReply && page.autoReplyReady && page.autoReplyError === ""
+                label: qsTr("Reply automatically")
+                enabledCtl: page.isAdmin && (page.autoReplyClips.length > 0 || page.autoReply.enable === true)
+                checked: page.autoReply.enable === true
+                onCommit: (v) => page.saveAutoReply(v, page.autoReply.fileId, page.autoReply.timeout)
+            }
+            Text {
+                visible: page.hasAutoReply && page.autoReplyReady && page.autoReplyError === ""
+                         && page.autoReplyClips.length === 0
+                text: qsTr("This doorbell has no reply clips stored, so there is nothing to play. Add clips in the Reolink app first.")
+                color: Theme.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
+            }
+            Flow {
+                Layout.fillWidth: true
+                spacing: Theme.spacing
+                visible: page.hasAutoReply && page.autoReplyReady && page.autoReplyClips.length > 0
+                Text {
+                    text: qsTr("Clip")
+                    color: Theme.textMuted; font.pixelSize: 12
+                    width: 150; height: 28; verticalAlignment: Text.AlignVCenter
+                }
+                Repeater {
+                    model: page.autoReplyClips
+                    delegate: Rectangle {
+                        required property var modelData
+                        readonly property bool chosen: page.autoReply.fileId === modelData.id
+                        width: clipLabel.implicitWidth + 24
+                        height: 28
+                        radius: Theme.radius
+                        color: chosen ? Theme.accentDim : clipHover.hovered ? Theme.surfaceAlt : Theme.surface
+                        border.color: chosen ? Theme.accent : Theme.border
+                        opacity: page.isAdmin ? 1 : 0.5
+                        Text {
+                            id: clipLabel
+                            anchors.centerIn: parent
+                            text: parent.modelData.name !== "" ? parent.modelData.name : qsTr("Reply %1").arg(parent.modelData.id)
+                            color: Theme.text; font.pixelSize: 12
+                        }
+                        HoverHandler { id: clipHover }
+                        TapHandler {
+                            enabled: page.isAdmin
+                            onTapped: page.saveAutoReply(page.autoReply.enable === true, parent.modelData.id, page.autoReply.timeout)
+                        }
+                    }
+                }
+            }
+            SliderRow {
+                visible: page.hasAutoReply && page.autoReplyReady && page.autoReplyError === ""
+                         && page.autoReplyClips.length > 0
+                label: qsTr("Wait before replying (s)"); from: 1; to: 60
+                enabledCtl: page.isAdmin
+                value: page.autoReply.timeout !== undefined ? page.autoReply.timeout : 15
+                onCommit: (v) => page.saveAutoReply(page.autoReply.enable === true, page.autoReply.fileId, v)
             }
             Item { Layout.fillHeight: true }
             Text {
