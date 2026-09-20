@@ -16,11 +16,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
   last detection (and at least 15 s once shown), then the tile goes back to its
   own camera. Your saved arrangement is never changed and comes back when you
   switch Activity mode off.
-- **Replay of the moment.** A tile taken by activity plays the recording from
-  about 20 s before the alert, with a **Live** link to jump to the live picture.
-  If the NVR won't give another recording session, the tile shows live instead.
-- **Why it changed:** an amber border and a badge such as
-  "Person · Driveway · 14:02". The selected tile and any camera you drag into a
+- **Why it changed:** an amber border (inside the blue selection border, so both
+  show) and a badge such as "Person · Driveway · 14:02". The tile cuts straight
+  to the camera's live picture. The selected tile and any camera you drag into a
   tile stay put. When every tile is busy, new activity waits (the button shows
   `+N`); nothing is dropped.
 - At most two new streams start at once per NVR.
@@ -31,9 +29,8 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 - Detections are seen up to about 10 s late (the existing poll), and only when
   they start: a person who stays in view does not extend the hold.
-- Whether the NVR replays a moment from the last seconds of the file it is still
-  writing, and how many recording sessions it allows at once, are not yet
-  verified on hardware.
+- Replaying the moment that started the activity was tried and dropped: the
+  recording played a short snippet and stopped, so tiles show live instead.
 
 ## [0.5.0-jjr] — 2026-09-20
 

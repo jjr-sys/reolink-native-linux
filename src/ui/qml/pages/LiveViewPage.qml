@@ -564,7 +564,6 @@ Item {
                     readonly property var activity: page.activityOf(index)
                     activityKind: activity ? activity.kind : ""
                     activityText: page.activityLabel(activity, name)
-                    replayFrom: activity ? activity.replayFrom : 0
 
                     // Slide to the new cell so a swap reads as movement rather
                     // than two panes blinking into each other's places.

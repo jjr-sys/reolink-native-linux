@@ -11,8 +11,8 @@ import ReolinkApp.Core
 Rectangle {
     id: root
     color: Theme.paneBackground
-    border.color: activityKind !== "" ? "#f0a030" : selected ? Theme.accent : Theme.border
-    border.width: activityKind !== "" ? 3 : 1
+    border.color: selected ? Theme.accent : Theme.border
+    border.width: selected && activityKind !== "" ? 3 : 1
     clip: true
 
     property int paneIndex: -1     // grid slot
@@ -391,6 +391,17 @@ Rectangle {
     }
 
     // ---- Name + zoom badge -------------------------------------------------
+
+    // Activity marker: amber inside the selection's blue border, so both stay visible.
+    Rectangle {
+        visible: root.activityKind !== ""
+        z: 19
+        anchors.fill: parent
+        anchors.margins: root.selected ? 3 : 0
+        color: "transparent"
+        border.color: "#f0a030"
+        border.width: 3
+    }
 
     // Why this camera is here (Activity mode): "Person · 14:02", with a Live button
     // while the tile is replaying the moment.
