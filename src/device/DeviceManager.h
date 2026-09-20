@@ -203,6 +203,13 @@ public:
     // of cmd -> value) and apply one Set* command (emits settingApplied).
     Q_INVOKABLE void fetchSettings(int row, const QStringList &getCommands);
     Q_INVOKABLE void applySetting(int row, const QString &setCommand, const QVariantMap &param);
+
+    // Doorbell quick replies. fetchQuickReplies asks the device for its clips (HTTP
+    // first, then Baichuan cmd 347 — an NVR may answer only one) and emits
+    // quickRepliesLoaded. playQuickReply plays one clip on this camera's channel and
+    // emits quickReplyPlayed. Both target the row's own NVR channel.
+    Q_INVOKABLE void fetchQuickReplies(int row);
+    Q_INVOKABLE void playQuickReply(int row, int clipId);
     // Toggle the camera's white-LED / floodlight on<->off. Reads GetWhiteLed first
     // so only the on/off state flips, leaving brightness and the auto/schedule mode
     // untouched. Emits settingApplied("SetWhiteLed", ...) for UI feedback.
@@ -265,6 +272,10 @@ signals:
     void settingsLoaded(int row, const QVariantMap &values);
     void settingsFailed(int row, const QString &error);
     void settingApplied(int row, const QString &command, bool ok, const QString &error);
+    // clips: [{id, name}]. error empty + no clips = the device has none; error set =
+    // the list could not be read at all (offline, refused, unsupported).
+    void quickRepliesLoaded(int row, const QVariantList &clips, int maxFiles, const QString &error);
+    void quickReplyPlayed(int row, int clipId, bool ok, const QString &error);
     void alertsLoaded(int row, const QVariantMap &values);
     void bcConfigLoaded(int row, int cmdId, const QVariantMap &values);
     void recScheduleLoaded(int row, const QVariantMap &values);

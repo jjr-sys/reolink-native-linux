@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "core/Paths.h"
+#include "device/QuickReply.h"
 #include "media/StreamPlayer.h"
 #include "protocol/BaichuanClient.h"
 #include "protocol/BaichuanControl.h"
@@ -1410,6 +1411,92 @@ void DeviceManager::applySetting(int row, const QString &setCommand, const QVari
             [this, row, setCommand, ok, error] {
                 emit settingApplied(row, setCommand, ok, error);
             },
+            Qt::QueuedConnection);
+    }));
+}
+
+void DeviceManager::fetchQuickReplies(int row)
+{
+    auto client = clientFor(row);
+    if (!client || row < 0 || row >= m_entries.size()) {
+        emit quickRepliesLoaded(row, {}, 0, tr("device not ready"));
+        return;
+    }
+    const Entry &e = m_entries.at(row);
+    BaichuanControl::Params p{e.rec.addr, 9000, e.rec.username, e.password};
+    const int ch = e.channel;
+    m_pending.addFuture(QtConcurrent::run([this, client, row, p, ch] {
+        namespace qr = quickreply;
+        qr::ClipList list;
+        QString error;
+        const api::CommandResult r =
+            client->callOne(QStringLiteral("GetAudioFileList"), Json{{"channel", ch}}, 0);
+        if (r.ok)
+            list = qr::parseHttpList(r.value);
+        // An NVR can answer the HTTP list with nothing while the doorbell has clips, so
+        // an empty or refused HTTP list is always cross-checked over Baichuan.
+        if (list.clips.isEmpty()) {
+            BaichuanControl bc(p);
+            if (bc.open()) {
+                quint16 st = 0;
+                const QByteArray xml = bc.get(qr::kBcListCmd, ch, &st);
+                bc.close();
+                if (qr::baichuanStatusOk(st)) {
+                    list = qr::parseBaichuanList(xml);
+                } else if (!r.ok) {
+                    error = tr("the device does not support quick replies (status %1)").arg(st);
+                }
+            } else if (!r.ok) {
+                error = r.detail.isEmpty() ? tr("could not reach the device") : r.detail;
+            }
+        }
+        QVariantList clips;
+        for (const qr::Clip &c : list.clips)
+            clips.append(QVariantMap{{QStringLiteral("id"), c.id}, {QStringLiteral("name"), c.name}});
+        const int maxFiles = list.maxFiles;
+        QMetaObject::invokeMethod(
+            this,
+            [this, row, clips, maxFiles, error] { emit quickRepliesLoaded(row, clips, maxFiles, error); },
+            Qt::QueuedConnection);
+    }));
+}
+
+void DeviceManager::playQuickReply(int row, int clipId)
+{
+    auto client = clientFor(row);
+    if (!client || row < 0 || row >= m_entries.size()) {
+        emit quickReplyPlayed(row, clipId, false, tr("device not ready"));
+        return;
+    }
+    const Entry &e = m_entries.at(row);
+    BaichuanControl::Params p{e.rec.addr, 9000, e.rec.username, e.password};
+    const int ch = e.channel;
+    m_pending.addFuture(QtConcurrent::run([this, client, row, clipId, p, ch] {
+        namespace qr = quickreply;
+        bool ok = false;
+        QString error;
+        const api::CommandResult r = client->callOne(
+            QStringLiteral("QuickReplyPlay"), Json{{"id", clipId}, {"channel", ch}}, 0);
+        // Success is code 0 and value.rspCode 200 (reolink_aio).
+        ok = r.ok && (!r.value.is_object() || !r.value.contains("rspCode") ||
+                      r.value.value("rspCode", 200) == 200);
+        if (!ok && (r.ok || qr::httpShouldFallBack(r.rspCode) || r.rspCode == 0)) {
+            BaichuanControl bc(p);
+            if (bc.open()) {
+                quint16 st = 0;
+                bc.transact(qr::kBcPlayCmd, ch, qr::baichuanPlayBody(ch, clipId), &st);
+                bc.close();
+                ok = qr::baichuanStatusOk(st);
+                if (!ok)
+                    error = tr("the doorbell refused the clip (status %1)").arg(st);
+            } else {
+                error = tr("could not reach the device");
+            }
+        } else if (!ok) {
+            error = r.detail.isEmpty() ? tr("failed") : r.detail;
+        }
+        QMetaObject::invokeMethod(
+            this, [this, row, clipId, ok, error] { emit quickReplyPlayed(row, clipId, ok, error); },
             Qt::QueuedConnection);
     }));
 }

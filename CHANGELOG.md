@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the project is pre-1.0, minor versions may still change behaviour.
 
+## [0.5.0-jjr] — 2026-09-20
+
+### Added
+
+- **Doorbell overlay shows the live picture.** When someone presses the
+  doorbell, the pop-up now plays the doorbell's own video (it used to be a
+  placeholder).
+- **Answer starts two-way talk.** The button becomes **Hang up** while you are
+  talking; the doorbell's sound is muted meanwhile so it can't feed back.
+- **Quick replies come from the doorbell.** One button per clip the device
+  reports, played on the doorbell's own channel (it used to be fixed to
+  channel 0). If the NVR's normal list is empty, the app also asks the device
+  over its native protocol. A doorbell with no clips says so; a list that can't
+  be read shows the reason.
+
+### Changed
+
+- Quick-reply and talk problems show in the pop-up instead of a generic toast.
+- `RL_MOCK_DOORBELL=<hostId>:<channel>` aims the test doorbell event at a real
+  camera.
+
 ## [0.4.0-jjr] — 2026-09-19
 
 ### Added

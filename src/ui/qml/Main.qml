@@ -193,11 +193,6 @@ ApplicationWindow {
         id: doorbell
         anchors.centerIn: parent
         z: 100
-        onAnswered: {
-            // Answering opens the doorbell's live view; talk wires in with M12.
-            active = false;
-            nav.currentIndex = 0;
-        }
     }
     // Desktop-notification click: bring the window up and play the event back.
     Connections {
@@ -215,7 +210,7 @@ ApplicationWindow {
         target: Devices
         function onDetectionEvent(hostId, channel, type, camera) {
             if (type === "visitor") {
-                doorbell.deviceRow = Devices.rowOfHost(hostId);
+                doorbell.deviceRow = Devices.rowOfHostChannel(hostId, channel);
                 doorbell.camera = camera;
                 doorbell.active = true;
             }
@@ -223,7 +218,11 @@ ApplicationWindow {
     }
     Component.onCompleted: {
         if (typeof mockDoorbell !== "undefined" && mockDoorbell) {
+            // RL_MOCK_DOORBELL=<hostId>:<channel> aims the mock at a real doorbell.
+            var t = String(mockDoorbellTarget).split(":");
             doorbell.camera = "Front Door";
+            if (t.length === 2)
+                doorbell.deviceRow = Devices.rowOfHostChannel(parseInt(t[0]), parseInt(t[1]));
             doorbell.active = true;
         }
         // First run: no devices yet → open Add Device and scan the network, like

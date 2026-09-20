@@ -174,6 +174,9 @@ int main(int argc, char *argv[])
         QStringLiteral("mockRecordings"), qEnvironmentVariableIsSet("RL_MOCK_RECORDINGS"));
     engine.rootContext()->setContextProperty(
         QStringLiteral("mockDoorbell"), qEnvironmentVariableIsSet("RL_MOCK_DOORBELL"));
+    // RL_MOCK_DOORBELL=<hostId>:<channel> points the mock at a real camera row.
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("mockDoorbellTarget"), qEnvironmentVariable("RL_MOCK_DOORBELL"));
     engine.rootContext()->setContextProperty(
         QStringLiteral("playbackAutoplay"), qEnvironmentVariableIsSet("RL_PLAYBACK_AUTOPLAY"));
     engine.rootContext()->setContextProperty(
