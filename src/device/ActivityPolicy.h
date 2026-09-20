@@ -22,7 +22,7 @@
 //   - a tile whose hold is over keeps its camera; new activity takes the tile that has
 //     been inactive longest (a tile never used for activity counts as longest), so the
 //     same camera does not hop between tiles. Leaving Activity mode restores the layout
-// The caller applies the returned Changes (start the stream, replay or live) and
+// The caller applies the returned Changes (start the stream) and
 // calls tick() about once a second.
 namespace rl::activity {
 
@@ -35,7 +35,6 @@ inline int priorityOf(Kind k) { return k == Kind::Motion ? 1 : (k == Kind::None 
 struct Params {
     qint64 holdMs = 30'000;
     qint64 minShownMs = 15'000;
-    qint64 replayLeadMs = 10'000;
     int maxStartsPerHost = 2;
     qint64 startWindowMs = 2'000;
 };
@@ -59,7 +58,6 @@ struct Change {
     bool activity = false;        // false: back to the baseline camera (live)
     Kind kind = Kind::None;
     qint64 triggerMs = 0;
-    qint64 replayFromMs = 0;      // > 0: play the recording from here; 0: live
 };
 
 class ActivityPolicy
@@ -81,7 +79,7 @@ public:
     void reset(); // leave Activity mode: forget the queue and any activity state
 
     // `trigger` is when the activity really began if that is earlier than `now` (the
-    // poller sees it up to ~10 s late); it only moves the replay start. Default: now.
+    // poller sees it up to ~10 s late); it is shown in the tile's badge. Default: now.
     void detect(int row, Kind kind, qint64 now, qint64 trigger = -1);
     QVector<Change> tick(qint64 now);
 

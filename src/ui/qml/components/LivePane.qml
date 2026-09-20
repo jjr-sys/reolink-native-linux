@@ -25,17 +25,9 @@ Rectangle {
     property bool pageActive: true // false when the Live View page isn't on screen
     property bool audioAllowed: true // false while something else (the doorbell pop-up) has the sound
 
-    // Activity mode: this camera holds a tile because of a detection. replayFrom
-    // (epoch s, 0 = none) plays the recording from just before it; the Live button,
-    // or the NVR refusing the extra session, drops back to the live picture.
+    // Activity mode: this camera holds a tile because of a detection (badge text).
     property string activityKind: ""
     property string activityText: ""
-    property real replayFrom: 0
-    property bool replayLive: false     // the user pressed Live
-    property bool replayFailed: false   // the replay could not start
-    readonly property bool replaying: replayFrom > 0 && !replayLive && !replayFailed
-    onReplayFromChanged: { replayLive = false; replayFailed = false; updateSource(); }
-    onReplayingChanged: updateSource()
 
     // Capabilities (from the Devices model; false for empty slots). Named cap*
     // to avoid colliding with the identically-named model roles in the delegate.
@@ -126,9 +118,7 @@ Rectangle {
         var want = deviceRow >= 0 && visible && pageActive;
         var key = "";
         if (want) {
-            if (replaying)
-                key = "rp:" + deviceRow + ":" + replayFrom;
-            else if (effectiveMain && !bcFallback && !Devices.isDirectAt(deviceRow))
+            if (effectiveMain && !bcFallback && !Devices.isDirectAt(deviceRow))
                 key = "bc:" + deviceRow;
             else if (!effectiveMain && bcSub && !Devices.isDirectAt(deviceRow))
                 key = "bcs:" + deviceRow;
@@ -140,9 +130,6 @@ Rectangle {
         streamKey = key;
         if (key === "") {
             player.stop();
-        } else if (key.substring(0, 3) === "rp:") {
-            player.loop = false;
-            Devices.startBaichuanPlayback(root.deviceRow, replayFrom, player, false);
         } else if (key.substring(0, 3) === "bc:") {
             player.loop = false;
             Devices.startBaichuanLive(root.deviceRow, player, true);
@@ -178,11 +165,6 @@ Rectangle {
     Connections {
         target: player
         function onStateChanged() {
-            // The NVR may refuse one more recorded-playback session: show live instead.
-            if (player.state === StreamPlayer.Error && root.streamKey.substring(0, 3) === "rp:") {
-                root.replayFailed = true;
-                return;
-            }
             if (player.state === StreamPlayer.Error && !root.bcFallback
                 && root.streamKey.substring(0, 3) === "bc:") {
                 root.bcFallback = true;
@@ -404,8 +386,7 @@ Rectangle {
         border.width: 3
     }
 
-    // Why this camera is here (Activity mode): "Person · 14:02", with a Live button
-    // while the tile is replaying the moment.
+    // Why this camera is here (Activity mode): "Person · 14:02".
     Rectangle {
         visible: root.activityKind !== ""
         z: 20
@@ -421,21 +402,6 @@ Rectangle {
             anchors.centerIn: parent
             spacing: 8
             Text { text: root.activityText; color: "#101010"; font.pixelSize: 11; font.bold: true }
-            Text {
-                visible: root.replaying
-                text: qsTr("● Replay")
-                color: "#101010"
-                font.pixelSize: 11
-            }
-            Text {
-                visible: root.replaying
-                text: qsTr("Live ▸")
-                color: "#101010"
-                font.pixelSize: 11
-                font.bold: true
-                font.underline: true
-                TapHandler { onTapped: root.replayLive = true }
-            }
         }
     }
 

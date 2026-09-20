@@ -188,7 +188,6 @@ QVector<Change> ActivityPolicy::tick(qint64 now)
         c.activity = true;
         c.kind = q.kind;
         c.triggerMs = q.trigger;
-        c.replayFromMs = q.trigger - m_p.replayLeadMs;
         out.append(c);
         m_queue.removeIf([&](const Queued &e) { return e.seq == q.seq; });
     }

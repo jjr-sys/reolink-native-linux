@@ -66,8 +66,6 @@ void ActivityGrid::setEnabled(bool on)
     } else {
         m_timer.stop();
         m_policy.reset();
-        m_replayFrom.fill(0);
-        m_trigger.fill(0);
     }
     publish();
     emit enabledChanged();
@@ -97,8 +95,6 @@ void ActivityGrid::setBaseline(const QVariantList &rows)
     for (const QVariant &v : rows)
         r.append(v.toInt());
     m_policy.setBaseline(r);
-    m_replayFrom.resize(r.size());
-    m_trigger.resize(r.size());
     publish();
 }
 
@@ -123,13 +119,7 @@ void ActivityGrid::onTick()
 {
     if (!m_enabled)
         return;
-    const auto changes = m_policy.tick(nowMs());
-    for (const activity::Change &c : changes) {
-        if (c.tile < 0 || c.tile >= m_replayFrom.size())
-            continue;
-        m_replayFrom[c.tile] = c.activity ? c.replayFromMs : 0;
-        m_trigger[c.tile] = c.activity ? c.triggerMs : 0;
-    }
+    m_policy.tick(nowMs());
     publish();
 }
 
@@ -143,8 +133,7 @@ void ActivityGrid::publish()
             {QStringLiteral("row"), m_enabled ? t.shown : t.baseline},
             {QStringLiteral("active"), onActivity},
             {QStringLiteral("kind"), onActivity ? nameOf(t.kind) : QString()},
-            {QStringLiteral("replayFrom"), onActivity && i < m_replayFrom.size() ? m_replayFrom[i] / 1000 : 0},
-            {QStringLiteral("trigger"), onActivity && i < m_trigger.size() && m_trigger[i] > 0 ? m_trigger[i] / 1000 : 0},
+            {QStringLiteral("trigger"), onActivity && t.triggerMs > 0 ? t.triggerMs / 1000 : 0},
         });
     }
     if (v != m_view) {

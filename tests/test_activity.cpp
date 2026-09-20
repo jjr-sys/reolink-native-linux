@@ -31,8 +31,8 @@ private slots:
         QCOMPARE(shown(p, 2), 2);
     }
 
-    // Acceptance 3: the replay starts about 10 s before the trigger.
-    void personTakesAFreeTileAndReplaysFromBeforeTheTrigger()
+    // Acceptance 3: a person takes a free tile and the change carries the trigger time.
+    void personTakesAFreeTileAndCarriesTheTrigger()
     {
         ActivityPolicy p = make();
         p.detect(10, Kind::Person, T0);
@@ -40,7 +40,7 @@ private slots:
         QCOMPARE(ch.size(), 1);
         QCOMPARE(ch[0].row, 10);
         QVERIFY(ch[0].activity);
-        QCOMPARE(ch[0].replayFromMs, T0 - s(10));
+        QCOMPARE(ch[0].triggerMs, T0);
         QCOMPARE(shown(p, ch[0].tile), 10);
     }
 

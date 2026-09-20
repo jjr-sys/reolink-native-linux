@@ -19,7 +19,7 @@ class ActivityGrid : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY enabledChanged)
-    // Per visible tile: { row, active, kind, replayFrom (epoch s, 0 = live), trigger (epoch s) }.
+    // Per visible tile: { row, active, kind, trigger (epoch s) }.
     Q_PROPERTY(QVariantList tiles READ tiles NOTIFY tilesChanged)
     Q_PROPERTY(int queued READ queued NOTIFY tilesChanged)
     // Detection types that take tiles: any of person, vehicle, pet, visitor, motion.
@@ -63,8 +63,6 @@ private:
     QTimer m_timer;
     bool m_enabled = false;
     QVariantList m_view;
-    QVector<qint64> m_replayFrom; // per tile, ms, 0 = live
-    QVector<qint64> m_trigger;
     QStringList m_tracked{QStringLiteral("person"), QStringLiteral("vehicle"),
                           QStringLiteral("pet"), QStringLiteral("visitor")}; // motion is opt-in
     QString m_pendingScript; // mock script, started the first time Activity mode is on
