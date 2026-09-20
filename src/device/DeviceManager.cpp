@@ -2109,6 +2109,14 @@ QString DeviceManager::nameAt(int row) const
     return e.chanName.isEmpty() ? e.rec.name : e.chanName;
 }
 
+QString DeviceManager::eventClipUrl(qint64 hostId, int channel, qint64 timestamp) const
+{
+    for (const Entry &e : m_entries)
+        if (e.rec.id == hostId && e.channel == channel && e.rec.kind == QLatin1String("frigate"))
+            return frigate::clipUrl(e.rec.addr, e.rec.port, e.chanName, timestamp);
+    return {};
+}
+
 QString DeviceManager::liveUrl(int row, bool mainStream)
 {
     if (row < 0 || row >= m_entries.size())

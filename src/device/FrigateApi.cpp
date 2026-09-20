@@ -87,6 +87,14 @@ QString liveUrl(const QString &host, int port, const QString &camera)
     return base(host, port) + QStringLiteral("/api/go2rtc/api/stream.flv?src=") + enc(camera);
 }
 
+QString clipUrl(const QString &host, int port, const QString &camera, qint64 timestamp)
+{
+    return base(host, port) + QStringLiteral("/api/") + enc(camera)
+           + QStringLiteral("/start/%1/end/%2/clip.mp4")
+                 .arg(timestamp - kClipPreSecs)
+                 .arg(timestamp + kClipPostSecs);
+}
+
 QString latestFrameUrl(const QString &host, int port, const QString &camera)
 {
     return base(host, port) + QStringLiteral("/api/") + enc(camera) + QStringLiteral("/latest.jpg");

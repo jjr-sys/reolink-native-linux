@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(reolink-client
-    VERSION 0.7.1
+    VERSION 0.8.0
     DESCRIPTION "Native Linux client for Reolink cameras and NVRs"
     LANGUAGES CXX)
 
@@ -99,6 +99,7 @@ set(APP_QML_FILES
     src/ui/qml/dialogs/DetectionZoneDialog.qml
     src/ui/qml/dialogs/ScheduleDialog.qml
     src/ui/qml/dialogs/DownloadDialog.qml
+    src/ui/qml/dialogs/ClipDialog.qml
     src/ui/qml/components/DownloadsPanel.qml
 )
 # Strip the src/ui/qml/ prefix so module paths are clean (Main.qml, pages/..., etc.)

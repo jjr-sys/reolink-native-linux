@@ -62,6 +62,8 @@ private slots:
                  QString("http://h:5000/api/events?after=12.5&limit=50"));
         QCOMPARE(latestFrameUrl("h", 5000, "cam"), QString("http://h:5000/api/cam/latest.jpg"));
         QCOMPARE(configUrl("h", 5000), QString("http://h:5000/api/config"));
+        QCOMPARE(clipUrl("h", 5000, "cam", 1000),
+                 QString("http://h:5000/api/cam/start/975/end/1020/clip.mp4"));
     }
     void bursts_foldEventsWithinThirtySeconds()
     {

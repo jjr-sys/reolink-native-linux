@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the project is pre-1.0, minor versions may still change behaviour.
 
+## [0.8.0-jjr] — 2026-09-20
+
+### Added
+
+- **Frigate detection clips.** Clicking a Frigate camera's event in the events
+  inbox (or its desktop notification) opens a window playing the recording from
+  about 25 s before to 20 s after the detection, with Replay and Close. The
+  server cuts the clip on request, so the picture takes a moment to appear.
+  Other cameras still open the Playback page at that moment.
+- `RL_OPEN_CLIP=<hostId>:<channel>` opens a clip at startup, for testing.
+
 ## [0.7.1-jjr] — 2026-09-20
 
 ### Changed

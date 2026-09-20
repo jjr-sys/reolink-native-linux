@@ -183,6 +183,9 @@ int main(int argc, char *argv[])
     // RL_MOCK_DOORBELL=<hostId>:<channel> points the mock at a real camera row.
     engine.rootContext()->setContextProperty(
         QStringLiteral("mockDoorbellTarget"), qEnvironmentVariable("RL_MOCK_DOORBELL"));
+    // RL_OPEN_CLIP=<hostId>:<channel> opens the detection clip for "30 s ago" at startup.
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("openClipTarget"), qEnvironmentVariable("RL_OPEN_CLIP"));
     engine.rootContext()->setContextProperty(
         QStringLiteral("mockActivity"), qEnvironmentVariableIsSet("RL_MOCK_ACTIVITY"));
     engine.rootContext()->setContextProperty(

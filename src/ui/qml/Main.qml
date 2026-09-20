@@ -174,14 +174,34 @@ ApplicationWindow {
                 }
                 PlaybackPage { id: playbackPage; active: nav.currentIndex === 1 }
                 EventsPage {
-                    onJumpToPlayback: (hostId, channel, timestamp) => {
-                        nav.currentIndex = 1;
-                        playbackPage.openAt(hostId, channel, timestamp);
-                    }
+                    onJumpToPlayback: (hostId, channel, timestamp) =>
+                        window.openEventPlayback(hostId, channel, timestamp)
                 }
                 DeviceSettingsPage { id: settingsPage }
             }
         }
+    }
+
+    // Where a detection's recording plays: a camera whose footage is on a server of its
+    // own (Frigate) opens the clip; everything else opens the Playback page at that moment.
+    function openEventPlayback(hostId, channel, timestamp) {
+        var clip = Devices.eventClipUrl(hostId, channel, timestamp);
+        if (clip !== "") {
+            var row = Devices.rowOfHostChannel(hostId, channel);
+            clipDialog.openClip(Devices.nameAt(row),
+                                Qt.formatDateTime(new Date(timestamp * 1000), "ddd d MMM, HH:mm:ss"), clip);
+            return;
+        }
+        nav.currentIndex = 1;
+        playbackPage.openAt(hostId, channel, timestamp);
+    }
+    ClipDialog { id: clipDialog }
+    Timer {
+        id: openClipTimer
+        property int hostId: 0
+        property int channel: 0
+        interval: 4000
+        onTriggered: window.openEventPlayback(hostId, channel, Math.floor(Date.now() / 1000) - 60)
     }
 
     AddDeviceDialog {
@@ -202,8 +222,7 @@ ApplicationWindow {
             window.show();
             window.raise();
             window.requestActivate();
-            nav.currentIndex = 1;
-            playbackPage.openAt(hostId, channel, timestamp);
+            window.openEventPlayback(hostId, channel, timestamp);
         }
     }
 
@@ -218,6 +237,12 @@ ApplicationWindow {
         }
     }
     Component.onCompleted: {
+        if (typeof openClipTarget !== "undefined" && String(openClipTarget) !== "") {
+            var ct = String(openClipTarget).split(":");
+            openClipTimer.hostId = parseInt(ct[0]);
+            openClipTimer.channel = parseInt(ct[1]);
+            openClipTimer.start();
+        }
         if (typeof mockDoorbell !== "undefined" && mockDoorbell) {
             // RL_MOCK_DOORBELL=<hostId>:<channel> aims the mock at a real doorbell.
             var t = String(mockDoorbellTarget).split(":");

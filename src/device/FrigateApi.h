@@ -39,6 +39,12 @@ inline bool startsNewBurst(double lastRaisedStart, double start)
     return start - lastRaisedStart >= kBurstGapSecs;
 }
 
+// The clip to play for a detection raised at `timestamp` (epoch s). The app sees a
+// detection up to one poll (10 s) after it began, so the window opens well before it.
+inline constexpr int kClipPreSecs = 25;
+inline constexpr int kClipPostSecs = 20;
+QString clipUrl(const QString &host, int port, const QString &camera, qint64 timestamp);
+
 QString configUrl(const QString &host, int port);
 QString eventsUrl(const QString &host, int port, double after, int limit);
 QString liveUrl(const QString &host, int port, const QString &camera);

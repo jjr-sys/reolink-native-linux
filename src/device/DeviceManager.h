@@ -111,6 +111,10 @@ public:
     Q_INVOKABLE void addStreamUrl(const QString &name, const QString &url);
     Q_INVOKABLE void removeDevice(int row);
 
+    // The recorded clip for a detection on a Frigate camera (empty for anything else,
+    // whose recordings play through the Playback page).
+    Q_INVOKABLE QString eventClipUrl(qint64 hostId, int channel, qint64 timestamp) const;
+
     // Playable URL for a device row; empty when credentials aren't loaded yet.
     Q_INVOKABLE QString liveUrl(int row, bool mainStream = true);
 
