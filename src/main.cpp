@@ -26,11 +26,20 @@
 #include <chrono>
 #include <thread>
 #include <unistd.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 
 int main(int argc, char *argv[])
 {
     // QApplication (not QGuiApplication): QSystemTrayIcon needs the widgets
     // layer for the tray icon + menu. The UI itself remains pure QML.
+#ifdef __GLIBC__
+    // Decoder threads allocate frames the GUI thread frees; with a private arena per thread
+    // glibc keeps each arena's high-water mark and the process balloons (2.5 GB seen).
+    mallopt(M_ARENA_MAX, 2);
+    mallopt(M_TRIM_THRESHOLD, 128 * 1024);
+#endif
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName(QStringLiteral("reolink-linux"));
     QCoreApplication::setApplicationName(QStringLiteral("reolink-client"));
@@ -272,5 +281,12 @@ int main(int argc, char *argv[])
         });
     }
 
+#ifdef __GLIBC__
+    // Hand freed heap back to the OS periodically; the decode path churns large buffers.
+    QTimer trimTimer;
+    trimTimer.setInterval(60 * 1000);
+    QObject::connect(&trimTimer, &QTimer::timeout, [] { malloc_trim(0); });
+    trimTimer.start();
+#endif
     return app.exec();
 }

@@ -14,6 +14,7 @@
 #include <QVideoFrame>
 #include <QVideoFrameFormat>
 
+#include <atomic>
 #include <cmath>
 
 extern "C" {
@@ -344,8 +345,18 @@ void abortableSleepUs(Session *s, qint64 waitUs)
 // on the routed links (up to about 0.8 s), and the same delay is applied to sound.
 constexpr qint64 kSmoothDelayUs = 1000000;
 constexpr qint64 kMinSmoothDelayUs = 250000;
-// Decoded frames waiting to be shown are held in memory; cap them per stream.
-constexpr qint64 kPlayoutBudgetBytes = 96ll * 1024 * 1024;
+// Decoded frames waiting to be shown are held in memory. One budget is shared by all live
+// players (so a 16-tile grid can't hold 16 x 96 MB), with a per-stream ceiling and floor.
+constexpr qint64 kPlayoutTotalBytes = 256ll * 1024 * 1024;
+constexpr qint64 kPlayoutMaxPerStream = 96ll * 1024 * 1024;
+constexpr qint64 kPlayoutMinPerStream = 16ll * 1024 * 1024;
+std::atomic<int> gLivePlayers{0};
+
+qint64 playoutBudgetBytes()
+{
+    const int n = qMax(1, gLivePlayers.load(std::memory_order_relaxed));
+    return qBound(kPlayoutMinPerStream, kPlayoutTotalBytes / n, kPlayoutMaxPerStream);
+}
 
 // The picture delay for a stream: one second, or less if that many decoded frames would
 // not fit the memory budget (a big main stream). 0 when smoothing does not apply.
@@ -356,7 +367,7 @@ qint64 smoothDelayFor(int width, int height, double fps)
     if (fps < 1 || fps > 120)
         fps = 15;
     const double frameBytes = double(width) * height * 1.5;
-    const qint64 fits = qint64(double(kPlayoutBudgetBytes) / frameBytes / fps * 1e6);
+    const qint64 fits = qint64(double(playoutBudgetBytes()) / frameBytes / fps * 1e6);
     return qBound(kMinSmoothDelayUs, qMin(kSmoothDelayUs, fits), kSmoothDelayUs);
 }
 
@@ -596,12 +607,19 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     } decGuard{dec};
 
     avcodec_parameters_to_context(dec, stream->codecpar);
-    dec->thread_count = 0; // auto
+    // Frame threads each hold a frame in flight and a malloc arena. Hardware decode needs
+    // one; software gets a few for big pictures and two for sub streams, not one per core.
+    {
+        const int pixels = stream->codecpar->width * stream->codecpar->height;
+        dec->thread_count = pixels > 1920 * 1088 ? 4 : 2;
+    }
 
     AVBufferRef *hwCtx = nullptr;
     AVPixelFormat hwPixFmt = AV_PIX_FMT_NONE;
     if (hwDecodeEnabled())
         hwPixFmt = setupHwDecode(dec, codec, &hwCtx);
+    if (hwPixFmt != AV_PIX_FMT_NONE)
+        dec->thread_count = 1;
     struct HwGuard {
         AVBufferRef **ctx;
         ~HwGuard() { av_buffer_unref(ctx); }
@@ -617,6 +635,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             dec->get_format = nullptr;
             dec->opaque = nullptr;
             hwPixFmt = AV_PIX_FMT_NONE;
+            dec->thread_count = stream->codecpar->width * stream->codecpar->height > 1920 * 1088 ? 4 : 2;
             if (avcodec_open2(dec, codec, nullptr) < 0) {
                 postState(s, State::Error, QStringLiteral("could not open decoder"));
                 return false;
@@ -1001,11 +1020,17 @@ void StreamPlayer::applyFrameFromWorker(const std::shared_ptr<Session> &s, const
         auto cfg = m_playout.config();
         cfg.delayUs = delayUs;
         cfg.maxDepthUs = delayUs * 5 / 2;
-        cfg.maxBytes = kPlayoutBudgetBytes;
+        cfg.maxBytes = playoutBudgetBytes();
         m_playout.setConfig(cfg);
         m_liveDelayMs = delayMs;
         if (m_audioOut)
             m_audioOut->setDelayMs(delayMs);
+    }
+    // The shared budget shrinks or grows as players come and go; follow it.
+    if (const qint64 budget = playoutBudgetBytes(); budget != m_playout.config().maxBytes) {
+        auto cfg = m_playout.config();
+        cfg.maxBytes = budget;
+        m_playout.setConfig(cfg);
     }
     m_playout.push(frame, ptsUs, nowUs(), bytes);
     servicePlayout();
@@ -1163,6 +1188,7 @@ void StreamPlayer::stopRecording()
 
 StreamPlayer::StreamPlayer(QObject *parent) : QObject(parent)
 {
+    gLivePlayers.fetch_add(1, std::memory_order_relaxed);
     m_clock.start();
     m_playoutTimer.setSingleShot(true);
     m_playoutTimer.setTimerType(Qt::PreciseTimer);
@@ -1171,6 +1197,7 @@ StreamPlayer::StreamPlayer(QObject *parent) : QObject(parent)
 
 StreamPlayer::~StreamPlayer()
 {
+    gLivePlayers.fetch_sub(1, std::memory_order_relaxed);
     if (m_activeStop)
         m_activeStop();
     if (m_pendingStop)
