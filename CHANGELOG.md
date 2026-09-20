@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the project is pre-1.0, minor versions may still change behaviour.
 
+## [0.10.0-jjr] — 2026-09-20
+
+### Added
+
+- **Frigate recordings in the Playback page.** Pick a Frigate camera in
+  Playback: the calendar marks the days with footage, the timeline shows the
+  recorded stretches, and clicking anywhere plays from there. Playing runs at
+  normal speed as one stream; a Frigate camera has no HD switch, faster speeds,
+  export or download manager, so those controls are hidden for it.
+
+### Fixed
+
+- **A dropped Frigate live stream now reconnects by itself.** Before, if the
+  Frigate server restarted or the link dropped, the tile stopped and stayed
+  stopped. The player now treats Frigate's live stream like a camera stream and
+  keeps retrying. It also starts faster and is no longer paced like a file.
+- Confirmed the Frigate server going down and coming back is reported in the
+  events inbox as offline, then online.
+
 ## [0.9.0-jjr] — 2026-09-20
 
 ### Added

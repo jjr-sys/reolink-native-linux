@@ -1,6 +1,7 @@
 #include "FrigateApi.h"
 
 #include <QEventLoop>
+#include <algorithm>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -72,6 +73,82 @@ static QString base(const QString &host, int port)
 static QString enc(const QString &s)
 {
     return QString::fromLatin1(QUrl::toPercentEncoding(s));
+}
+
+QVector<Recording> parseRecordings(const Json &recordings)
+{
+    QVector<Recording> out;
+    if (!recordings.is_array())
+        return out;
+    for (const Json &e : recordings) {
+        if (!e.is_object() || !e.contains("start_time") || !e["start_time"].is_number()
+            || !e.contains("end_time") || !e["end_time"].is_number())
+            continue;
+        Recording r;
+        r.start = e["start_time"].get<double>();
+        r.end = e["end_time"].get<double>();
+        if (r.end > r.start)
+            out.append(r);
+    }
+    return out;
+}
+
+QVector<Recording> mergeRecordings(QVector<Recording> segments, double gapSecs)
+{
+    std::sort(segments.begin(), segments.end(),
+              [](const Recording &a, const Recording &b) { return a.start < b.start; });
+    QVector<Recording> out;
+    for (const Recording &r : segments) {
+        if (!out.isEmpty() && r.start - out.last().end <= gapSecs)
+            out.last().end = qMax(out.last().end, r.end);
+        else
+            out.append(r);
+    }
+    return out;
+}
+
+QList<int> parseRecordingDays(const Json &summary, int year, int month)
+{
+    QList<int> days;
+    if (!summary.is_array())
+        return days;
+    const QString prefix = QStringLiteral("%1-%2-").arg(year, 4, 10, QLatin1Char('0')).arg(month, 2, 10, QLatin1Char('0'));
+    for (const Json &d : summary) {
+        if (!d.is_object() || !d.contains("day") || !d["day"].is_string() || !d.contains("hours")
+            || !d["hours"].is_array())
+            continue;
+        const QString day = QString::fromStdString(d["day"].get<std::string>());
+        if (!day.startsWith(prefix))
+            continue;
+        double recorded = 0;
+        for (const Json &h : d["hours"])
+            if (h.is_object() && h.contains("duration") && h["duration"].is_number())
+                recorded += h["duration"].get<double>();
+        bool ok = false;
+        const int n = day.mid(prefix.size()).toInt(&ok);
+        if (ok && recorded > 0)
+            days.append(n);
+    }
+    std::sort(days.begin(), days.end());
+    return days;
+}
+
+QString recordingsUrl(const QString &host, int port, const QString &camera, qint64 after, qint64 before)
+{
+    return base(host, port) + QStringLiteral("/api/") + enc(camera)
+           + QStringLiteral("/recordings?after=%1&before=%2").arg(after).arg(before);
+}
+
+QString summaryUrl(const QString &host, int port, const QString &camera, const QString &timeZone)
+{
+    return base(host, port) + QStringLiteral("/api/") + enc(camera)
+           + QStringLiteral("/recordings/summary?timezone=") + enc(timeZone);
+}
+
+QString vodUrl(const QString &host, int port, const QString &camera, qint64 start, qint64 end)
+{
+    return base(host, port) + QStringLiteral("/vod/") + enc(camera)
+           + QStringLiteral("/start/%1/end/%2/index.m3u8").arg(start).arg(end);
 }
 
 QString configUrl(const QString &host, int port) { return base(host, port) + QStringLiteral("/api/config"); }

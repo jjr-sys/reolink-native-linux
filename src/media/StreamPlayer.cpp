@@ -1,4 +1,5 @@
 #include "StreamPlayer.h"
+#include "media/LiveUrl.h"
 
 #include "AudioDecoder.h"
 #include "AudioPlayback.h"
@@ -38,13 +39,7 @@ constexpr int kBackoffCapMs = 30000;
 using Session = StreamPlayer::Session;
 using State = StreamPlayer::State;
 
-bool isLiveUrl(const QString &source)
-{
-    return source.startsWith(QLatin1String("rtsp://")) ||
-           source.startsWith(QLatin1String("rtmp://")) ||
-           source.startsWith(QLatin1String("tcp://")) ||
-           source.startsWith(QLatin1String("udp://"));
-}
+bool isLiveUrl(const QString &source) { return isLiveStreamUrl(source); }
 
 // Never log credentials — they appear both as userinfo (rtsp://user:pass@host)
 // and as query params (the http-flv playback URL: ...&user=X&password=Y).

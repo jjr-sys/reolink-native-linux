@@ -1,4 +1,5 @@
 #include "device/FrigateApi.h"
+#include "media/LiveUrl.h"
 
 #include <QtTest>
 
@@ -71,6 +72,48 @@ private slots:
         QVERIFY(!startsNewBurst(1000, 1010));
         QVERIFY(!startsNewBurst(1000, 1029.9));
         QVERIFY(startsNewBurst(1000, 1030));
+    }
+    void recordings_parseAndMergeIntoContinuousRanges()
+    {
+        const auto segs = parseRecordings(J("[{'start_time':100,'end_time':110},{'start_time':110.2,'end_time':120},{'start_time':300,'end_time':310},{'id':'x'},{'start_time':5,'end_time':5}]"));
+        QCOMPARE(segs.size(), 3); // the malformed and the zero-length entries are dropped
+        const auto merged = mergeRecordings(segs);
+        QCOMPARE(merged.size(), 2);
+        QCOMPARE(merged[0].start, 100.0);
+        QCOMPARE(merged[0].end, 120.0);
+        QCOMPARE(merged[1].start, 300.0);
+    }
+    void recordings_mergeSortsItsInput()
+    {
+        QVector<Recording> v;
+        Recording a; a.start = 20; a.end = 30; v.append(a);
+        Recording b; b.start = 10; b.end = 20; v.append(b);
+        const auto m = mergeRecordings(v);
+        QCOMPARE(m.size(), 1);
+        QCOMPARE(m[0].start, 10.0);
+        QCOMPARE(m[0].end, 30.0);
+    }
+    void recordingDays_onlyDaysOfThatMonthWithFootage()
+    {
+        const Json sum = J("[{'day':'2026-09-20','hours':[{'hour':'17','duration':3000}]},{'day':'2026-09-19','hours':[{'hour':'23','duration':0}]},{'day':'2026-08-31','hours':[{'hour':'01','duration':50}]},{'day':'2026-09-05','hours':[{'hour':'09','duration':10},{'hour':'10','duration':10}]}]");
+        const QList<int> d = parseRecordingDays(sum, 2026, 9);
+        QCOMPARE(d, (QList<int>{5, 20})); // 19th has an hour entry but no recorded time
+        QVERIFY(parseRecordingDays(Json(), 2026, 9).isEmpty());
+    }
+    void recordingUrls()
+    {
+        QCOMPARE(recordingsUrl("h", 5000, "cam", 10, 20), QString("http://h:5000/api/cam/recordings?after=10&before=20"));
+        QCOMPARE(summaryUrl("h", 5000, "cam", "Australia/Perth"), QString("http://h:5000/api/cam/recordings/summary?timezone=Australia%2FPerth"));
+        QCOMPARE(vodUrl("h", 5000, "cam", 100, 200), QString("http://h:5000/vod/cam/start/100/end/200/index.m3u8"));
+    }
+    // A Frigate live stream must reconnect when it drops; a clip must play once and stop.
+    void liveUrls_frigateLiveReconnectsButClipsDoNot()
+    {
+        QVERIFY(rl::isLiveStreamUrl(liveUrl("h", 5000, "cam")));
+        QVERIFY(rl::isLiveStreamUrl("rtsp://h/x"));
+        QVERIFY(!rl::isLiveStreamUrl(clipUrl("h", 5000, "cam", 1000)));
+        QVERIFY(!rl::isLiveStreamUrl("http://h/some/file.mp4"));
+        QVERIFY(!rl::isLiveStreamUrl("/tmp/file.mp4"));
     }
     // The first poll must not replay history: the watermark is the newest event's start.
     void watermark_advancesOnlyPastEventsSeen()

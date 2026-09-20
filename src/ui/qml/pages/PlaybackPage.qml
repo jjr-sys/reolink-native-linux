@@ -326,13 +326,13 @@ Item {
             player.stop();
             return;
         }
-        if (page.hdMode) {
+        if (page.hdMode && !page.directRow) {
             page.playHd(sec);
             return;
         }
         // Faster than real time: the NVR's HTTP stream is sent at 1x, so above that the
         // sub stream comes over the native protocol, which is delivered ahead of time.
-        if (page.speed > 1) {
+        if (page.speed > 1 && !page.directRow) {
             page.playHd(sec, false);
             return;
         }
@@ -383,6 +383,9 @@ Item {
         new Date(page.selYear, page.selMonth - 1, page.selDay).getTime() / 1000
     // Playback speed (1 = real time), shared by every pane.
     property real speed: 1.0
+    // A Frigate camera: its footage plays from the server as one stream at normal speed.
+    // No HD stream, faster speeds, exporting or the NVR downloads manager.
+    readonly property bool directRow: page.deviceRow >= 0 && Devices.isDirectAt(page.deviceRow)
     property real _prevSpeed: 1.0
     onSpeedChanged: {
         // Crossing 1x on the SD stream swaps HTTP for the native protocol (or back), so
@@ -1008,6 +1011,7 @@ Item {
                 Ctl { glyph: "\u23ea"; caption: qsTr("-10s"); tip: qsTr("Back 10 seconds"); onActivated: page.skip(-10) }
                 Ctl { glyph: "\u23e9"; caption: qsTr("+10s"); tip: qsTr("Forward 10 seconds"); onActivated: page.skip(10) }
                 Rectangle {
+                    visible: !page.directRow
                     width: 52; height: 30; radius: Theme.radius
                     color: spdHover.hovered ? Theme.surfaceAlt : Theme.surface
                     border.color: page.speed !== 1 ? Theme.accent : Theme.border
@@ -1043,7 +1047,7 @@ Item {
                 // Single-pane only — it targets THE camera, and grid mode has four.
                 Rectangle {
                     id: exportBtn
-                    visible: page.paneCount === 1
+                    visible: page.paneCount === 1 && !page.directRow
                     property bool busy: false
                     width: expRow.implicitWidth + 18; height: 30; radius: Theme.radius
                     color: expHover.hovered && !busy ? Theme.surfaceAlt : Theme.surface
@@ -1076,6 +1080,7 @@ Item {
                 // One button for the range: press to mark the start, press again to mark the end
                 // (then the download dialog opens).
                 Ctl {
+                    visible: !page.directRow
                     glyph: page.rangeArmed ? "\u25a0" : "\u25cf"
                     glyphColor: "#ff4d4d"
                     tip: page.rangeArmed ? qsTr("Stop: mark the end of the range here")
@@ -1093,6 +1098,7 @@ Item {
                     TapHandler { onTapped: { page.markStart = -1; page.markEnd = -1; page.rangeArmed = false; } }
                 }
                 Rectangle {
+                    visible: !page.directRow
                     width: dlRow.implicitWidth + 18; height: 30; radius: Theme.radius
                     color: dlHover.hovered ? Theme.surfaceAlt : Theme.surface
                     border.color: Theme.border
@@ -1103,6 +1109,7 @@ Item {
                 }
                 Rectangle {
                     id: dlBtn
+                    visible: !page.directRow
                     width: dlBtnText.implicitWidth + 18; height: 30; radius: Theme.radius
                     color: dlBtnHover.hovered ? Theme.surfaceAlt : Theme.surface
                     border.color: Downloads.activeCount > 0 ? Theme.accent : Theme.border
@@ -1120,7 +1127,7 @@ Item {
                 // stream (as in the official client): the device budget allows only
                 // 2 concurrent main streams, and a 4-pane grid would blow past it.
                 Rectangle {
-                    visible: page.paneCount === 1
+                    visible: page.paneCount === 1 && !page.directRow
                     width: 52; height: 30; radius: Theme.radius
                     color: page.hdMode ? Theme.accent : (hdHover.hovered ? Theme.surfaceAlt : Theme.surface)
                     border.color: page.hdMode ? Theme.accent : Theme.border

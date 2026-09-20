@@ -387,6 +387,7 @@ private:
     void validateAsync(qint64 hostId, const QString &newPassword = QString(),
                        bool storeNew = false);
     Validation validateFrigate(const HostRecord &rec);
+    void searchFrigateRecordings(int row, int year, int month, int day);
     void pollFrigate();
     int rowForHostId(qint64 hostId) const;
     void warmPushCache();   // fetch each camera's push state once, staggered

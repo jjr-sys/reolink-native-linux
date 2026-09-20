@@ -20,6 +20,7 @@
 #include <QUrl>
 #include <QVariant>
 #include <QThread>
+#include <QTimeZone>
 #include <QtConcurrent/QtConcurrent>
 
 namespace rl {
@@ -1143,8 +1144,72 @@ void DeviceManager::captureEventThumbnail(qint64 hostId, int channel, qint64 eve
     }));
 }
 
+// A Frigate camera's footage for one local day, as the same segments the Playback
+// timeline draws for an NVR, plus the days of the month that have footage.
+void DeviceManager::searchFrigateRecordings(int row, int year, int month, int day)
+{
+    const QDate date(year, month, day);
+    if (row < 0 || row >= m_entries.size() || !date.isValid()) {
+        emit recordingsFailed(row, tr("device not ready"));
+        return;
+    }
+    const Entry &e = m_entries.at(row);
+    const QString host = e.rec.addr;
+    const int port = e.rec.port;
+    const QString camera = e.chanName;
+    const QDateTime dayStart = date.startOfDay();
+    const qint64 after = dayStart.toSecsSinceEpoch();
+    const qint64 before = date.addDays(1).startOfDay().toSecsSinceEpoch();
+    const QString zone = QString::fromLatin1(QTimeZone::systemTimeZoneId());
+    m_pending.addFuture(QtConcurrent::run([this, row, host, port, camera, after, before, zone, year, month] {
+        QString error;
+        const QByteArray body =
+            frigate::httpGet(frigate::recordingsUrl(host, port, camera, after, before), 20000, &error);
+        const Json parsed = Json::parse(body.toStdString(), nullptr, false);
+        QVariantList segments;
+        if (!error.isEmpty() || parsed.is_discarded() || !parsed.is_array()) {
+            if (error.isEmpty())
+                error = tr("unexpected reply from Frigate");
+        } else {
+            for (const frigate::Recording &r : frigate::mergeRecordings(frigate::parseRecordings(parsed))) {
+                const double s = qBound<double>(0, r.start - after, 86400);
+                const double e2 = qBound<double>(s, r.end - after, 86400);
+                QVariantMap seg;
+                seg["start"] = s;
+                seg["end"] = e2;
+                seg["type"] = QStringLiteral("timer");
+                seg["startEpoch"] = r.start;
+                segments.append(seg);
+            }
+        }
+        QVariantList days;
+        QString ignored;
+        const QByteArray sumBody =
+            frigate::httpGet(frigate::summaryUrl(host, port, camera, zone), 20000, &ignored);
+        const Json sum = Json::parse(sumBody.toStdString(), nullptr, false);
+        if (!sum.is_discarded())
+            for (int d : frigate::parseRecordingDays(sum, year, month))
+                days.append(d);
+        QMetaObject::invokeMethod(
+            this,
+            [this, row, segments, days, year, month, error] {
+                if (error.isEmpty()) {
+                    emit recordingsFound(row, segments);
+                    emit recordingDaysFound(row, year, month, days);
+                } else {
+                    emit recordingsFailed(row, error);
+                }
+            },
+            Qt::QueuedConnection);
+    }));
+}
+
 void DeviceManager::searchRecordings(int row, int year, int month, int day)
 {
+    if (row >= 0 && row < m_entries.size() && m_entries.at(row).rec.kind == QLatin1String("frigate")) {
+        searchFrigateRecordings(row, year, month, day);
+        return;
+    }
     auto client = clientFor(row);
     const QDate date(year, month, day);
     if (!client || !date.isValid()) {
@@ -1227,6 +1292,10 @@ QString DeviceManager::playbackUrl(int row, qint64 startEpoch, bool mainStream)
     if (row < 0 || row >= m_entries.size() || startEpoch <= 0)
         return {};
     const Entry &e = m_entries.at(row);
+    if (e.rec.kind == QLatin1String("frigate")) {
+        // Plays from `startEpoch` for a few hours, then stops; a seek opens a new list.
+        return frigate::vodUrl(e.rec.addr, e.rec.port, e.chanName, startEpoch, startEpoch + 3 * 3600);
+    }
     if (isDirectKind(e.rec.kind) || !e.primed)
         return {};
     // The FLV endpoint only accepts a start on a recording-file boundary and uses

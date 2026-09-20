@@ -4,6 +4,7 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QList>
 #include <QStringList>
 #include <QVector>
 
@@ -44,6 +45,26 @@ inline bool startsNewBurst(double lastRaisedStart, double start)
 inline constexpr int kClipPreSecs = 25;
 inline constexpr int kClipPostSecs = 20;
 QString clipUrl(const QString &host, int port, const QString &camera, qint64 timestamp);
+
+// ---- Recordings (Playback page) -------------------------------------------------------
+// Frigate stores ~10 s segments. The timeline wants continuous ranges, and the calendar
+// wants the days that have any footage.
+struct Recording {
+    double start = 0; // epoch seconds
+    double end = 0;
+};
+// /api/<camera>/recordings reply. Entries without start_time and end_time are dropped.
+QVector<Recording> parseRecordings(const Json &recordings);
+// Join segments that touch (or are within `gapSecs`); input need not be sorted.
+QVector<Recording> mergeRecordings(QVector<Recording> segments, double gapSecs = 2.0);
+// Days of `year`/`month` with recorded footage, from /api/<camera>/recordings/summary
+// (requested with the local timezone so the day strings are local days).
+QList<int> parseRecordingDays(const Json &summary, int year, int month);
+
+QString recordingsUrl(const QString &host, int port, const QString &camera, qint64 after, qint64 before);
+QString summaryUrl(const QString &host, int port, const QString &camera, const QString &timeZone);
+// HLS playlist of the recordings between two instants; plays from `start`.
+QString vodUrl(const QString &host, int port, const QString &camera, qint64 start, qint64 end);
 
 QString configUrl(const QString &host, int port);
 QString eventsUrl(const QString &host, int port, double after, int limit);
