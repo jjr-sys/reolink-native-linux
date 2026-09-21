@@ -110,6 +110,9 @@ public:
     // Any embedded credentials are stripped to the keyring, not persisted in the DB.
     Q_INVOKABLE void addStreamUrl(const QString &name, const QString &url);
     Q_INVOKABLE void removeDevice(int row);
+    // Give an NVR channel a name of the user's own, kept across restarts. Empty clears it
+    // (the NVR's own name returns at the next refresh).
+    Q_INVOKABLE void renameChannel(int row, const QString &name);
 
     // The recorded clip for a detection on a Frigate camera (empty for anything else,
     // whose recordings play through the Playback page).

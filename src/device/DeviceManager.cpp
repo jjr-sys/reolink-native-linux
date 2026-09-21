@@ -683,6 +683,19 @@ void DeviceManager::addStreamUrl(const QString &name, const QString &url)
     emit countChanged();
 }
 
+void DeviceManager::renameChannel(int row, const QString &name)
+{
+    if (row < 0 || row >= m_entries.size())
+        return;
+    Entry &e = m_entries[row];
+    if (!m_db->setChannelNameOverride(e.rec.id, e.channel, name))
+        return;
+    if (!name.trimmed().isEmpty()) {
+        e.chanName = name.trimmed();
+        emit dataChanged(index(row), index(row));
+    }
+}
+
 void DeviceManager::removeDevice(int row)
 {
     if (row < 0 || row >= m_entries.size())
@@ -803,11 +816,14 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
     // Build the new per-channel entries.
     QVector<Entry> fresh;
     fresh.reserve(v.channels.size());
+    const QHash<int, QString> chosenNames = m_db->channelNameOverrides(rec.id);
     for (const ChannelResult &ch : v.channels) {
         Entry e;
         e.rec = rec;
         e.channel = ch.channel;
-        e.chanName = ch.name.isEmpty() ? rec.name : ch.name;
+        e.chanName = chosenNames.contains(ch.channel) ? chosenNames.value(ch.channel)
+                     : ch.name.isEmpty()              ? rec.name
+                                                      : ch.name;
         e.online = ch.online;
         e.status = v.degraded ? v.status : (ch.online ? tr("online") : tr("offline"));
         e.validated = !v.degraded;

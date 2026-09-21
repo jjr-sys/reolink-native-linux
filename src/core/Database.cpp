@@ -293,4 +293,31 @@ QVector<HostRecord> Database::hosts() const
     return out;
 }
 
+QHash<int, QString> Database::channelNameOverrides(qint64 hostId) const
+{
+    QHash<int, QString> out;
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT idx, name FROM channels WHERE host_id = :h AND name <> ''"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    if (q.exec())
+        while (q.next())
+            out.insert(q.value(0).toInt(), q.value(1).toString());
+    return out;
+}
+
+bool Database::setChannelNameOverride(qint64 hostId, int channel, const QString &name)
+{
+    QSqlQuery q(db());
+    if (name.trimmed().isEmpty()) {
+        q.prepare(QStringLiteral("DELETE FROM channels WHERE host_id = :h AND idx = :i"));
+    } else {
+        q.prepare(QStringLiteral("INSERT INTO channels (host_id, idx, name) VALUES (:h, :i, :n)"
+                                 " ON CONFLICT(host_id, idx) DO UPDATE SET name = excluded.name"));
+        q.bindValue(QStringLiteral(":n"), name.trimmed());
+    }
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":i"), channel);
+    return q.exec();
+}
+
 } // namespace rl

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QSqlDatabase>
 #include <QString>
 #include <QVector>
@@ -45,6 +46,11 @@ public:
     bool removeHost(qint64 id);
     bool updateHost(const HostRecord &rec);
     QVector<HostRecord> hosts() const;
+
+    // A camera name the user chose for an NVR channel. It wins over the name the NVR
+    // reports (or the "Channel N" placeholder when the NVR cannot say). Empty clears it.
+    QHash<int, QString> channelNameOverrides(qint64 hostId) const;
+    bool setChannelNameOverride(qint64 hostId, int channel, const QString &name);
 
     // Events (motion / AI detections), newest first.
     qint64 addEvent(const EventRecord &rec);

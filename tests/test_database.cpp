@@ -57,6 +57,29 @@ private slots:
         QCOMPARE(db.recentEvents(10).size(), 0);
     }
 
+    void channelNameOverrides()
+    {
+        QTemporaryDir dir;
+        Database db(dir.filePath("t.db"), QStringLiteral("test_chname"));
+        QVERIFY(db.open());
+        HostRecord rec;
+        rec.kind = QStringLiteral("nvr");
+        rec.name = QStringLiteral("Farm");
+        rec.addr = QStringLiteral("192.168.2.183");
+        const qint64 id = db.addHost(rec);
+        QVERIFY(id > 0);
+
+        QVERIFY(db.channelNameOverrides(id).isEmpty());
+        QVERIFY(db.setChannelNameOverride(id, 8, QStringLiteral("  Driveway ")));
+        QCOMPARE(db.channelNameOverrides(id).value(8), QStringLiteral("Driveway"));
+        QVERIFY(db.setChannelNameOverride(id, 8, QStringLiteral("Front Drive"))); // replaces
+        QCOMPARE(db.channelNameOverrides(id).size(), 1);
+        QCOMPARE(db.channelNameOverrides(id).value(8), QStringLiteral("Front Drive"));
+        QVERIFY(db.channelNameOverrides(id + 1).isEmpty()); // per host
+        QVERIFY(db.setChannelNameOverride(id, 8, QStringLiteral("  "))); // clears
+        QVERIFY(db.channelNameOverrides(id).isEmpty());
+    }
+
     void hostCrud()
     {
         QTemporaryDir dir;
