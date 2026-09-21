@@ -145,6 +145,10 @@ Rectangle {
                 width: ListView.view.width
                 height: isNvr ? 44 : 0
                 visible: isNvr
+                // ListView shows its section items regardless of `visible`, so for a host
+                // with no header (a stream or standalone camera) the zero-height header's
+                // contents would draw over the camera row below. Clip them away.
+                clip: true
                 color: nvrHover.hovered ? Theme.surfaceAlt : "transparent"
 
                 RowLayout {

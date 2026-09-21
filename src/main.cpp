@@ -209,6 +209,20 @@ int main(int argc, char *argv[])
                      [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.loadFromModule("ReolinkApp", "Main");
 
+    // RL_SCREENSHOT=<file.png> saves the window after RL_SCREENSHOT_MS (default 10 s) and
+    // quits. For checking how the real UI looks without a person at the screen.
+    if (qEnvironmentVariableIsSet("RL_SCREENSHOT")) {
+        const int delayMs = qEnvironmentVariableIsSet("RL_SCREENSHOT_MS")
+                                ? qEnvironmentVariableIntValue("RL_SCREENSHOT_MS") : 10000;
+        QTimer::singleShot(delayMs, &app, [&engine, &app] {
+            const QList<QObject *> roots = engine.rootObjects();
+            if (!roots.isEmpty())
+                if (auto *w = qobject_cast<QQuickWindow *>(roots.first()))
+                    w->grabWindow().save(qEnvironmentVariable("RL_SCREENSHOT"));
+            app.quit();
+        });
+    }
+
     // Tray -> window plumbing (QML handles close-to-tray via the Tray singleton).
     QObject::connect(&tray, &rl::TrayIcon::quitRequested, &app, [&app] {
         // Quit must be final: a worker blocked on an NVR socket can stall
