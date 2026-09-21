@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtMultimedia
 import ReolinkApp
+import ReolinkApp.Core
 
 // Plays the recorded clip for a detection on a camera whose recordings live on a
 // server of their own (Frigate). The server cuts the clip when asked, so the first
@@ -26,13 +27,15 @@ Dialog {
     property bool loopOn: false
     property real loopStart: 0
     property real loopEnd: 0
-    readonly property real duration: Math.max(0, player.duration)
+    readonly property real duration: Math.max(0, player.duration > 0 ? player.duration : loader.durationMs)
     readonly property real effLoopEnd: loopEnd > loopStart ? loopEnd : duration
     readonly property bool hasSegment: loopStart > 0 || (loopEnd > 0 && loopEnd < duration)
-    readonly property bool loading: player.mediaStatus === MediaPlayer.LoadingMedia
-                                    || player.mediaStatus === MediaPlayer.NoMedia
-                                    || player.mediaStatus === MediaPlayer.StalledMedia
-    readonly property bool failed: player.error !== MediaPlayer.NoError
+    readonly property bool loading: loader.state === ClipLoader.Loading
+                                    || (loader.state === ClipLoader.Ready
+                                        && (player.mediaStatus === MediaPlayer.LoadingMedia
+                                            || player.mediaStatus === MediaPlayer.NoMedia))
+    readonly property bool failed: loader.state === ClipLoader.Error || player.error !== MediaPlayer.NoError
+    readonly property string failText: loader.state === ClipLoader.Error ? loader.errorString : player.errorString
     readonly property var speeds: [0.25, 0.5, 1, 1.5, 2]
 
     function openClip(cameraName, timeText, clipUrl) {
@@ -42,10 +45,12 @@ Dialog {
         open();
     }
     function play() {
+        // Frigate's clip is an unindexed stream (no duration, no seeking). Fetch it and
+        // make it a normal MP4 first; the player starts when the file is ready.
         clearLoop();
+        player.stop();
         player.source = "";
-        player.source = url;
-        player.play();
+        loader.load(url);
     }
     function clearLoop() { loopOn = false; loopStart = 0; loopEnd = 0; }
     function seekTo(ms) {
@@ -82,7 +87,7 @@ Dialog {
     }
 
     onOpened: { forceActiveFocus(); play(); }
-    onClosed: { player.stop(); player.source = ""; }
+    onClosed: { loader.cancel(); player.stop(); player.source = ""; }
 
     Keys.onPressed: (e) => {
         var step = (e.modifiers & Qt.ShiftModifier) ? 1000 : 5000;
@@ -114,6 +119,16 @@ Dialog {
             color: Theme.text
             font.pixelSize: 14
             font.bold: true
+        }
+    }
+
+    ClipLoader {
+        id: loader
+        onStateChanged: {
+            if (state === ClipLoader.Ready) {
+                player.source = localUrl;
+                player.play();
+            }
         }
     }
 
@@ -167,7 +182,7 @@ Dialog {
                 wrapMode: Text.WordWrap
                 color: dialog.failed ? Theme.danger : Theme.textMuted
                 font.pixelSize: 13
-                text: dialog.failed ? qsTr("Could not play the clip: %1").arg(player.errorString)
+                text: dialog.failed ? qsTr("Could not play the clip: %1").arg(dialog.failText)
                                     : qsTr("Getting the clip…")
             }
         }
