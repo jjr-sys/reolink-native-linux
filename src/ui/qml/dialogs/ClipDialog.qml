@@ -38,7 +38,13 @@ Dialog {
     readonly property string failText: loader.state === ClipLoader.Error ? loader.errorString : player.errorString
     readonly property var speeds: [0.25, 0.5, 1, 1.5, 2]
 
+    // The click that closes the dialog is also delivered to whatever is under it. On the
+    // Events page that is a row, whose tap opens the clip again. Ignore opens that arrive
+    // right after a close.
+    property double closedAt: 0
     function openClip(cameraName, timeText, clipUrl) {
+        if (Date.now() - closedAt < 500)
+            return;
         camera = cameraName;
         when = timeText;
         url = clipUrl;
@@ -87,7 +93,7 @@ Dialog {
     }
 
     onOpened: { body.forceActiveFocus(); play(); }
-    onClosed: { loader.cancel(); player.stop(); player.source = ""; }
+    onClosed: { closedAt = Date.now(); loader.cancel(); player.stop(); player.source = ""; }
 
     title: qsTr("Detection clip")
     background: Rectangle { color: Theme.surface; border.color: Theme.border; radius: Theme.radius }
