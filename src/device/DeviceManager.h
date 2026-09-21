@@ -72,6 +72,8 @@ public:
         ChannelRole,
         ProblemRole,
         RotationRole,
+        IsFisheyeRole,
+        ViewModeRole,
     };
 
     DeviceManager(Database *db, CredentialStore *credentials, QObject *parent = nullptr);
@@ -99,6 +101,12 @@ public:
     // persisted per hostId:channel. For streams whose rotation our heuristics
     // can't know (hub-attached doorbells and the like) — issue #3.
     Q_INVOKABLE void setRotationOverride(int row, int degrees);
+    // Fisheye (ceiling-mounted 180° lens) cameras: whether a camera is one, and how its
+    // picture is shown ("fisheye" = the raw circle, "ptz", "panorama", "dual", "quad",
+    // "fisheye_ptz"). Both are persisted per hostId:channel. Until the user says
+    // otherwise a camera counts as fisheye when its main stream is square.
+    Q_INVOKABLE void setFisheye(int row, bool on);
+    Q_INVOKABLE void setViewMode(int row, const QString &mode);
 
     Q_INVOKABLE void addDevice(const QString &addr, const QString &username,
                                const QString &password, bool https = true, int port = 0);
@@ -334,6 +342,8 @@ private:
         QString status;
         Problem problem = Problem::Connecting; // until first validation lands
         int rotationOverride = 0;              // user view-rotation fix (degrees CW)
+        int lensOverride = -1;                 // user's fisheye flag: -1 unset (auto), 0 no, 1 yes
+        QString viewMode = QStringLiteral("fisheye"); // how a fisheye camera is shown
         QString mainCodec = QStringLiteral("h264"); // sub stream is always h264
         QSize mainSize;                             // GetEnc-declared main resolution
         QSize subSize;                              // GetEnc-declared sub resolution

@@ -1,8 +1,13 @@
 #version 440
 
-// Fisheye -> rectilinear dewarp for 360/panoramic Reolink cameras (DESIGN §5.2).
-// Casts a perspective ray per output pixel, rotates by pan/tilt, and samples the
-// equidistant fisheye source. strength=0 is passthrough; 1 is full dewarp.
+// Fisheye dewarp for ceiling-mounted 180-degree lenses (equidistant projection, optical
+// axis pointing straight down). One shader, several views chosen by `mode`:
+//   0  raw fisheye (passthrough)
+//   1  virtual PTZ: a perspective view looking at azimuth `pan`, `tilt` from straight down
+//   2  panorama: a strip from azimuth phi0 over `span`, elevation eTop..eBot above horizon
+// The maths was checked against real stills before being written here (see DESIGN.md).
+//
+// The lens circle is (cx, cy) with radius `rad`, as fractions of the frame side.
 
 layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 0) out vec4 fragColor;
@@ -11,35 +16,51 @@ layout(binding = 1) uniform sampler2D source;
 layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
     float qt_Opacity;
-    float pan;      // radians, yaw
-    float tilt;     // radians, pitch
-    float fov;      // output field of view (radians)
-    float strength; // 0..1 dewarp mix
+    float mode;
+    float pan;       // PTZ: azimuth around the vertical axis (radians)
+    float tilt;      // PTZ: angle from straight down (radians)
+    float tanHalf;   // PTZ: tan(fov / 2), horizontal
+    float aspect;    // PTZ: tile height / width
+    float phi0;      // panorama: azimuth at the left edge (radians)
+    float span;      // panorama: azimuth covered (radians)
+    float eTop;      // panorama: elevation above the horizon at the top edge (radians)
+    float eBot;      // panorama: ... at the bottom edge
+    float cx;
+    float cy;
+    float rad;
 };
 
 const float PI = 3.14159265359;
 
 void main() {
-    vec2 uv = qt_TexCoord0 * 2.0 - 1.0;      // -1..1
+    vec2 uv = qt_TexCoord0;
+    if (mode < 0.5) {
+        fragColor = texture(source, uv) * qt_Opacity;
+        return;
+    }
 
-    // Perspective ray from the virtual camera.
-    float f = 1.0 / tan(fov * 0.5);
-    vec3 ray = normalize(vec3(uv.x, uv.y, f));
+    vec3 ray;
+    if (mode < 1.5) {
+        vec3 f = vec3(sin(tilt) * cos(pan), sin(tilt) * sin(pan), cos(tilt));
+        vec3 upWorld = vec3(0.0, 0.0, -1.0);           // towards the ceiling
+        vec3 right = normalize(cross(f, upWorld));
+        vec3 up = cross(right, f);
+        float u = uv.x * 2.0 - 1.0;
+        float v = uv.y * 2.0 - 1.0;
+        ray = normalize(f + right * (u * tanHalf) - up * (v * tanHalf * aspect));
+    } else {
+        float a = phi0 + span * uv.x;
+        float e = eTop + (eBot - eTop) * uv.y;
+        ray = vec3(cos(e) * cos(a), cos(e) * sin(a), -sin(e));
+    }
 
-    // Rotate: yaw (pan) about Y, then pitch (tilt) about X.
-    float cp = cos(pan), sp = sin(pan);
-    vec3 r1 = vec3(cp * ray.x + sp * ray.z, ray.y, -sp * ray.x + cp * ray.z);
-    float ct = cos(tilt), st = sin(tilt);
-    vec3 r2 = vec3(r1.x, ct * r1.y - st * r1.z, st * r1.y + ct * r1.z);
-
-    // Equidistant fisheye projection (180-degree lens).
-    float theta = acos(clamp(r2.z, -1.0, 1.0));
-    float phi = atan(r2.y, r2.x);
-    float radius = theta / (PI * 0.5);
-    vec2 fish = vec2(cos(phi), sin(phi)) * radius * 0.5 + 0.5;
-
-    vec2 srcUV = mix(qt_TexCoord0, fish, strength);
-    // Guard against sampling outside the fisheye circle.
-    vec4 col = texture(source, clamp(srcUV, 0.0, 1.0));
-    fragColor = col * qt_Opacity;
+    float theta = acos(clamp(ray.z, -1.0, 1.0));      // angle from the optical axis
+    if (theta > PI * 0.5) {                            // behind the lens's 180 degrees
+        fragColor = vec4(0.0, 0.0, 0.0, 1.0) * qt_Opacity;
+        return;
+    }
+    float phi = atan(ray.y, ray.x);
+    float r = theta / (PI * 0.5) * rad;
+    vec2 st = vec2(cx, cy) + r * vec2(cos(phi), sin(phi));
+    fragColor = texture(source, st) * qt_Opacity;
 }

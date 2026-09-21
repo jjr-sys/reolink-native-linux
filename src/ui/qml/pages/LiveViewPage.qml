@@ -653,6 +653,8 @@ Item {
                     required property bool hasFloodlight
                     required property bool hasTalk
                     required property int rotationOverride
+                    required property bool isFisheye
+                    required property string viewMode
 
                     readonly property int slot: page.paneOfRow(index)
                     readonly property bool isMaximized: page.maximizedIndex === index
@@ -670,6 +672,8 @@ Item {
                     deviceRow: index
                     label: name
                     viewRotation: rotationOverride
+                    fisheyeLens: isFisheye
+                    fisheyeMode: viewMode
                     selected: page.selectedIndex === index
                     audioAllowed: !page.audioSuppressed
                     pageActive: page.active && page.visible

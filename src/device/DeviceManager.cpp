@@ -52,6 +52,37 @@ int loadRotation(qint64 hostId, int channel)
 {
     return QSettings().value(rotationKey(hostId, channel), 0).toInt();
 }
+QString lensKey(qint64 hostId, int channel)
+{
+    return QStringLiteral("lens/%1:%2").arg(hostId).arg(channel);
+}
+QString viewModeKey(qint64 hostId, int channel)
+{
+    return QStringLiteral("viewMode/%1:%2").arg(hostId).arg(channel);
+}
+// Frigate names its cameras like config keys ("bosch_camera"). Show those as a person
+// would write them; the raw key stays in the entry, since Frigate's URLs need it.
+QString displayName(const QString &name, const QString &kind)
+{
+    if (kind != QLatin1String("frigate") || name.contains(QLatin1Char(' ')))
+        return name;
+    QStringList words = name.split(QRegularExpression(QStringLiteral("[_-]+")), Qt::SkipEmptyParts);
+    for (QString &w : words)
+        w[0] = w[0].toUpper();
+    return words.join(QLatin1Char(' '));
+}
+const QStringList kViewModes{"fisheye", "ptz", "panorama", "dual", "quad", "fisheye_ptz"};
+// Load a camera's saved fisheye settings into a device entry.
+template <class Entry>
+void loadLensSettings(Entry &e, qint64 hostId, int channel)
+{
+    QSettings s;
+    if (s.contains(lensKey(hostId, channel)))
+        e.lensOverride = s.value(lensKey(hostId, channel)).toBool() ? 1 : 0;
+    const QString mode = s.value(viewModeKey(hostId, channel)).toString();
+    if (kViewModes.contains(mode))
+        e.viewMode = mode;
+}
 } // namespace
 
 
@@ -141,6 +172,7 @@ DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject
         e.rec = rec;
         e.chanName = rec.name;
         e.rotationOverride = loadRotation(rec.id, 0);
+        loadLensSettings(e, rec.id, 0);
         e.online = rec.kind == QLatin1String("stream");
         e.status = e.online ? tr("ready") : tr("connecting…");
         m_entries.append(e);
@@ -445,7 +477,7 @@ QVariant DeviceManager::data(const QModelIndex &index, int role) const
     const Entry &e = m_entries.at(index.row());
     switch (role) {
     case NameRole:
-        return e.chanName.isEmpty() ? e.rec.name : e.chanName;
+        return displayName(e.chanName.isEmpty() ? e.rec.name : e.chanName, e.rec.kind);
     case AddrRole:
         return e.rec.addr;
     case KindRole:
@@ -471,6 +503,11 @@ QVariant DeviceManager::data(const QModelIndex &index, int role) const
         return e.channel;
     case RotationRole:
         return e.rotationOverride;
+    case IsFisheyeRole:
+        return e.lensOverride >= 0 ? e.lensOverride == 1
+                                   : (e.mainSize.width() > 0 && e.mainSize.width() == e.mainSize.height());
+    case ViewModeRole:
+        return e.viewMode;
     case HasPtzRole:
         return e.caps.ptz;
     case HasPtzPresetRole:
@@ -521,6 +558,8 @@ QHash<int, QByteArray> DeviceManager::roleNames() const
         {BatteryChargingRole, "batteryCharging"},
         {ProblemRole, "problem"},
         {RotationRole, "rotationOverride"},
+        {IsFisheyeRole, "isFisheye"},
+        {ViewModeRole, "viewMode"},
     };
 }
 
@@ -636,6 +675,7 @@ void DeviceManager::addDevice(const QString &addr, const QString &username,
     e.chanName = addr;
     e.status = tr("connecting…");
     e.rotationOverride = loadRotation(rec.id, 0);
+    loadLensSettings(e, rec.id, 0);
     m_entries.append(e);
     endInsertRows();
     emit countChanged();
@@ -681,6 +721,28 @@ void DeviceManager::addStreamUrl(const QString &name, const QString &url)
     m_entries.append(e);
     endInsertRows();
     emit countChanged();
+}
+
+void DeviceManager::setFisheye(int row, bool on)
+{
+    if (row < 0 || row >= m_entries.size())
+        return;
+    Entry &e = m_entries[row];
+    e.lensOverride = on ? 1 : 0;
+    QSettings().setValue(lensKey(e.rec.id, e.channel), on);
+    emit dataChanged(index(row), index(row), {IsFisheyeRole});
+}
+
+void DeviceManager::setViewMode(int row, const QString &mode)
+{
+    if (row < 0 || row >= m_entries.size() || !kViewModes.contains(mode))
+        return;
+    Entry &e = m_entries[row];
+    if (e.viewMode == mode)
+        return;
+    e.viewMode = mode;
+    QSettings().setValue(viewModeKey(e.rec.id, e.channel), mode);
+    emit dataChanged(index(row), index(row), {ViewModeRole});
 }
 
 void DeviceManager::renameChannel(int row, const QString &name)
@@ -839,6 +901,7 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
         e.primed = true;
         e.problem = Problem::None;
         e.rotationOverride = loadRotation(rec.id, ch.channel);
+        loadLensSettings(e, rec.id, ch.channel);
         e.client = v.client;
         if (ch.channel == 0)
             e.battery = v.battery;

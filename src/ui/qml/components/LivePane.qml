@@ -22,6 +22,12 @@ Rectangle {
     property bool forceMain: false // maximizing DEFAULTS a pane to the main stream
     // Manual per-camera view rotation (degrees; sidebar right-click sets it).
     property int viewRotation: 0
+    // Ceiling-mounted fisheye cameras: which dewarped view to show (see FisheyeView).
+    // "fisheye" is the raw circle, i.e. no dewarping.
+    property bool fisheyeLens: false
+    property string fisheyeMode: "fisheye"
+    readonly property bool dewarp: fisheyeLens && fisheyeMode !== "fisheye"
+    onDewarpChanged: { if (dewarp) { zoom = 1.0; panX = 0; panY = 0; } }
     property bool pageActive: true // false when the Live View page isn't on screen
     property bool audioAllowed: true // false while something else (the doorbell pop-up) has the sound
 
@@ -282,7 +288,8 @@ Rectangle {
         VideoOutput {
             id: video
             anchors.fill: parent
-            fillMode: VideoOutput.PreserveAspectFit
+            // Dewarping samples the whole frame as a texture, so it must fill the item.
+            fillMode: root.dewarp ? VideoOutput.Stretch : VideoOutput.PreserveAspectFit
             visible: player.state === StreamPlayer.Streaming
             orientation: root.viewRotation
             transform: [
@@ -294,6 +301,18 @@ Rectangle {
                 },
                 Translate { x: root.panX; y: root.panY }
             ]
+        }
+
+        // The dewarped views. Created only while a dewarp mode is on, so an ordinary
+        // camera, or a fisheye one showing its raw circle, pays nothing for it.
+        Loader {
+            id: fisheyeLoader
+            anchors.fill: parent
+            active: root.dewarp && player.state === StreamPlayer.Streaming
+            sourceComponent: FisheyeView {
+                sourceItem: video
+                viewMode: root.fisheyeMode
+            }
         }
 
         MouseArea {
@@ -331,6 +350,11 @@ Rectangle {
                 dragging = false;
             }
             onPositionChanged: (m) => {
+                if (fisheyeLoader.item && (m.buttons & Qt.LeftButton)) {
+                    fisheyeLoader.item.dragBy(m.x, m.y, m.x - lastX, m.y - lastY);
+                    lastX = m.x; lastY = m.y;
+                    return;
+                }
                 if (root.zoom > 1.0 && (m.buttons & Qt.LeftButton)) {
                     root.panX += (m.x - lastX);
                     root.panY += (m.y - lastY);
@@ -364,6 +388,10 @@ Rectangle {
                 dragging = false;
             }
             onWheel: (w) => {
+                if (fisheyeLoader.item) {
+                    fisheyeLoader.item.zoomBy(w.x, w.y, w.angleDelta.y > 0);
+                    return;
+                }
                 if (!root.capZoom && !root.hasSource) return;
                 var z = root.zoom * (w.angleDelta.y > 0 ? 1.15 : 0.87);
                 root.zoom = Math.max(1.0, Math.min(8.0, z));
@@ -585,6 +613,19 @@ Rectangle {
                 onActivated: player.recording ? player.stopRecording() : player.startRecording()
             }
             ToolButton {
+                glyph: "⟳"; active: root.viewRotation !== 0
+                tip: root.viewRotation !== 0 ? qsTr("Rotate view 90° (now %1°)").arg(root.viewRotation)
+                                            : qsTr("Rotate view 90°")
+                onActivated: Devices.setRotationOverride(root.deviceRow, root.viewRotation + 90)
+            }
+            // Fisheye cameras: pick how the picture is shown.
+            ToolButton {
+                id: viewModeButton
+                glyph: "◔"; active: root.dewarp; enabledTool: root.fisheyeLens
+                tip: qsTr("Fisheye view mode")
+                onActivated: viewModeMenu.popup(viewModeButton, 0, -viewModeMenu.implicitHeight - 6)
+            }
+            ToolButton {
                 glyph: "⊕"; active: root.zoom > 1.01
                 tip: root.zoom > 1.01 ? qsTr("Reset zoom") : qsTr("Digital zoom (scroll to adjust)")
                 onActivated: { if (root.zoom > 1.01) { root.zoom = 1; root.panX = 0; root.panY = 0; }
@@ -631,6 +672,25 @@ Rectangle {
                 glyph: "⛶"
                 tip: root.forceMain ? qsTr("Restore grid") : qsTr("Maximize")
                 onActivated: if (root.hasSource) root.toggleMaximize(root.deviceRow)
+            }
+        }
+    }
+
+    ThemedMenu {
+        id: viewModeMenu
+        Repeater {
+            model: [
+                { mode: "fisheye",     label: qsTr("Fisheye (original)") },
+                { mode: "ptz",         label: qsTr("Virtual PTZ (drag to look around, scroll to zoom)") },
+                { mode: "panorama",    label: qsTr("Panorama 360°") },
+                { mode: "dual",        label: qsTr("Dual panorama (2 × 180°)") },
+                { mode: "quad",        label: qsTr("Quad view (4 directions)") },
+                { mode: "fisheye_ptz", label: qsTr("Fisheye + virtual PTZ") }
+            ]
+            ThemedMenuItem {
+                required property var modelData
+                text: (root.fisheyeMode === modelData.mode ? "✓  " : "     ") + modelData.label
+                onTriggered: Devices.setViewMode(root.deviceRow, modelData.mode)
             }
         }
     }

@@ -250,6 +250,7 @@ Rectangle {
                 required property bool batteryCharging
                 required property string problem
                 required property int rotationOverride
+                required property bool isFisheye
 
                 // A problem that needs the user's eyes (or just their patience):
                 // red dot + red status, unlike plain "offline" grey.
@@ -295,6 +296,7 @@ Rectangle {
                         Layout.fillWidth: true
                         spacing: 2
                         Text {
+                            id: nameText
                             Layout.fillWidth: true
                             text: name
                             color: Theme.text
@@ -302,6 +304,8 @@ Rectangle {
                             elide: Text.ElideRight
                         }
                         Row {
+                            id: statusRow
+                            Layout.fillWidth: true
                             spacing: 5
                             Rectangle {
                                 width: 7; height: 7; radius: 3.5
@@ -310,8 +314,9 @@ Rectangle {
                                      : camRow.inTrouble ? Theme.danger : Theme.textMuted
                             }
                             Text {
+                                id: statusText
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Math.min(implicitWidth, camRow.width - 80)
+                                width: Math.min(implicitWidth, statusRow.width - 12)
                                 text: camRow.underNvr ? status
                                     : (model.length > 0 ? model + " · " + status : status)
                                 color: camRow.inTrouble ? Theme.danger : Theme.textMuted
@@ -394,6 +399,14 @@ Rectangle {
                     }
                 }
 
+                // The full name and state when either is cut short by the sidebar's width.
+                ToolTip {
+                    visible: delegateArea.containsMouse && !delegateArea.dragging
+                             && (nameText.truncated || statusText.truncated)
+                    delay: 600
+                    text: camRow.name + "\n" + statusText.text
+                }
+
                 MouseArea {
                     id: delegateArea
                     anchors.fill: parent
@@ -462,6 +475,12 @@ Rectangle {
                     ThemedMenuItem { text: qsTr("Update credentials…")
                                onTriggered: credsDialog.openFor(camRow.index) }
                     ThemedMenuSeparator {}
+                    // A ceiling-mounted 180° lens: enables the view modes (panorama, quad…)
+                    // in the pane's toolbar. Square streams are assumed to be one.
+                    ThemedMenuItem {
+                        text: (camRow.isFisheye ? "✓  " : "     ") + qsTr("Fisheye lens")
+                        onTriggered: Devices.setFisheye(camRow.index, !camRow.isFisheye)
+                    }
                     // For cameras our rotation heuristics can't know (issue #3):
                     // each click turns the view another 90° — cycle until right.
                     ThemedMenuItem {
