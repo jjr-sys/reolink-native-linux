@@ -34,6 +34,22 @@ private slots:
         const QVector<int> want{35};
         QCOMPARE(rl::bc::channelsFromStreamInfo("<channelBits>34359738368</channelBits>"), want);
     }
+    // Shape of a real cmd 44 reply from an RLN36 (values changed).
+    void osdNameIsReadFromTheChannelNameBlock()
+    {
+        const QByteArray xml =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n<body>\n"
+            "<OsdDatetime version=\"1.1\"><channelId>0</channelId><enable>1</enable>"
+            "<topLeftX>10</topLeftX><name>not this</name></OsdDatetime>\n"
+            "<OsdChannelName version=\"1.1\">\n<channelId>0</channelId>\n"
+            "<name> Front &amp; Side Gate </name>\n<enable>1</enable>\n</OsdChannelName>\n</body>\n";
+        QCOMPARE(rl::bc::osdChannelName(xml), QStringLiteral("Front & Side Gate"));
+    }
+    void osdNameIsEmptyWhenAbsent()
+    {
+        QVERIFY(rl::bc::osdChannelName({}).isEmpty());
+        QVERIFY(rl::bc::osdChannelName("<body><OsdDatetime><name>x</name></OsdDatetime></body>").isEmpty());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestBaichuanChannels)

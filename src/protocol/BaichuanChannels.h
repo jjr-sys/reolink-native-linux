@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QRegularExpression>
+#include <QString>
 #include <QVector>
 
 namespace rl::bc {
@@ -26,6 +27,24 @@ inline QVector<int> channelsFromStreamInfo(const QByteArray &xml)
         if (mask & (quint64(1) << ch))
             channels.append(ch);
     return channels;
+}
+
+// A camera's name from its Baichuan OSD reply (cmd 44, one channel): the <name> inside
+// <OsdChannelName>, the label the NVR burns into the picture. This is what the official
+// apps show, and it needs no HTTP API. Empty when the reply has none (a third-party
+// camera has no OSD to read, and the NVR answers such a channel with status 400).
+inline QString osdChannelName(const QByteArray &xml)
+{
+    static const QRegularExpression re(
+        QStringLiteral("<OsdChannelName\\b[^>]*>(?:(?!</OsdChannelName>).)*?<name>([^<]*)</name>"),
+        QRegularExpression::DotMatchesEverythingOption);
+    QString name = re.match(QString::fromUtf8(xml)).captured(1).trimmed();
+    name.replace(QLatin1String("&amp;"), QLatin1String("&"))
+        .replace(QLatin1String("&lt;"), QLatin1String("<"))
+        .replace(QLatin1String("&gt;"), QLatin1String(">"))
+        .replace(QLatin1String("&quot;"), QLatin1String("\""))
+        .replace(QLatin1String("&apos;"), QLatin1String("'"));
+    return name;
 }
 
 } // namespace rl::bc

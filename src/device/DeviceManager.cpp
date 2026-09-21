@@ -1,3 +1,4 @@
+#include <QElapsedTimer>
 #include "DeviceManager.h"
 
 #include "core/Log.h"
@@ -89,7 +90,12 @@ QSize encStreamSize(const Json &enc, const char *stream)
 
 // The NVR's cameras as listed by its Baichuan port, for when its HTTP API is not answering.
 // Blocking; call from a worker. Empty on any failure.
-QVector<int> discoverChannelsBaichuan(const HostRecord &rec, const QString &password)
+struct BaichuanCameras {
+    QVector<int> channels;
+    QHash<int, QString> names; // channel -> camera name; a channel with no name is absent
+};
+
+BaichuanCameras discoverCamerasBaichuan(const HostRecord &rec, const QString &password)
 {
     BaichuanControl::Params p;
     p.host = rec.addr;
@@ -97,11 +103,31 @@ QVector<int> discoverChannelsBaichuan(const HostRecord &rec, const QString &pass
     p.username = rec.username;
     p.password = password;
     BaichuanControl control(p);
+    BaichuanCameras out;
     if (!control.open())
-        return {};
-    const QByteArray xml = control.get(146, -1); // StreamInfoList, host level
+        return out;
+    out.channels = bc::channelsFromStreamInfo(control.get(146, -1)); // StreamInfoList, host level
+    // Names: one OSD read (cmd 44) per camera, as the official apps do. The NVR drops the
+    // session on a channel it cannot answer (a third-party camera), so reconnect after one.
+    // Bounded: this runs on a worker that app exit waits for, and one read can block for
+    // seconds when an NVR is unwell. Channels not reached keep their "Channel N" label.
+    QElapsedTimer budget;
+    budget.start();
+    for (int ch : out.channels) {
+        if (budget.elapsed() > 8000)
+            break;
+        if (!control.isOpen() && !control.open())
+            break;
+        quint16 status = 0;
+        const QString name = bc::osdChannelName(control.get(44, ch, &status));
+        if (!name.isEmpty())
+            out.names.insert(ch, name);
+        else if (status != 200) {
+            control.close(); // its session is unusable now; the next channel reopens
+        }
+    }
     control.close();
-    return bc::channelsFromStreamInfo(xml);
+    return out;
 }
 } // namespace
 
@@ -1090,7 +1116,8 @@ void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, boo
             // The HTTP API can hang while Baichuan (port 9000) still serves. If it does,
             // list the cameras from there so live view works; HTTP keeps being retried.
             if (v.problem == Problem::Unreachable && !alreadyDegraded && !password.isEmpty()) {
-                const QVector<int> found = discoverChannelsBaichuan(rec, password);
+                const BaichuanCameras cams = discoverCamerasBaichuan(rec, password);
+                const QVector<int> &found = cams.channels;
                 if (!found.isEmpty()) {
                     qCInfo(lcCore) << rec.addr << "HTTP API unreachable; cameras listed via Baichuan:"
                                    << found.size();
@@ -1100,7 +1127,7 @@ void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, boo
                     for (int ch : found) {
                         ChannelResult cr;
                         cr.channel = ch;
-                        cr.name = tr("Channel %1").arg(ch + 1);
+                        cr.name = cams.names.value(ch, tr("Channel %1").arg(ch + 1));
                         cr.online = true;
                         v.channels.append(cr);
                     }
