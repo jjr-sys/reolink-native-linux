@@ -345,8 +345,10 @@ void abortableSleepUs(Session *s, qint64 waitUs)
 // on the routed links (up to about 0.8 s), and the same delay is applied to sound.
 constexpr qint64 kSmoothDelayUs = 1000000;
 constexpr qint64 kMinSmoothDelayUs = 250000;
-// Decoded frames waiting to be shown are held in memory. One budget is shared by all live
-// players (so a 16-tile grid can't hold 16 x 96 MB), with a per-stream ceiling and floor.
+// Decoded frames waiting to be shown are held in memory. The picture delay is sized from a
+// budget shared by all live players (so a 16-tile grid can't hold 16 x 96 MB). The queue's own
+// byte cap stays at the per-stream ceiling: it must never be lower than what the delay
+// implies, or frames are discarded before they are due and the picture goes blank.
 constexpr qint64 kPlayoutTotalBytes = 256ll * 1024 * 1024;
 constexpr qint64 kPlayoutMaxPerStream = 96ll * 1024 * 1024;
 constexpr qint64 kPlayoutMinPerStream = 16ll * 1024 * 1024;
@@ -1020,17 +1022,11 @@ void StreamPlayer::applyFrameFromWorker(const std::shared_ptr<Session> &s, const
         auto cfg = m_playout.config();
         cfg.delayUs = delayUs;
         cfg.maxDepthUs = delayUs * 5 / 2;
-        cfg.maxBytes = playoutBudgetBytes();
+        cfg.maxBytes = kPlayoutMaxPerStream; // hard ceiling; the delay is what sizes the queue
         m_playout.setConfig(cfg);
         m_liveDelayMs = delayMs;
         if (m_audioOut)
             m_audioOut->setDelayMs(delayMs);
-    }
-    // The shared budget shrinks or grows as players come and go; follow it.
-    if (const qint64 budget = playoutBudgetBytes(); budget != m_playout.config().maxBytes) {
-        auto cfg = m_playout.config();
-        cfg.maxBytes = budget;
-        m_playout.setConfig(cfg);
     }
     m_playout.push(frame, ptsUs, nowUs(), bytes);
     servicePlayout();
