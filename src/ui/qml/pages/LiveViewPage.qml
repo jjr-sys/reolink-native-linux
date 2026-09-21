@@ -220,8 +220,20 @@ Item {
         activityStore.types = cur.join(",");
     }
 
+    // Saved cameras that had no row when the layout was restored ("pane index" -> "hostId:channel").
+    // A host whose camera list arrives late (its API is slow or down at start) must get its
+    // cameras back in their saved panes, and the saved arrangement must not be overwritten with
+    // stand-ins meanwhile.
+    property var pendingPanes: ({})
+    function hasPendingPanes() { return Object.keys(pendingPanes).length > 0; }
+    Timer {
+        id: pendingGiveUp
+        interval: 120000
+        onTriggered: { page.pendingPanes = ({}); page.saveLayout(); }
+    }
+
     function saveLayout() {
-        if (!layoutRestored)
+        if (!layoutRestored || hasPendingPanes())
             return;
         var out = [];
         for (var i = 0; i < maxPanes; ++i) {
@@ -257,8 +269,43 @@ Item {
                 s.push(row);
             }
             paneSlots = s;
+            var pending = ({});
+            for (var p = 0; p < maxPanes && p < parts.length; ++p)
+                if (parts[p] !== "-" && byKey[parts[p]] === undefined)
+                    pending[p] = parts[p];
+            pendingPanes = pending;
+            if (hasPendingPanes())
+                pendingGiveUp.restart();
         }
         syncSlots();   // place any camera the saved layout didn't cover
+    }
+
+    // Rows arrived: put any saved camera that now exists back in its pane.
+    function applyPendingPanes() {
+        if (!hasPendingPanes())
+            return;
+        var byKey = ({});
+        for (var r = 0; r < Devices.count; ++r) {
+            var c = Devices.cameraInfo(r);
+            if (c && c.hostId !== undefined)
+                byKey[c.hostId + ":" + c.channel] = r;
+        }
+        var s = paneSlots.slice();
+        var left = ({});
+        for (var p in pendingPanes) {
+            var row = byKey[pendingPanes[p]];
+            if (row === undefined) { left[p] = pendingPanes[p]; continue; }
+            for (var i = 0; i < s.length; ++i)
+                if (s[i] === row) s[i] = -1;   // it was standing in elsewhere
+            s[parseInt(p)] = row;
+        }
+        paneSlots = s;
+        pendingPanes = left;
+        if (!hasPendingPanes()) {
+            pendingGiveUp.stop();
+            syncSlots();
+            saveLayout();
+        }
     }
 
     // Removing a device shifts row indices; keep maximized/selected pointing at the
@@ -292,10 +339,12 @@ Item {
                 if (s[i] >= first) s[i] += added;
             page.paneSlots = s;
             // First devices to arrive are the cue to apply the saved layout.
-            if (!page.layoutRestored)
+            if (!page.layoutRestored) {
                 page.restoreLayout();
-            else
+            } else {
+                page.applyPendingPanes();
                 page.syncSlots();
+            }
         }
         function onModelReset() {
             page.paneSlots = [];

@@ -5,6 +5,7 @@
 #include "device/FrigateApi.h"
 #include "device/QuickReply.h"
 #include "media/StreamPlayer.h"
+#include "protocol/BaichuanChannels.h"
 #include "protocol/BaichuanClient.h"
 #include "protocol/BaichuanControl.h"
 #include "protocol/ReolinkHttpClient.h"
@@ -84,6 +85,23 @@ QSize encStreamSize(const Json &enc, const char *stream)
     const int w = jsonInt(s, "width", 0);
     const int h = jsonInt(s, "height", 0);
     return (w > 0 && h > 0) ? QSize(w, h) : QSize();
+}
+
+// The NVR's cameras as listed by its Baichuan port, for when its HTTP API is not answering.
+// Blocking; call from a worker. Empty on any failure.
+QVector<int> discoverChannelsBaichuan(const HostRecord &rec, const QString &password)
+{
+    BaichuanControl::Params p;
+    p.host = rec.addr;
+    p.port = 9000;
+    p.username = rec.username;
+    p.password = password;
+    BaichuanControl control(p);
+    if (!control.open())
+        return {};
+    const QByteArray xml = control.get(146, -1); // StreamInfoList, host level
+    control.close();
+    return bc::channelsFromStreamInfo(xml);
 }
 } // namespace
 
@@ -596,7 +614,7 @@ int DeviceManager::rowForHostId(qint64 hostId) const
     return -1;
 }
 
-void DeviceManager::applyValidation(qint64 hostId, const Validation &v)
+void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
 {
     // Locate the contiguous block of rows for this host.
     int first = rowForHostId(hostId);
@@ -610,7 +628,41 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &v)
 
     m_validating.remove(hostId);
 
-    if (!v.online || v.channels.isEmpty()) {
+    Validation v = vIn;
+    if (v.degraded && !v.channels.isEmpty()) {
+        // A camera list read over Baichuan only fills in for a host whose list has never
+        // come from the HTTP API. If it has, that list (real names, caps) stays.
+        bool haveFull = false;
+        bool same = oldCount == v.channels.size();
+        for (int i = 0; i < oldCount; ++i) {
+            const Entry &old = m_entries.at(first + i);
+            haveFull = haveFull || old.validated;
+            same = same && old.degraded && i < v.channels.size()
+                   && old.channel == v.channels.at(i).channel;
+        }
+        if (haveFull) {
+            v.degraded = false;
+            v.channels.clear(); // handled as a plain failure below
+        } else {
+            // Keep trying HTTP with the usual backoff so names and the rest arrive later.
+            const int delay = m_retryDelaySecs.value(hostId, 15);
+            m_nextRetryAt[hostId] = QDateTime::currentDateTimeUtc().addSecs(delay);
+            m_retryDelaySecs[hostId] = qMin(delay * 2, 300);
+            if (same)
+                return; // nothing changed; don't rebuild rows under running streams
+        }
+    }
+
+    if (!v.degraded && v.problem == Problem::Unreachable && m_entries.at(first).degraded) {
+        // Still showing the Baichuan-listed cameras; the HTTP retry failed again. Leave the
+        // rows (and their streams) alone and try again later.
+        const int delay = m_retryDelaySecs.value(hostId, 15);
+        m_nextRetryAt[hostId] = QDateTime::currentDateTimeUtc().addSecs(delay);
+        m_retryDelaySecs[hostId] = qMin(delay * 2, 300);
+        return;
+    }
+
+    if ((!v.online && !v.degraded) || v.channels.isEmpty()) {
         // Only announce a CHANGE — the retry loop re-lands the same failure
         // every backoff interval, and repeating it would spam any listener.
         const bool changed = m_entries.at(first).status != v.status
@@ -640,8 +692,10 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &v)
         }
         return;
     }
-    m_nextRetryAt.remove(hostId);
-    m_retryDelaySecs.remove(hostId);
+    if (!v.degraded) {
+        m_nextRetryAt.remove(hostId);
+        m_retryDelaySecs.remove(hostId);
+    }
 
     // Update the host record (name/model/kind), persist once.
     if (!v.hostName.isEmpty())
@@ -660,7 +714,9 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &v)
         e.channel = ch.channel;
         e.chanName = ch.name.isEmpty() ? rec.name : ch.name;
         e.online = ch.online;
-        e.status = ch.online ? tr("online") : tr("offline");
+        e.status = v.degraded ? v.status : (ch.online ? tr("online") : tr("offline"));
+        e.validated = !v.degraded;
+        e.degraded = v.degraded;
         e.mainCodec = ch.codec; // may be empty = unknown -> probe
         e.mainSize = ch.mainSize;
         e.subSize = ch.subSize;
@@ -858,8 +914,15 @@ void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, boo
     m_validating.insert(hostId);
     const HostRecord rec = m_entries.at(row).rec;
     const bool isStream = rec.kind == QLatin1String("stream");
+    // Already showing the Baichuan-discovered list: just retry HTTP, don't reopen Baichuan
+    // (the NVR has few connection slots).
+    // Same when the host's list already came from HTTP: a fallback list would be discarded.
+    bool alreadyDegraded = false;
+    for (int i = row; i < m_entries.size() && m_entries.at(i).rec.id == hostId; ++i)
+        alreadyDegraded = alreadyDegraded || m_entries.at(i).degraded || m_entries.at(i).validated;
 
-    m_pending.addFuture(QtConcurrent::run([this, rec, newPassword, storeNew, isStream, hostId] {
+    m_pending.addFuture(QtConcurrent::run([this, rec, newPassword, storeNew, isStream, hostId,
+                                           alreadyDegraded] {
         if (storeNew && !newPassword.isEmpty())
             m_credentials->store(hostId, newPassword);
 
@@ -954,6 +1017,25 @@ void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, boo
             case ReolinkHttpClient::FailKind::Auth: v.problem = Problem::Auth; break;
             case ReolinkHttpClient::FailKind::Locked: v.problem = Problem::Locked; break;
             default: v.problem = Problem::Unreachable; break;
+            }
+            // The HTTP API can hang while Baichuan (port 9000) still serves. If it does,
+            // list the cameras from there so live view works; HTTP keeps being retried.
+            if (v.problem == Problem::Unreachable && !alreadyDegraded && !password.isEmpty()) {
+                const QVector<int> found = discoverChannelsBaichuan(rec, password);
+                if (!found.isEmpty()) {
+                    qCInfo(lcCore) << rec.addr << "HTTP API unreachable; cameras listed via Baichuan:"
+                                   << found.size();
+                    v.degraded = true;
+                    v.model = rec.model;
+                    v.status = tr("limited: device API not responding");
+                    for (int ch : found) {
+                        ChannelResult cr;
+                        cr.channel = ch;
+                        cr.name = tr("Channel %1").arg(ch + 1);
+                        cr.online = true;
+                        v.channels.append(cr);
+                    }
+                }
             }
             postValidation(hostId, v);
             return;

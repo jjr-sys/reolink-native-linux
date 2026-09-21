@@ -337,6 +337,8 @@ private:
         QString uid;                                // per-camera UID (Baichuan playback)
         QString password;                           // in-memory only (keyring at rest)
         bool primed = false;                        // password loaded?
+        bool validated = false;                     // channel list came from the HTTP API
+        bool degraded = false;                      // channel list came from Baichuan only
         api::ChannelCaps caps;                      // this channel's capabilities
         bool talk = false;                          // channel supports two-way audio
         bool isAdmin = false;                       // logged-in user may edit settings
@@ -378,6 +380,9 @@ private:
         QString password;
         api::BatteryInfo battery;
         std::shared_ptr<ReolinkHttpClient> client;
+        // The HTTP API did not answer but Baichuan listed the cameras: show them (live view
+        // works) and keep retrying HTTP for names and the rest.
+        bool degraded = false;
         QVector<ChannelResult> channels; // one per camera to show
     };
 
