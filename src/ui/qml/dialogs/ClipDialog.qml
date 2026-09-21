@@ -15,7 +15,7 @@ Dialog {
     id: dialog
     modal: true
     width: Math.min(900, Overlay.overlay ? Overlay.overlay.width - 60 : 900)
-    height: width * 9 / 16 + 200
+    height: width * 9 / 16 + 240
     anchors.centerIn: Overlay.overlay
     padding: Theme.spacing * 2
 
@@ -86,26 +86,8 @@ Dialog {
         return m + ":" + (r < 10 ? "0" : "") + r.toFixed(1);
     }
 
-    onOpened: { forceActiveFocus(); play(); }
+    onOpened: { body.forceActiveFocus(); play(); }
     onClosed: { loader.cancel(); player.stop(); player.source = ""; }
-
-    Keys.onPressed: (e) => {
-        var step = (e.modifiers & Qt.ShiftModifier) ? 1000 : 5000;
-        switch (e.key) {
-        case Qt.Key_Space: togglePause(); break;
-        case Qt.Key_Left: seekTo(player.position - step); break;
-        case Qt.Key_Right: seekTo(player.position + step); break;
-        case Qt.Key_Home: seekTo(0); break;
-        case Qt.Key_End: seekTo(duration); break;
-        case Qt.Key_BracketLeft: markStart(); break;
-        case Qt.Key_BracketRight: markEnd(); break;
-        case Qt.Key_L: loopOn = !loopOn; break;
-        case Qt.Key_Backspace: clearLoop(); break;
-        case Qt.Key_M: audio.muted = !audio.muted; break;
-        default: return;
-        }
-        e.accepted = true;
-    }
 
     title: qsTr("Detection clip")
     background: Rectangle { color: Theme.surface; border.color: Theme.border; radius: Theme.radius }
@@ -140,12 +122,17 @@ Dialog {
         playbackRate: dialog.speeds[speedIndex]
         property int speedIndex: 2
 
+        // Seeking from inside positionChanged is ignored by the backend, so wrap on the next tick.
+        property Timer wrap: Timer {
+            interval: 0
+            onTriggered: player.position = dialog.loopStart
+        }
         // Keep the position inside the loop segment. The backend reports position in
         // coarse steps, so the jump back lands a little after the end mark at most.
         onPositionChanged: {
             if (dialog.loopOn && dialog.loopEnd > dialog.loopStart && position >= dialog.loopEnd
                     && playbackState === MediaPlayer.PlayingState)
-                position = dialog.loopStart;
+                wrap.start();
         }
         // Reaching the real end of the clip: wrap to the loop start when looping.
         onMediaStatusChanged: {
@@ -157,8 +144,28 @@ Dialog {
     }
 
     ColumnLayout {
+        id: body
         anchors.fill: parent
         spacing: Theme.spacing
+        focus: true
+        Keys.onPressed: (e) => {
+            var step = (e.modifiers & Qt.ShiftModifier) ? 1000 : 5000;
+            switch (e.key) {
+            case Qt.Key_Space: togglePause(); break;
+            case Qt.Key_Left: seekTo(player.position - step); break;
+            case Qt.Key_Right: seekTo(player.position + step); break;
+            case Qt.Key_Home: seekTo(0); break;
+            case Qt.Key_End: seekTo(duration); break;
+            case Qt.Key_BracketLeft: markStart(); break;
+            case Qt.Key_BracketRight: markEnd(); break;
+            case Qt.Key_L: loopOn = !loopOn; break;
+            case Qt.Key_Backspace: clearLoop(); break;
+            case Qt.Key_M: audio.muted = !audio.muted; break;
+            default: return;
+            }
+            e.accepted = true;
+        }
+
 
         Rectangle {
             Layout.fillWidth: true
@@ -261,27 +268,10 @@ Dialog {
             }
         }
 
-        // ---- Controls ----
+        // ---- Controls: two rows so nothing overflows in a small window ----
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.spacing
-
-            component Btn: Rectangle {
-                id: btn
-                property string label
-                property bool active: false
-                property bool dim: false
-                signal tapped()
-                implicitWidth: Math.max(34, btnText.implicitWidth + 20)
-                implicitHeight: 32
-                radius: Theme.radius
-                color: active ? Theme.accentDim : (btnHover.hovered ? Theme.surfaceAlt : "transparent")
-                border.color: active ? Theme.accent : Theme.border
-                opacity: dim ? 0.45 : 1
-                Text { id: btnText; anchors.centerIn: parent; text: btn.label; color: Theme.text; font.pixelSize: 13 }
-                HoverHandler { id: btnHover }
-                TapHandler { onTapped: btn.tapped() }
-            }
 
             Btn {
                 label: player.playbackState === MediaPlayer.PlayingState ? "⏸" : "▶"
@@ -289,45 +279,62 @@ Dialog {
             }
             Btn { label: "−5s"; onTapped: dialog.seekTo(player.position - 5000) }
             Btn { label: "+5s"; onTapped: dialog.seekTo(player.position + 5000) }
-
             Text {
                 text: dialog.fmt(player.position) + " / " + dialog.fmt(dialog.duration)
                 color: Theme.textMuted
                 font.pixelSize: 12
                 font.family: "monospace"
-                Layout.minimumWidth: 110
-                horizontalAlignment: Text.AlignHCenter
+                Layout.leftMargin: Theme.spacing
             }
-
-            Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; color: Theme.border }
-
-            // Loop: mark A and B at the playhead, then the segment repeats.
-            Btn { label: "A [" ; active: dialog.hasSegment && dialog.loopStart > 0; onTapped: dialog.markStart() }
-            Btn { label: "] B"; active: dialog.hasSegment && dialog.loopEnd > 0; onTapped: dialog.markEnd() }
-            Btn {
-                label: dialog.hasSegment ? qsTr("Loop %1–%2").arg(dialog.fmt(dialog.loopStart)).arg(dialog.fmt(dialog.effLoopEnd))
-                                         : qsTr("Loop")
-                active: dialog.loopOn
-                onTapped: dialog.loopOn = !dialog.loopOn
-            }
-            Btn { label: "✕"; visible: dialog.hasSegment || dialog.loopOn; onTapped: dialog.clearLoop() }
-
             Item { Layout.fillWidth: true }
-
             Btn {
                 label: dialog.speeds[player.speedIndex] + "×"
                 onTapped: player.speedIndex = (player.speedIndex + 1) % dialog.speeds.length
             }
-            Btn { label: audio.muted ? "🔇" : "🔊"; onTapped: audio.muted = !audio.muted }
+            Btn { label: audio.muted ? "Unmute" : "Mute"; onTapped: audio.muted = !audio.muted }
             Slider {
                 id: vol
-                Layout.preferredWidth: 80
+                Layout.preferredWidth: 90
                 from: 0; to: 1; value: 1
                 onMoved: audio.volume = QtMultimedia.convertVolume(value, QtMultimedia.LinearVolumeScale,
                                                                    QtMultimedia.LogarithmicVolumeScale)
             }
-            Btn { label: qsTr("Replay"); onTapped: dialog.play() }
-            Btn { label: qsTr("Close"); onTapped: dialog.close() }
         }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacing
+
+            // Loop: mark A and B at the playhead, then the segment repeats.
+            Btn { label: qsTr("Set A  [") ; active: dialog.loopStart > 0; onTapped: dialog.markStart() }
+            Btn { label: qsTr("Set B  ]"); active: dialog.loopEnd > 0; onTapped: dialog.markEnd() }
+            Btn { label: qsTr("Loop"); active: dialog.loopOn; onTapped: dialog.loopOn = !dialog.loopOn }
+            Text {
+                visible: dialog.hasSegment
+                text: dialog.fmt(dialog.loopStart) + " – " + dialog.fmt(dialog.effLoopEnd)
+                color: dialog.loopOn ? Theme.accent : Theme.textMuted
+                font.pixelSize: 12
+                font.family: "monospace"
+            }
+            Btn { label: qsTr("Clear"); visible: dialog.hasSegment || dialog.loopOn; onTapped: dialog.clearLoop() }
+            Item { Layout.fillWidth: true }
+            Btn { label: qsTr("Replay"); onTapped: dialog.play() }
+            Btn { objectName: "closeButton"; label: qsTr("Close"); onTapped: dialog.close() }
+        }
+    }
+
+    component Btn: Rectangle {
+        id: btn
+        property string label
+        property bool active: false
+        signal tapped()
+        implicitWidth: Math.max(36, btnText.implicitWidth + 20)
+        implicitHeight: 32
+        radius: Theme.radius
+        color: active ? Theme.accentDim : (btnHover.hovered ? Theme.surfaceAlt : "transparent")
+        border.color: active ? Theme.accent : Theme.border
+        Text { id: btnText; anchors.centerIn: parent; text: btn.label; color: Theme.text; font.pixelSize: 13 }
+        HoverHandler { id: btnHover }
+        TapHandler { onTapped: btn.tapped() }
     }
 }
