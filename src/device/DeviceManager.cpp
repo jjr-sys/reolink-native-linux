@@ -156,19 +156,23 @@ void DeviceManager::applyConnectivity(qint64 hostId, bool transportOk,
         if (e.rec.id == hostId) { hostName = e.rec.name; break; }
 
     if (!transportOk) {
-        if (++fails != 3)
-            return;
-        for (int i = 0; i < m_entries.size(); ++i) {
-            if (m_entries.at(i).rec.id != hostId || !m_entries.at(i).online)
-                continue;
-            m_entries[i].online = false;
-            m_entries[i].status = tr("unreachable");
-            emit dataChanged(index(i), index(i));
-        }
-        emit connectivityChanged(hostId, -1, hostName, false);
+        ++fails;
+        // At the third failure, and every ~minute while the host is in API-only state (in
+        // case the whole device has since gone), ask the Baichuan port whether it is alive.
+        if (fails == 3 || (m_apiOnly.contains(hostId) && fails % 6 == 0))
+            probeHostAlive(hostId, hostName);
         return;
     }
-    if (fails >= 3) {
+    if (m_apiOnly.remove(hostId)) {
+        // The API is back; the cameras never went offline, so just clear the label.
+        for (int i = 0; i < m_entries.size(); ++i) {
+            Entry &e = m_entries[i];
+            if (e.rec.id == hostId && e.online) {
+                e.status = tr("online");
+                emit dataChanged(index(i), index(i));
+            }
+        }
+    } else if (fails >= 3) {
         for (int i = 0; i < m_entries.size(); ++i) {
             if (m_entries.at(i).rec.id != hostId || m_entries.at(i).online)
                 continue;
@@ -195,6 +199,71 @@ void DeviceManager::applyConnectivity(qint64 hostId, bool transportOk,
             break;
         }
     }
+}
+
+void DeviceManager::markHostUnreachable(qint64 hostId, const QString &hostName)
+{
+    for (int i = 0; i < m_entries.size(); ++i) {
+        if (m_entries.at(i).rec.id != hostId || !m_entries.at(i).online)
+            continue;
+        m_entries[i].online = false;
+        m_entries[i].status = tr("unreachable");
+        emit dataChanged(index(i), index(i));
+    }
+    emit connectivityChanged(hostId, -1, hostName, false);
+}
+
+// The HTTP API failed several polls in a row. NVRs can wedge that API while still serving
+// video and Baichuan, so check the Baichuan port before calling the cameras unreachable.
+void DeviceManager::probeHostAlive(qint64 hostId, const QString &hostName)
+{
+    if (m_aliveProbing.contains(hostId))
+        return;
+    const int row = rowForHostId(hostId);
+    if (row < 0)
+        return;
+    const HostRecord rec = m_entries.at(row).rec;
+    const QString password = m_entries.at(row).password;
+    m_aliveProbing.insert(hostId);
+
+    m_pending.addFuture(QtConcurrent::run([this, hostId, hostName, rec, password] {
+        bool alive = false;
+        if (!password.isEmpty()) {
+            BaichuanControl::Params p;
+            p.host = rec.addr;
+            p.port = 9000;
+            p.username = rec.username;
+            p.password = password;
+            BaichuanControl control(p);
+            alive = control.open();
+            control.close();
+        }
+        QMetaObject::invokeMethod(
+            this,
+            [this, hostId, hostName, alive] {
+                m_aliveProbing.remove(hostId);
+                if (m_hostFails.value(hostId) < 3)
+                    return; // the API came back while we were checking
+                if (!alive) {
+                    m_apiOnly.remove(hostId);
+                    markHostUnreachable(hostId, hostName);
+                    return;
+                }
+                if (m_apiOnly.contains(hostId))
+                    return;
+                qCInfo(lcCore) << hostName << "HTTP API not responding but device is alive"
+                               << "(Baichuan); keeping cameras online";
+                m_apiOnly.insert(hostId);
+                for (int i = 0; i < m_entries.size(); ++i) {
+                    Entry &e = m_entries[i];
+                    if (e.rec.id == hostId && e.online) {
+                        e.status = tr("limited: device API not responding");
+                        emit dataChanged(index(i), index(i));
+                    }
+                }
+            },
+            Qt::QueuedConnection);
+    }));
 }
 
 void DeviceManager::pollDetections()

@@ -416,6 +416,12 @@ private:
     QHash<QString, bool> m_pollInFlight;                 // avoid overlapping polls
     QHash<int, int> m_pushEnabled;  // row -> push enable (1/0/-1) for notif gating
     QHash<qint64, int> m_hostFails; // consecutive poll transport failures per host
+    // Hosts whose HTTP API stopped answering but which still answer on the Baichuan port:
+    // their cameras stay online (live view works), only the API-driven features are down.
+    QSet<qint64> m_apiOnly;
+    QSet<qint64> m_aliveProbing; // hosts with a Baichuan liveness check in flight
+    void probeHostAlive(qint64 hostId, const QString &hostName);
+    void markHostUnreachable(qint64 hostId, const QString &hostName);
     bool m_pushWarmed = false;      // one-time warm of the push cache after priming
 
     // Auto-retry of Unreachable hosts, driven by the poll tick. Backoff doubles
