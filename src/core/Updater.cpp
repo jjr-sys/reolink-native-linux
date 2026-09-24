@@ -59,6 +59,12 @@ void Updater::check()
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         reply->deleteLater();
         // Check failures are silent — no update UI unless we actually find one.
+        if (reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 404) {
+            // No published release yet (a fork before its first tag) is not a failure.
+            qCDebug(lcCore) << "update check: no releases published";
+            setState(Idle);
+            return;
+        }
         if (reply->error() != QNetworkReply::NoError) {
             qCInfo(lcCore) << "update check failed:" << reply->errorString();
             setState(Idle);
