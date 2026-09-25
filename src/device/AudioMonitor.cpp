@@ -57,8 +57,15 @@ AudioMonitor::AudioMonitor(CredentialStore *credentials, QObject *parent)
         b.triggers = {audio::kRaisedVoice};
         b.scoreText = QStringLiteral("Shout 61%");
         b.hasClip = true;
-        m_events = {a, b};
-        m_tracker.update(m_events, now);
+        audio::Event c;
+        c.id = QStringLiteral("mock-3");
+        c.time = now - 120;
+        c.camera = QStringLiteral("kitchen");
+        c.triggers = {audio::kSpeech};
+        c.transcript = QStringLiteral("(mock plain speech, kept but not an alert)");
+        c.hasClip = true;
+        m_events = {a, c, b};
+        m_tracker.update(m_events, now); // plain speech is ignored by the tracker
         m_status.ok = true;
         m_status.transcriptionPaused = qEnvironmentVariable("RL_MOCK_AUDIO_EVENTS") == QLatin1String("paused");
         m_status.pausedReason = QStringLiteral("sustained_load load1=4.2");
@@ -114,6 +121,7 @@ QVariant AudioMonitor::data(const QModelIndex &index, int role) const
     case ScoreTextRole: return e.scoreText;
     case TranscriptRole: return e.transcript;
     case HasClipRole: return e.hasClip;
+    case FlaggedRole: return e.flagged();
     }
     return {};
 }
@@ -122,7 +130,7 @@ QHash<int, QByteArray> AudioMonitor::roleNames() const
 {
     return {{IdRole, "eventId"},        {TimestampRole, "timestamp"}, {TimeTextRole, "timeText"},
             {CameraRole, "camera"},     {TriggerTextRole, "triggerText"}, {TriggersRole, "triggers"},
-            {ScoreTextRole, "scoreText"}, {TranscriptRole, "transcript"}, {HasClipRole, "hasClip"}};
+            {ScoreTextRole, "scoreText"}, {TranscriptRole, "transcript"}, {HasClipRole, "hasClip"}, {FlaggedRole, "flagged"}};
 }
 
 void AudioMonitor::setNotificationsEnabled(bool on)
@@ -149,31 +157,59 @@ void AudioMonitor::poll()
     m_polling = true;
     const QString host = m_host, token = m_token;
     const int port = m_port;
+    const bool all = m_showAll;
+    const int limit = m_limit;
     QPointer<AudioMonitor> self(this);
-    m_pending.addFuture(QtConcurrent::run([self, host, port, token] {
-        const auto ev = audio::httpGet(audio::eventsUrl(host, port), token, 8000);
+    m_pending.addFuture(QtConcurrent::run([self, host, port, token, all, limit] {
+        auto fetch = [&](int n, bool flaggedOnly, bool *ok) {
+            const auto r = audio::httpGet(audio::eventsUrl(host, port, n, 0, flaggedOnly), token, 8000);
+            *ok = r.status == 200;
+            return *ok ? audio::parseEvents(Json::parse(r.body.toStdString(), nullptr, false))
+                       : QVector<audio::Event>();
+        };
+        bool haveAlerts = false, haveListing = false;
+        const auto alerts = fetch(100, true, &haveAlerts); // drives borders and notifications
+        const auto listing = all ? fetch(limit, false, &haveListing) : alerts;
+        haveListing = all ? haveListing : haveAlerts;
         const auto st = audio::httpGet(audio::statusUrl(host, port), token, 8000);
-        const bool haveEvents = ev.status == 200;
-        const Json evJson = haveEvents ? Json::parse(ev.body.toStdString(), nullptr, false) : Json();
-        const auto events = haveEvents ? audio::parseEvents(evJson) : QVector<audio::Event>();
         const Json stJson = st.status == 200 ? Json::parse(st.body.toStdString(), nullptr, false) : Json();
         const audio::Status status = audio::parseStatus(stJson);
-        const bool reachable = haveEvents || st.status == 200;
+        const bool reachable = haveAlerts || st.status == 200;
         if (self)
             QMetaObject::invokeMethod(self.data(), "onPolled", Qt::QueuedConnection,
-                                      Q_ARG(bool, reachable), Q_ARG(QVector<rl::audio::Event>, events),
-                                      Q_ARG(bool, haveEvents), Q_ARG(rl::audio::Status, status));
+                                      Q_ARG(bool, reachable), Q_ARG(QVector<rl::audio::Event>, alerts),
+                                      Q_ARG(bool, haveAlerts), Q_ARG(QVector<rl::audio::Event>, listing),
+                                      Q_ARG(bool, haveListing), Q_ARG(rl::audio::Status, status));
     }));
 }
 
-void AudioMonitor::onPolled(bool reachable, const QVector<audio::Event> &events, bool haveEvents,
+void AudioMonitor::setShowAll(bool on)
+{
+    if (m_showAll == on)
+        return;
+    m_showAll = on;
+    m_limit = kPageSize;
+    emit showAllChanged();
+    poll();
+}
+
+void AudioMonitor::loadMore()
+{
+    if (!canLoadMore())
+        return;
+    m_limit = qMin(kMaxLimit, m_limit + kPageSize);
+    poll();
+}
+
+void AudioMonitor::onPolled(bool reachable, const QVector<audio::Event> &alerts, bool haveAlerts,
+                            const QVector<audio::Event> &listing, bool haveListing,
                             const audio::Status &status)
 {
     m_polling = false;
     bool statusDirty = false;
     if (reachable != m_reachable) {
-        qCInfo(lcCore) << "audio monitor:" << (reachable ? "reachable" : "not reachable") << "-" << events.size()
-                       << "events";
+        qCInfo(lcCore) << "audio monitor:" << (reachable ? "reachable" : "not reachable") << "-"
+                       << alerts.size() << "alerts";
         m_reachable = reachable;
         statusDirty = true;
     }
@@ -193,20 +229,21 @@ void AudioMonitor::onPolled(bool reachable, const QVector<audio::Event> &events,
     if (statusDirty)
         emit statusChanged();
 
-    if (!haveEvents)
-        return;
-    const QVector<audio::Event> fresh = m_tracker.update(events, nowSecs());
-    if (events.size() != m_events.size() || (!events.isEmpty() && !m_events.isEmpty()
-                                             && events.first().id != m_events.first().id)) {
-        beginResetModel();
-        m_events = events.mid(0, kMaxEvents);
-        endResetModel();
-        emit countChanged();
-    }
-    if (!fresh.isEmpty()) {
+    if (haveAlerts) {
+        const QVector<audio::Event> fresh = m_tracker.update(alerts, nowSecs());
         for (const audio::Event &e : fresh)
             notifyFor(e);
-        onExpiry();
+        if (!fresh.isEmpty() || !m_primedBorders) {
+            m_primedBorders = true;
+            onExpiry();
+        }
+    }
+    if (haveListing && (listing.size() != m_events.size()
+                        || (!listing.isEmpty() && !m_events.isEmpty() && listing.first().id != m_events.first().id))) {
+        beginResetModel();
+        m_events = listing.mid(0, kMaxLimit);
+        endResetModel();
+        emit countChanged();
     }
 }
 

@@ -31,14 +31,20 @@ class AudioMonitor : public QAbstractListModel
     // Bumps whenever any camera's alert state may have changed; bind isAlerting() to it.
     Q_PROPERTY(int alertRevision READ alertRevision NOTIFY alertsChanged)
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
+    // False: the model lists alerts only. True: every kept transcript (server keeps 60 days),
+    // newest first, `loaded` at a time; loadMore() pages further back (server max 500).
+    Q_PROPERTY(bool showAll READ showAll WRITE setShowAll NOTIFY showAllChanged)
+    Q_PROPERTY(bool canLoadMore READ canLoadMore NOTIFY countChanged)
 
 public:
     // Device host ids are SQLite rowids (positive), so this can never collide with one.
     static constexpr qint64 kTokenHostId = -1000;
     static constexpr int kPollMs = 10000;
+    static constexpr int kPageSize = 200;
+    static constexpr int kMaxLimit = 500;
 
     enum Role { IdRole = Qt::UserRole + 1, TimestampRole, TimeTextRole, CameraRole, TriggerTextRole,
-                TriggersRole, ScoreTextRole, TranscriptRole, HasClipRole };
+                TriggersRole, ScoreTextRole, TranscriptRole, HasClipRole, FlaggedRole };
 
     explicit AudioMonitor(CredentialStore *credentials, QObject *parent = nullptr);
     ~AudioMonitor() override;
@@ -66,18 +72,23 @@ public:
     // Deletes every fetched clip; call when playback stops.
     Q_INVOKABLE void discardClips();
     Q_INVOKABLE void refresh() { poll(); }
+    Q_INVOKABLE void loadMore();
+    bool showAll() const { return m_showAll; }
+    void setShowAll(bool on);
+    bool canLoadMore() const { return m_showAll && m_limit < kMaxLimit && m_events.size() >= m_limit; }
 
 signals:
     void statusChanged();
     void notificationsEnabledChanged();
     void alertsChanged();
     void countChanged();
+    void showAllChanged();
     void clipReady(const QString &eventId, const QString &path, const QString &error);
 
 private slots:
     void poll();
-    void onPolled(bool reachable, const QVector<audio::Event> &events, bool haveEvents,
-                  const audio::Status &status);
+    void onPolled(bool reachable, const QVector<audio::Event> &alerts, bool haveAlerts,
+                  const QVector<audio::Event> &listing, bool haveListing, const audio::Status &status);
     void onExpiry();
 
 private:
@@ -98,6 +109,9 @@ private:
     QVector<audio::Event> m_events; // newest first
     bool m_reachable = false;
     bool m_polling = false;
+    bool m_showAll = false;
+    bool m_primedBorders = false;
+    int m_limit = kPageSize;
     bool m_notify = true;
     bool m_pauseNotified = false;
     int m_revision = 0;

@@ -18,6 +18,7 @@ namespace rl::audio {
 
 inline constexpr const char *kRaisedVoice = "raised_voice";
 inline constexpr const char *kThreatSpeech = "threat_speech";
+inline constexpr const char *kSpeech = "speech"; // plain transcribed speech: kept, not an alert
 
 struct Event {
     QString id;          // "<epoch>-<hex>", also the clip's name on the server
@@ -27,6 +28,12 @@ struct Event {
     QString scoreText;   // human-readable score for the trigger(s)
     QString transcript;  // empty when speech-to-text did not run (raised-voice events)
     bool hasClip = false;
+    // An alert (raised voice or threat speech), as opposed to plain speech. Only these
+    // light the red border or notify.
+    bool flagged() const
+    {
+        return triggers.contains(QLatin1String(kRaisedVoice)) || triggers.contains(QLatin1String(kThreatSpeech));
+    }
 };
 
 struct Status {
@@ -44,7 +51,8 @@ Status parseStatus(const Json &status);
 // classifier hears volume and phrases, not intent.
 QString triggerText(const QStringList &triggers);
 
-QString eventsUrl(const QString &host, int port);
+// limit is capped by the server at 500; `before` (epoch s, 0 = none) pages back.
+QString eventsUrl(const QString &host, int port, int limit = 100, double before = 0, bool flaggedOnly = false);
 QString statusUrl(const QString &host, int port);
 QString resumeUrl(const QString &host, int port);
 QString clipUrl(const QString &host, int port, const QString &eventId);

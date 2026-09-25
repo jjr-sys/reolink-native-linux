@@ -91,14 +91,24 @@ QString triggerText(const QStringList &triggers)
         parts << QObject::tr("Loud voice");
     if (triggers.contains(QLatin1String(kThreatSpeech)))
         parts << QObject::tr("Threatening words");
-    return parts.isEmpty() ? QObject::tr("Audio event") : parts.join(QStringLiteral(" + "));
+    if (parts.isEmpty())
+        return triggers.contains(QLatin1String(kSpeech)) ? QObject::tr("Speech") : QObject::tr("Audio event");
+    return parts.join(QStringLiteral(" + "));
 }
 
 static QString base(const QString &host, int port)
 {
     return QStringLiteral("http://%1:%2").arg(host).arg(port);
 }
-QString eventsUrl(const QString &host, int port) { return base(host, port) + QStringLiteral("/events"); }
+QString eventsUrl(const QString &host, int port, int limit, double before, bool flaggedOnly)
+{
+    QString url = base(host, port) + QStringLiteral("/events?limit=%1").arg(limit);
+    if (before > 0)
+        url += QStringLiteral("&before=%1").arg(QString::number(before, 'f', 3));
+    if (flaggedOnly)
+        url += QStringLiteral("&flagged=1");
+    return url;
+}
 QString statusUrl(const QString &host, int port) { return base(host, port) + QStringLiteral("/status"); }
 QString resumeUrl(const QString &host, int port) { return base(host, port) + QStringLiteral("/resume"); }
 QString clipUrl(const QString &host, int port, const QString &eventId)
@@ -147,6 +157,8 @@ QVector<Event> AlertTracker::update(const QVector<Event> &events, double now)
         if (m_seen.contains(e.id))
             continue;
         m_seen.insert(e.id);
+        if (!e.flagged())
+            continue; // plain speech is stored, not alerted
         // Backlog events keep their own time; live ones count from arrival.
         const double at = m_primed ? now : e.time;
         const double until = at + kQuietSecs;

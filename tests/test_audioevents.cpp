@@ -7,9 +7,10 @@ using rl::Json;
 
 static Json J(QByteArray s) { return Json::parse(s.replace('\'', '"').toStdString()); }
 
-static Event ev(const char *id, double t, const char *cam = "kitchen")
+static Event ev(const char *id, double t, const char *cam = "kitchen", bool flagged = true)
 {
     Event e;
+    e.triggers = QStringList{flagged ? "raised_voice" : "speech"};
     e.id = id;
     e.time = t;
     e.camera = cam;
@@ -62,6 +63,26 @@ private slots:
         s = parseStatus(J("{'transcription_paused':false,'paused_reason':null}"));
         QVERIFY(s.ok && !s.transcriptionPaused && s.pausedReason.isEmpty());
         QVERIFY(!parseStatus(J("{'error':'unauthorized'}")).ok);
+    }
+    void triggerText_plainSpeech()
+    {
+        QCOMPARE(triggerText({"speech"}), QString("Speech"));
+        QVERIFY(!ev("a", 1, "k", false).flagged());
+        QVERIFY(ev("a", 1).flagged());
+    }
+    void url_paging()
+    {
+        QCOMPARE(eventsUrl("h", 8090), QString("http://h:8090/events?limit=100"));
+        QCOMPARE(eventsUrl("h", 8090, 200, 1790000000.5, true),
+                 QString("http://h:8090/events?limit=200&before=1790000000.500&flagged=1"));
+    }
+    void tracker_plainSpeechNeverAlertsOrNotifies()
+    {
+        AlertTracker t;
+        t.update({}, 1000);
+        const auto fresh = t.update({ev("s", 0, "patio", false)}, 1000);
+        QVERIFY(fresh.isEmpty());
+        QVERIFY(!t.active("patio", 1000));
     }
     void triggerText_names()
     {
