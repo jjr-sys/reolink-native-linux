@@ -301,7 +301,9 @@ void AudioMonitor::fetchClip(const QString &eventId)
             // The id comes from the server; keep only what is safe in a file name.
             QString safe = eventId;
             safe.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_-]")), QStringLiteral("_"));
-            path = dir + QLatin1Char('/') + safe + QStringLiteral(".wav");
+            // Clips are Opus in Ogg (older ones WAV); the container tells them apart.
+            const bool ogg = r.body.startsWith("OggS");
+            path = dir + QLatin1Char('/') + safe + (ogg ? QStringLiteral(".ogg") : QStringLiteral(".wav"));
             QFile f(path);
             if (!f.open(QIODevice::WriteOnly) || f.write(r.body) != r.body.size()) {
                 error = QObject::tr("could not save the clip");
@@ -323,7 +325,7 @@ void AudioMonitor::fetchClip(const QString &eventId)
 void AudioMonitor::discardClips()
 {
     const QDir dir(m_clipDir.path());
-    for (const QString &f : dir.entryList({QStringLiteral("*.wav")}, QDir::Files))
+    for (const QString &f : dir.entryList({QStringLiteral("*.wav"), QStringLiteral("*.ogg")}, QDir::Files))
         QFile::remove(dir.filePath(f));
 }
 
