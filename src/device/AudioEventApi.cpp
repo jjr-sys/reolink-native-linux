@@ -60,6 +60,8 @@ QVector<Event> parseEvents(const Json &events)
         if (ev.id.isEmpty() || ev.camera.isEmpty())
             continue;
         ev.time = e["time"].get<double>();
+        ev.start = e.contains("start") && e["start"].is_number() ? e["start"].get<double>() : ev.time;
+        ev.end = e.contains("end") && e["end"].is_number() ? e["end"].get<double>() : ev.time;
         if (e.contains("triggers") && e["triggers"].is_array())
             for (const Json &t : e["triggers"])
                 if (t.is_string())

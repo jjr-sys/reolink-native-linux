@@ -34,6 +34,15 @@ private slots:
         QVERIFY(v[0].transcript.isEmpty());
         QVERIFY(v[0].hasClip);
     }
+    void parse_footageSpanDefaultsToEventTime()
+    {
+        auto v = parseEvents(J("[{'id':'a','time':100,'camera':'k','start':90.5,'end':99}]"));
+        QCOMPARE(v[0].start, 90.5);
+        QCOMPARE(v[0].end, 99.0);
+        v = parseEvents(J("[{'id':'a','time':100,'camera':'k'}]"));
+        QCOMPARE(v[0].start, 100.0);
+        QCOMPARE(v[0].end, 100.0);
+    }
     void parse_threatSpeechEvent()
     {
         const auto v = parseEvents(J("[{'id':'a-b','time':5,'camera':'kitchen','triggers':['threat_speech'],"

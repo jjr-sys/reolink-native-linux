@@ -176,6 +176,7 @@ ApplicationWindow {
                 EventsPage {
                     onJumpToPlayback: (hostId, channel, timestamp) =>
                         window.openEventPlayback(hostId, channel, timestamp)
+                    onOpenFootage: (camera, when, url) => clipDialog.openClip(camera, when, url)
                 }
                 DeviceSettingsPage { id: settingsPage }
             }

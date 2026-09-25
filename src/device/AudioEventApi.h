@@ -23,6 +23,8 @@ inline constexpr const char *kSpeech = "speech"; // plain transcribed speech: ke
 struct Event {
     QString id;          // "<epoch>-<hex>", also the clip's name on the server
     double time = 0;     // epoch seconds, server clock
+    double start = 0;    // the audio's span, for finding it in the NVR's recording (time when absent)
+    double end = 0;
     QString camera;      // the service's camera key, e.g. "kitchen"
     QStringList triggers;
     QString scoreText;   // human-readable score for the trigger(s)

@@ -193,6 +193,12 @@ void ClipLoader::load(const QString &url)
     watcher->setFuture(QtConcurrent::run([url, raw, done]() -> Result {
         Result r;
         QString err;
+        if (url.startsWith(QLatin1String("file:"))) { // already on disk (an NVR download)
+            r.durationMs = remuxToIndexedMp4(QUrl(url).toLocalFile(), done, &err);
+            if (r.durationMs < 0)
+                r.error = err;
+            return r;
+        }
         const QByteArray body = frigate::httpGet(url, kDownloadTimeoutMs, &err);
         if (body.isEmpty()) {
             r.error = err.isEmpty() ? QObject::tr("the server sent an empty clip") : err;

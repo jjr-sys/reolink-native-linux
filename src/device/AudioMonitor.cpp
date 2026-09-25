@@ -122,6 +122,9 @@ QVariant AudioMonitor::data(const QModelIndex &index, int role) const
     case TranscriptRole: return e.transcript;
     case HasClipRole: return e.hasClip;
     case FlaggedRole: return e.flagged();
+    case StartRole: return static_cast<qint64>(e.start);
+    case EndRole: return static_cast<qint64>(e.end);
+    case RawCameraRole: return e.camera;
     }
     return {};
 }
@@ -130,7 +133,8 @@ QHash<int, QByteArray> AudioMonitor::roleNames() const
 {
     return {{IdRole, "eventId"},        {TimestampRole, "timestamp"}, {TimeTextRole, "timeText"},
             {CameraRole, "camera"},     {TriggerTextRole, "triggerText"}, {TriggersRole, "triggers"},
-            {ScoreTextRole, "scoreText"}, {TranscriptRole, "transcript"}, {HasClipRole, "hasClip"}, {FlaggedRole, "flagged"}};
+            {ScoreTextRole, "scoreText"}, {TranscriptRole, "transcript"}, {HasClipRole, "hasClip"}, {FlaggedRole, "flagged"},
+            {StartRole, "startTime"}, {EndRole, "endTime"}, {RawCameraRole, "cameraKey"}};
 }
 
 void AudioMonitor::setNotificationsEnabled(bool on)

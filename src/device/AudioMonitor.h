@@ -44,7 +44,7 @@ public:
     static constexpr int kMaxLimit = 500;
 
     enum Role { IdRole = Qt::UserRole + 1, TimestampRole, TimeTextRole, CameraRole, TriggerTextRole,
-                TriggersRole, ScoreTextRole, TranscriptRole, HasClipRole, FlaggedRole };
+                TriggersRole, ScoreTextRole, TranscriptRole, HasClipRole, FlaggedRole, StartRole, EndRole, RawCameraRole };
 
     explicit AudioMonitor(CredentialStore *credentials, QObject *parent = nullptr);
     ~AudioMonitor() override;
