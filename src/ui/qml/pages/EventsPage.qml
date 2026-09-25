@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtMultimedia
 import ReolinkApp
 import ReolinkApp.Core
 
@@ -49,6 +50,34 @@ Item {
 
     onVisibleChanged: if (visible) Events.markAllRead()
 
+    // Audio events (raised voice / threat speech) come from the audio service, not the
+    // detection inbox, so they are a separate view. Shown only when the service is set up.
+    property bool showAudio: false
+    property string playingId: ""
+    property string clipError: ""
+    Connections {
+        target: AudioAlerts
+        function onClipReady(eventId, path, error) {
+            if (eventId !== page.playingId) return;
+            if (path.length > 0) { clipPlayer.source = "file://" + path; clipPlayer.play(); }
+            else { page.clipError = error; page.playingId = ""; }
+        }
+    }
+    onShowAudioChanged: if (!showAudio) stopClip()
+    function stopClip() { clipPlayer.stop(); clipPlayer.source = ""; playingId = ""; AudioAlerts.discardClips(); }
+    function toggleClip(id) {
+        clipError = "";
+        if (playingId === id) { stopClip(); return; }
+        stopClip();
+        playingId = id;
+        AudioAlerts.fetchClip(id);
+    }
+    MediaPlayer {
+        id: clipPlayer
+        audioOutput: AudioOutput {}
+        onPlaybackStateChanged: if (playbackState === MediaPlayer.StoppedState && source.toString() !== "") page.playingId = ""
+    }
+
     ColumnLayout {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
@@ -94,8 +123,142 @@ Item {
             }
         }
 
+        // ---- Audio view switch (only when the audio service is set up) ----
+        Row {
+            visible: AudioAlerts.enabled
+            spacing: 6
+            Repeater {
+                model: [ { audio: false, label: qsTr("Detections") },
+                         { audio: true, label: qsTr("Audio") + (AudioAlerts.count > 0 ? " (" + AudioAlerts.count + ")" : "") } ]
+                Rectangle {
+                    required property var modelData
+                    property bool sel: page.showAudio === modelData.audio
+                    implicitWidth: viewText.implicitWidth + 24
+                    height: 30
+                    radius: 15
+                    color: sel ? Theme.accentDim : Theme.surface
+                    border.color: sel ? Theme.accent : Theme.border
+                    Text { id: viewText; anchors.centerIn: parent; text: parent.modelData.label
+                           color: parent.sel ? Theme.text : Theme.textMuted; font.pixelSize: 12 }
+                    TapHandler { onTapped: page.showAudio = parent.modelData.audio }
+                }
+            }
+        }
+
+        // ---- Transcription paused notice ----
+        Rectangle {
+            visible: AudioAlerts.enabled && AudioAlerts.transcriptionPaused
+            Layout.fillWidth: true
+            implicitHeight: pausedRow.implicitHeight + 16
+            radius: Theme.radius
+            color: Theme.surface
+            border.color: Theme.danger
+            RowLayout {
+                id: pausedRow
+                anchors.fill: parent
+                anchors.margins: 8
+                spacing: 10
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    color: Theme.text
+                    font.pixelSize: 12
+                    text: qsTr("Transcription paused: the server was overloaded. Loud voices are still detected, but threatening words are not until you turn it back on.")
+                          + (AudioAlerts.pausedReason.length > 0 ? " (" + AudioAlerts.pausedReason + ")" : "")
+                }
+                Rectangle {
+                    implicitWidth: resumeText.implicitWidth + 20
+                    height: 28
+                    radius: Theme.radius
+                    color: resumeHover.hovered ? Theme.accentDim : "transparent"
+                    border.color: Theme.accent
+                    Text { id: resumeText; anchors.centerIn: parent; text: qsTr("Turn back on"); color: Theme.text; font.pixelSize: 12 }
+                    HoverHandler { id: resumeHover }
+                    TapHandler { onTapped: AudioAlerts.resumeTranscription() }
+                }
+            }
+        }
+
+        // ---- Audio events ----
+        Text {
+            visible: page.showAudio && AudioAlerts.enabled && !AudioAlerts.reachable
+            color: Theme.textMuted
+            font.pixelSize: 12
+            text: qsTr("The audio service is not answering.")
+        }
+        Text {
+            visible: page.showAudio && page.clipError.length > 0
+            color: Theme.danger
+            font.pixelSize: 12
+            text: page.clipError
+        }
+        ListView {
+            id: audioList
+            visible: page.showAudio
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            model: AudioAlerts
+            clip: true
+            spacing: 6
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            delegate: Rectangle {
+                required property string eventId
+                required property string camera
+                required property string timeText
+                required property string triggerText
+                required property string scoreText
+                required property string transcript
+                required property bool hasClip
+                width: ListView.view.width
+                height: audioCol.implicitHeight + 20
+                radius: Theme.radius
+                color: Theme.surface
+                border.color: Qt.rgba(1, 1, 1, 0.04)
+                Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                            width: 3; radius: Theme.radius; color: Theme.danger }
+                ColumnLayout {
+                    id: audioCol
+                    anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                    anchors.leftMargin: 14; anchors.rightMargin: 14; anchors.topMargin: 10
+                    spacing: 4
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text { text: triggerText; color: Theme.danger; font.pixelSize: 14; font.bold: true }
+                        Text { text: camera; color: Theme.text; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Text { text: timeText; color: Theme.textMuted; font.pixelSize: 12 }
+                    }
+                    Text { visible: scoreText.length > 0; text: scoreText; color: Theme.textMuted; font.pixelSize: 11 }
+                    Text {
+                        visible: transcript.length > 0
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        text: "\u201c" + transcript + "\u201d"
+                        color: Theme.text
+                        font.pixelSize: 13
+                        font.italic: true
+                    }
+                    Text {
+                        visible: hasClip
+                        text: page.playingId === eventId ? qsTr("\u25a0 Stop clip") : qsTr("\u25b6 Play clip")
+                        color: Theme.accent
+                        font.pixelSize: 12
+                        TapHandler { onTapped: page.toggleClip(eventId) }
+                    }
+                }
+            }
+            Text {
+                anchors.centerIn: parent
+                visible: AudioAlerts.count === 0
+                text: qsTr("No audio events")
+                color: Theme.textMuted
+                font.pixelSize: 13
+            }
+        }
+
         // ---- Filter chips ----
         Flow {
+            visible: !page.showAudio
             Layout.fillWidth: true
             spacing: 6
             Repeater {
@@ -171,6 +334,7 @@ Item {
 
         // ---- Event list ----
         ListView {
+            visible: !page.showAudio
             Layout.fillWidth: true
             Layout.fillHeight: true
             model: Events

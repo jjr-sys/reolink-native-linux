@@ -414,6 +414,21 @@ Rectangle {
         border.width: 3
     }
 
+    // Audio alert (hostile-audio prototype): red while this camera's audio service has
+    // flagged a raised voice or threat speech, until it has been quiet for 5 minutes.
+    readonly property bool audioAlert: {
+        AudioAlerts.alertRevision; // re-evaluate when any alert window changes
+        return label !== "" && AudioAlerts.isAlerting(label);
+    }
+    Rectangle {
+        visible: root.audioAlert
+        z: 21
+        anchors.fill: parent
+        color: "transparent"
+        border.color: Theme.danger
+        border.width: 4
+    }
+
     // Why this camera is here (Activity mode): "Person · 14:02".
     Rectangle {
         visible: root.activityKind !== ""

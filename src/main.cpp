@@ -9,6 +9,7 @@
 #include "device/DeviceManager.h"
 #include "device/DownloadQueue.h"
 #include "device/ActivityGrid.h"
+#include "device/AudioMonitor.h"
 #include "device/EventManager.h"
 #include "media/StreamPlayer.h"
 #include "media/ClipLoader.h"
@@ -163,6 +164,7 @@ int main(int argc, char *argv[])
     rl::CredentialStore credentials;
     rl::DeviceManager devices(&database, &credentials);
     rl::EventManager events(&database, &devices);
+    rl::AudioMonitor audioAlerts(&credentials);
     rl::ActivityGrid activityGrid(&devices);
     rl::DeviceDiscovery discovery;
     rl::Updater updater;
@@ -174,6 +176,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::TalkSession>("ReolinkApp.Core", 1, 0, "TalkSession");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Events", &events);
+    qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "AudioAlerts", &audioAlerts);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Activity", &activityGrid);
     // RL_MOCK_ACTIVITY="person:1:3@2;motion:1:4@4" plays scripted detections (Activity mode only).
     if (qEnvironmentVariableIsSet("RL_MOCK_ACTIVITY"))

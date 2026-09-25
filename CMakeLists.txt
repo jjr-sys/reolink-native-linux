@@ -39,6 +39,7 @@ add_library(reolink_core STATIC
     src/device/ActivityPolicy.h src/device/ActivityPolicy.cpp
     src/device/FrigateApi.h src/device/FrigateApi.cpp
     src/device/AudioEventApi.h src/device/AudioEventApi.cpp
+    src/device/AudioMonitor.h src/device/AudioMonitor.cpp
     src/device/ActivityGrid.h src/device/ActivityGrid.cpp
     src/device/DownloadPlan.h src/device/DownloadSource.h src/device/DownloadQueue.h src/device/DownloadQueue.cpp
     src/device/DeviceManager.h src/device/DeviceManager.cpp
