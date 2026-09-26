@@ -15,13 +15,17 @@ Dialog {
     id: dialog
     modal: true
     width: Math.min(900, Overlay.overlay ? Overlay.overlay.width - 60 : 900)
-    height: width * 9 / 16 + 240
+    height: width * 9 / 16 + 240 + (transcript !== "" ? 70 : 0)
     anchors.centerIn: Overlay.overlay
     padding: Theme.spacing * 2
 
     property string camera: ""
     property string when: ""
     property string url: ""
+    // Audio events: what was said, and the state of an NVR fetch still in progress.
+    property string transcript: ""
+    property bool pending: false
+    property string pendingError: ""
 
     // Loop segment, in ms. loopEnd <= 0 means "to the end of the clip".
     property bool loopOn: false
@@ -42,13 +46,40 @@ Dialog {
     // Events page that is a row, whose tap opens the clip again. Ignore opens that arrive
     // right after a close.
     property double closedAt: 0
-    function openClip(cameraName, timeText, clipUrl) {
+    function openClip(cameraName, timeText, clipUrl, transcriptText) {
         if (Date.now() - closedAt < 500)
             return;
         camera = cameraName;
         when = timeText;
         url = clipUrl;
+        transcript = transcriptText || "";
+        pending = false;
+        pendingError = "";
         open();
+    }
+    // Opens at once while the recording is still being fetched from the NVR; provide() or
+    // fail() finish it.
+    function openPending(cameraName, timeText, transcriptText) {
+        if (Date.now() - closedAt < 500)
+            return;
+        camera = cameraName;
+        when = timeText;
+        url = "";
+        transcript = transcriptText || "";
+        pending = true;
+        pendingError = "";
+        open();
+    }
+    function provide(clipUrl) {
+        if (!visible) return;
+        pending = false;
+        url = clipUrl;
+        play();
+    }
+    function fail(message) {
+        if (!visible) return;
+        pending = false;
+        pendingError = message;
     }
     function play() {
         // Frigate's clip is an unindexed stream (no duration, no seeking). Fetch it and
@@ -92,8 +123,8 @@ Dialog {
         return m + ":" + (r < 10 ? "0" : "") + r.toFixed(1);
     }
 
-    onOpened: { body.forceActiveFocus(); play(); }
-    onClosed: { closedAt = Date.now(); loader.cancel(); player.stop(); player.source = ""; }
+    onOpened: { body.forceActiveFocus(); if (!pending && url !== "") play(); }
+    onClosed: { closedAt = Date.now(); pending = false; pendingError = ""; loader.cancel(); player.stop(); player.source = ""; }
 
     title: qsTr("Detection clip")
     background: Rectangle { color: Theme.surface; border.color: Theme.border; radius: Theme.radius }
@@ -189,15 +220,30 @@ Dialog {
             TapHandler { onTapped: dialog.togglePause() }
             Text {
                 anchors.centerIn: parent
-                visible: dialog.failed || dialog.loading
+                visible: dialog.failed || dialog.loading || dialog.pending || dialog.pendingError !== ""
                 width: parent.width - 40
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
-                color: dialog.failed ? Theme.danger : Theme.textMuted
+                color: (dialog.failed || dialog.pendingError !== "") ? Theme.danger : Theme.textMuted
                 font.pixelSize: 13
-                text: dialog.failed ? qsTr("Could not play the clip: %1").arg(dialog.failText)
-                                    : qsTr("Getting the clip…")
+                text: dialog.pendingError !== "" ? dialog.pendingError
+                      : dialog.failed ? qsTr("Could not play the clip: %1").arg(dialog.failText)
+                      : dialog.pending ? qsTr("Fetching the recording from the NVR…")
+                                       : qsTr("Getting the clip…")
             }
+        }
+
+        // ---- What was said (audio events) ----
+        Text {
+            visible: dialog.transcript !== ""
+            Layout.fillWidth: true
+            Layout.maximumHeight: 64
+            wrapMode: Text.Wrap
+            elide: Text.ElideRight
+            color: Theme.text
+            font.pixelSize: 14
+            font.italic: true
+            text: "\u201c" + dialog.transcript + "\u201d"
         }
 
         // ---- Scrub bar ----
