@@ -90,6 +90,16 @@ Window {
         muted: !win.audioOn
     }
     property bool bcFallback: false // Baichuan slot busy -> RTSP main this round
+    // Baichuan's custom packet source is deliberately not auto-retried by
+    // StreamPlayer's worker on a stall (see LivePane.qml) — a mid-session drop ends
+    // the worker for good, leaving this window frozen unless something re-requests
+    // the session. Counts unprompted restarts below; resets once frames arrive.
+    property int bcRetries: 0
+    Timer {
+        id: bcRetryTimer
+        interval: 1500
+        onTriggered: win.startStream()
+    }
     function startStream() {
         if (win.deviceRow < 0)
             return;
@@ -109,9 +119,21 @@ Window {
     Connections {
         target: player
         function onStateChanged() {
-            if (player.state === StreamPlayer.Error && !win.bcFallback) {
-                win.bcFallback = true;
-                win.startStream();
+            if (player.state === StreamPlayer.Streaming) {
+                win.bcRetries = 0;
+            } else if ((player.state === StreamPlayer.Stopped || player.state === StreamPlayer.Error)
+                       && !win.bcFallback) {
+                // Baichuan's custom packet source is deliberately not auto-retried by
+                // StreamPlayer's worker on a stall — this covers both that unprompted
+                // end and the original "couldn't get the slot" failure. Retry a
+                // couple of times (worth it for HD quality) before giving up to RTSP.
+                if (win.bcRetries < 3) {
+                    win.bcRetries++;
+                    bcRetryTimer.restart();
+                } else {
+                    win.bcFallback = true;
+                    win.startStream();
+                }
             }
         }
     }

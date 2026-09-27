@@ -5,6 +5,7 @@
 #include "core/Paths.h"
 #include "device/FrigateApi.h"
 #include "device/QuickReply.h"
+#include "media/ClipLoader.h"
 #include "media/StreamPlayer.h"
 #include "protocol/BaichuanChannels.h"
 #include "protocol/BaichuanClient.h"
@@ -60,16 +61,11 @@ QString viewModeKey(qint64 hostId, int channel)
 {
     return QStringLiteral("viewMode/%1:%2").arg(hostId).arg(channel);
 }
-// Frigate names its cameras like config keys ("bosch_camera"). Show those as a person
-// would write them; the raw key stays in the entry, since Frigate's URLs need it.
+// Frigate names its cameras like config keys ("bosch_camera"); show those as a person
+// would write them. The raw key stays in the entry, since Frigate's URLs need it.
 QString displayName(const QString &name, const QString &kind)
 {
-    if (kind != QLatin1String("frigate") || name.contains(QLatin1Char(' ')))
-        return name;
-    QStringList words = name.split(QRegularExpression(QStringLiteral("[_-]+")), Qt::SkipEmptyParts);
-    for (QString &w : words)
-        w[0] = w[0].toUpper();
-    return words.join(QLatin1Char(' '));
+    return kind == QLatin1String("frigate") ? frigate::displayCameraName(name) : name;
 }
 const QStringList kViewModes{"fisheye", "ptz", "panorama", "dual", "quad", "fisheye_ptz"};
 // Load a camera's saved fisheye settings into a device entry.
@@ -252,7 +248,8 @@ void DeviceManager::applyConnectivity(qint64 hostId, bool transportOk,
                 e.online = it.value();
                 e.status = it.value() ? tr("online") : tr("offline");
                 emit dataChanged(index(i), index(i));
-                emit connectivityChanged(hostId, e.channel, e.chanName, it.value());
+                emit connectivityChanged(hostId, e.channel, displayName(e.chanName, e.rec.kind),
+                                         it.value());
             }
             break;
         }
@@ -530,6 +527,8 @@ QVariant DeviceManager::data(const QModelIndex &index, int role) const
         return e.battery.present ? e.battery.percent : -1;
     case BatteryChargingRole:
         return e.battery.charging;
+    case HostNameRole:
+        return e.rec.name;
     }
     return {};
 }
@@ -560,6 +559,7 @@ QHash<int, QByteArray> DeviceManager::roleNames() const
         {RotationRole, "rotationOverride"},
         {IsFisheyeRole, "isFisheye"},
         {ViewModeRole, "viewMode"},
+        {HostNameRole, "hostName"},
     };
 }
 
@@ -1067,7 +1067,8 @@ void DeviceManager::pollFrigate()
                         if (!frigate::startsNewBurst(last, ev.start))
                             continue;
                         last = ev.start;
-                        emit detectionEvent(hostId, channelOf.value(ev.camera), type, ev.camera);
+                        emit detectionEvent(hostId, channelOf.value(ev.camera), type,
+                                           displayName(ev.camera, QStringLiteral("frigate")));
                     }
                     m_frigateWatermark[hostId] = frigate::newWatermark(after, events);
                 },
@@ -1679,13 +1680,45 @@ DownloadSource DeviceManager::downloadSource(int row)
     return s;
 }
 
+int DeviceManager::rowOfName(const QString &name) const
+{
+    const QString key = name.trimmed().toLower();
+    if (key.isEmpty())
+        return -1;
+    for (int i = 0; i < m_entries.size(); ++i) {
+        const Entry &e = m_entries.at(i);
+        if (!isDirectKind(e.rec.kind) && (e.chanName.isEmpty() ? e.rec.name : e.chanName).trimmed().toLower() == key)
+            return i;
+    }
+    return -1;
+}
+
 void DeviceManager::exportClip(int row, qint64 startEpoch, int durationSecs)
+{
+    runExport(row, startEpoch, durationSecs, false);
+}
+
+void DeviceManager::fetchFootage(int row, qint64 startEpoch, int durationSecs)
+{
+    runExport(row, startEpoch, durationSecs, true);
+}
+
+void DeviceManager::runExport(int row, qint64 startEpoch, int durationSecs, bool footage)
 {
     auto client = clientFor(row);
     if (!client || row < 0 || row >= m_entries.size() || startEpoch <= 0) {
-        emit clipExportFailed(row, tr("device not ready"));
+        if (footage)
+            emit footageFailed(row, tr("device not ready"));
+        else
+            emit clipExportFailed(row, tr("device not ready"));
         return;
     }
+    if (footage) { // one temporary copy at a time
+        if (!m_lastFootage.isEmpty())
+            QFile::remove(m_lastFootage);
+        m_lastFootage.clear();
+    }
+    const QString footageDir = m_footageDir.path();
     const Entry &e = m_entries.at(row);
     const int ch = e.channel;
     const QString host = e.rec.addr;
@@ -1699,44 +1732,106 @@ void DeviceManager::exportClip(int row, qint64 startEpoch, int durationSecs)
     const QString startStamp = start.toString(QStringLiteral("yyyyMMddHHmmss"));
 
     m_pending.addFuture(QtConcurrent::run([this, client, ch, row, host, port, https, start, end,
-                                           startStamp, safe] {
+                                           startStamp, safe, footage, footageDir] {
+        // The NVR's clip-cutting API (NvrDownload's fragment_* files) refuses every request
+        // as of 2026-09-27 (closes the connection with no reply) even though it worked the
+        // day before; a firmware bug of the same shape is documented for other Reolink NVR
+        // models (github.com/home-assistant/core#179099). Its own recording files still
+        // download fine, so: find the file with Search, download the whole thing, then cut
+        // the wanted moment out of it locally. Slower (the whole hour-file, not just a clip)
+        // but uses only the download path we have confirmed still works.
         QString error;
         QString saved;
-        const api::BatchResult b =
-            client->call(Json::array({api::nvrDownloadBody(ch, start, end, QStringLiteral("main"))}));
-        if (b.transportOk && !b.results.isEmpty() && b.results.first().ok) {
-            const QVector<api::DownloadFile> files = api::parseNvrDownload(b.results.first().value);
-            api::DownloadFile pick;
-            for (const api::DownloadFile &f : files)
-                if (f.fileName.contains(startStamp)) { pick = f; break; }
-            if (pick.fileName.isEmpty())
-                for (const api::DownloadFile &f : files)
-                    if (f.size > pick.size)
-                        pick = f;
-            if (pick.fileName.isEmpty()) {
-                error = tr("no recording covers this moment");
-            } else {
-                const QString url =
-                    api::downloadUrl(host, port, https, pick.fileName, client->token());
-                const QString path = Paths::recordingsDir() + u'/' + safe + u'_'
-                                     + start.toString(QStringLiteral("yyyyMMdd_hhmmss"))
-                                     + QStringLiteral(".mp4");
-                QString dlErr;
-                if (client->downloadToFile(url, path, 300, &dlErr)) // NVR downloads are slow
-                    saved = path;
-                else
-                    error = dlErr.isEmpty() ? tr("download failed") : dlErr;
+        const double wantStart = start.toSecsSinceEpoch();
+        const double wantDur = qMax<qint64>(2, start.secsTo(end));
+        auto attempt = [&](const QString &stream) {
+            error.clear();
+            // Widen the search window a little: a request exactly on a file boundary can
+            // come back empty on some firmware.
+            const api::BatchResult b = client->callSlow(
+                Json::array({api::searchBody(ch, start.addSecs(-60), end.addSecs(60), stream)}), 60);
+            if (!(b.transportOk && !b.results.isEmpty() && b.results.first().ok)) {
+                error = b.error.isEmpty() ? tr("search failed") : b.error;
+                return;
             }
-        } else {
-            error = b.error.isEmpty() ? tr("clip request failed") : b.error;
+            const api::SearchResult sr = api::parseSearch(b.results.first().value);
+            const api::RecordingFile *pick = nullptr;
+            for (const api::RecordingFile &f : sr.files) {
+                if (f.name.isEmpty() || !f.start.isValid() || !f.end.isValid())
+                    continue;
+                if (f.start.toSecsSinceEpoch() <= start.toSecsSinceEpoch()
+                    && start.toSecsSinceEpoch() < f.end.toSecsSinceEpoch()) {
+                    pick = &f;
+                    break;
+                }
+            }
+            if (!pick) {
+                error = tr("no recording covers this moment");
+                return;
+            }
+            const double offset = wantStart - pick->start.toSecsSinceEpoch();
+            const QString url = api::downloadUrl(host, port, https, pick->name, client->token());
+            const QString rawPath = footageDir + u'/' + QStringLiteral("raw-") + safe + QStringLiteral(".mp4");
+            QString dlErr;
+            QElapsedTimer timer;
+            timer.start();
+            // The NVR ignores HTTP Range (confirmed 2026-09-27: a Range request still gets
+            // the whole file), so a partial fetch has to be done by stopping the download
+            // ourselves once we're well past the moment wanted, instead of asking for less.
+            // Estimate from this file's own size and span (its bitrate is far steadier than
+            // guessing one); generous padding covers bitrate bursts and a slightly-off pick.
+            qint64 maxBytes = -1;
+            if (footage && pick->size > 0 && pick->start.isValid() && pick->end.isValid()) {
+                const double fileSecs = pick->start.secsTo(pick->end);
+                if (fileSecs > 0) {
+                    const double wantedEnd = qMin(fileSecs, offset + wantDur + 5.0);
+                    maxBytes = static_cast<qint64>(pick->size * (wantedEnd / fileSecs) * 1.5) + (512 << 10);
+                    maxBytes = qBound<qint64>(1 << 20, maxBytes, pick->size);
+                }
+            }
+            // No stall-based unlimited wait here (unlike the Downloads manager): footage is
+            // fetched for an instant preview, so a slow multi-hundred-MB file should time out
+            // rather than hang the request.
+            if (!client->downloadToFile(url, rawPath, footage ? 120 : 300, &dlErr, {}, 0, nullptr, maxBytes)) {
+                error = tr("download: %1").arg(dlErr.isEmpty() ? tr("download failed") : dlErr);
+                return;
+            }
+            const QString path = (footage ? footageDir : Paths::recordingsDir()) + u'/' + safe + u'_'
+                                 + start.toString(QStringLiteral("yyyyMMdd_hhmmss")) + QStringLiteral(".mp4");
+            QString trimErr;
+            const qint64 ms = trimToIndexedMp4(rawPath, path, qMax(0.0, offset), wantDur, &trimErr);
+            QFile::remove(rawPath);
+            if (ms < 0) {
+                error = tr("trim: %1").arg(trimErr);
+                return;
+            }
+            saved = path;
+            if (footage)
+                qCInfo(lcCore) << "footage fetched (" << stream << "):" << timer.elapsed() << "ms,"
+                               << QFileInfo(path).size() << "bytes";
+        };
+        attempt(footage ? QStringLiteral("sub") : QStringLiteral("main"));
+        if (footage && saved.isEmpty()) {
+            qCWarning(lcCore) << "footage: sub stream failed (" << error << "), trying main";
+            attempt(QStringLiteral("main"));
         }
         QMetaObject::invokeMethod(
             this,
-            [this, row, saved, error] {
-                if (!saved.isEmpty())
+            [this, row, saved, error, footage, start, end] {
+                if (footage && saved.isEmpty())
+                    qCWarning(lcCore) << "footage fetch failed:" << error << "window" << start.toString(Qt::ISODate)
+                                      << "to" << end.toString(Qt::ISODate) << "(now" << QDateTime::currentDateTime().toString(Qt::ISODate) << ")";
+                if (footage) {
+                    m_lastFootage = saved;
+                    if (!saved.isEmpty())
+                        emit footageReady(row, saved);
+                    else
+                        emit footageFailed(row, error);
+                } else if (!saved.isEmpty()) {
                     emit clipExported(row, saved);
-                else
+                } else {
                     emit clipExportFailed(row, error);
+                }
             },
             Qt::QueuedConnection);
     }));
@@ -2205,6 +2300,37 @@ QVariantList DeviceManager::hostIds() const
         if (!ids.contains(e.rec.id))
             ids.append(e.rec.id);
     return ids;
+}
+
+QString DeviceManager::hostName(qint64 hostId) const
+{
+    for (const Entry &e : m_entries)
+        if (e.rec.id == hostId)
+            return e.rec.name;
+    return {};
+}
+
+QStringList DeviceManager::propertyNames() const
+{
+    QStringList names;
+    for (const Entry &e : m_entries)
+        if (!names.contains(e.rec.name))
+            names.append(e.rec.name);
+    return names;
+}
+
+QVariantList DeviceManager::channelsForHost(qint64 hostId) const
+{
+    QVariantList out;
+    for (const Entry &e : m_entries) {
+        if (e.rec.id != hostId)
+            continue;
+        QVariantMap m;
+        m["channel"] = e.channel;
+        m["camera"] = e.chanName;
+        out.append(m);
+    }
+    return out;
 }
 
 void DeviceManager::toggleFloodlight(int row)

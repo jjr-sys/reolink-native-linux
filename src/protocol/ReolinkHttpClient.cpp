@@ -169,10 +169,32 @@ ReolinkHttpClient::HttpResponse ReolinkHttpClient::get(const QString &url, long 
     return resp;
 }
 
+namespace {
+struct TruncatingWrite {
+    FILE *fp;
+    qint64 written = 0;
+    qint64 maxBytes;
+    bool stoppedEarly = false;
+};
+size_t truncatingWriteCb(char *ptr, size_t size, size_t nmemb, void *userdata)
+{
+    auto *w = static_cast<TruncatingWrite *>(userdata);
+    const size_t n = size * nmemb;
+    const size_t wrote = std::fwrite(ptr, 1, n, w->fp);
+    w->written += static_cast<qint64>(wrote);
+    if (w->written >= w->maxBytes) {
+        w->stoppedEarly = true;
+        return 0; // short write: curl aborts with CURLE_WRITE_ERROR, caught as success below
+    }
+    return wrote;
+}
+} // namespace
+
 bool ReolinkHttpClient::downloadToFile(const QString &url, const QString &destPath,
                                        long timeoutSec, QString *error,
                                        const std::function<void(qint64, qint64)> &progress,
-                                       long stallSec, const std::atomic<bool> *cancel)
+                                       long stallSec, const std::atomic<bool> *cancel,
+                                       qint64 maxBytes)
 {
     const QByteArray destUtf8 = destPath.toUtf8();
     FILE *fp = std::fopen(destUtf8.constData(), "wb");
@@ -192,7 +214,13 @@ bool ReolinkHttpClient::downloadToFile(const QString &url, const QString &destPa
     const QByteArray urlUtf8 = url.toUtf8();
     curl_easy_setopt(curl, CURLOPT_URL, urlUtf8.constData());
     curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp); // default fwrite-to-FILE callback
+    TruncatingWrite tw{fp, 0, maxBytes};
+    if (maxBytes > 0) {
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, truncatingWriteCb);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &tw);
+    } else {
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp); // default fwrite-to-FILE callback
+    }
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, kConnectTimeoutSec);
     if (stallSec > 0) {
         // No overall cap: only a transfer that has stalled (under 1 KB/s) gives up.
@@ -218,6 +246,12 @@ bool ReolinkHttpClient::downloadToFile(const QString &url, const QString &destPa
     curl_easy_cleanup(curl);
     std::fclose(fp);
 
+    if (rc == CURLE_WRITE_ERROR && tw.stoppedEarly) {
+        // Deliberate: we had enough of the file and stopped it ourselves.
+        if (error)
+            error->clear();
+        return true;
+    }
     if (rc != CURLE_OK) {
         QFile::remove(destPath);
         if (error)

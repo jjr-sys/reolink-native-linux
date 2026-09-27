@@ -174,6 +174,7 @@ ApplicationWindow {
                 }
                 PlaybackPage { id: playbackPage; active: nav.currentIndex === 1 }
                 EventsPage {
+                    id: eventsPage
                     onJumpToPlayback: (hostId, channel, timestamp) =>
                         window.openEventPlayback(hostId, channel, timestamp)
                     onOpenFootagePending: (camera, when, transcript) => clipDialog.openPending(camera, when, transcript)
@@ -198,7 +199,14 @@ ApplicationWindow {
         nav.currentIndex = 1;
         playbackPage.openAt(hostId, channel, timestamp);
     }
-    ClipDialog { id: clipDialog }
+    ClipDialog {
+        id: clipDialog
+        // The NVR's clip download can be refused; the streamed Playback page still works.
+        onFallbackRequested: {
+            close();
+            window.openEventPlayback(eventsPage.footageHostId, eventsPage.footageChannel, eventsPage.footageStart);
+        }
+    }
     Timer {
         id: openClipTimer
         property int hostId: 0

@@ -23,6 +23,10 @@ struct Event {
 
 // Enabled cameras in /api/config. go2rtc-only streams are not cameras and are ignored.
 QStringList parseCameraNames(const Json &config);
+// Frigate names its cameras like config keys ("bosch_camera"). Show that the way a
+// person would write it; a name that already has a space (e.g. previously stored
+// under an older, already-pretty form) is returned unchanged.
+QString displayCameraName(const QString &name);
 // /api/events reply. Entries without id, camera and start_time are dropped.
 QVector<Event> parseEvents(const Json &events);
 // The app's detection type for a Frigate object label ("person", "vehicle", "pet"),
@@ -45,6 +49,10 @@ inline bool startsNewBurst(double lastRaisedStart, double start)
 inline constexpr int kClipPreSecs = 25;
 inline constexpr int kClipPostSecs = 20;
 QString clipUrl(const QString &host, int port, const QString &camera, qint64 timestamp);
+// The frame Frigate saved for a specific event (its own event id, e.g.
+// "1790171530.03951-kul3vc") — unlike a live snapshot, this is the actual frame from
+// when the event happened, so it's what backfilled history has to use for a thumbnail.
+QString snapshotUrl(const QString &host, int port, const QString &eventId);
 
 // ---- Recordings (Playback page) -------------------------------------------------------
 // Frigate stores ~10 s segments. The timeline wants continuous ranges, and the calendar

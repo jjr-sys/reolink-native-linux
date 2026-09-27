@@ -5,10 +5,21 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QRegularExpression>
 #include <QTimer>
 #include <QUrl>
 
 namespace rl::frigate {
+
+QString displayCameraName(const QString &name)
+{
+    if (name.contains(QLatin1Char(' ')))
+        return name;
+    QStringList words = name.split(QRegularExpression(QStringLiteral("[_-]+")), Qt::SkipEmptyParts);
+    for (QString &w : words)
+        w[0] = w[0].toUpper();
+    return words.join(QLatin1Char(' '));
+}
 
 QStringList parseCameraNames(const Json &config)
 {
@@ -175,6 +186,11 @@ QString clipUrl(const QString &host, int port, const QString &camera, qint64 tim
 QString latestFrameUrl(const QString &host, int port, const QString &camera)
 {
     return base(host, port) + QStringLiteral("/api/") + enc(camera) + QStringLiteral("/latest.jpg");
+}
+
+QString snapshotUrl(const QString &host, int port, const QString &eventId)
+{
+    return base(host, port) + QStringLiteral("/api/events/") + enc(eventId) + QStringLiteral("/snapshot.jpg");
 }
 
 QByteArray httpGet(const QString &url, int timeoutMs, QString *error)

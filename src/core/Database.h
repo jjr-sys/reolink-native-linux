@@ -3,6 +3,7 @@
 #include <QHash>
 #include <QSqlDatabase>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 namespace rl {
@@ -56,9 +57,17 @@ public:
     qint64 addEvent(const EventRecord &rec);
     QVector<EventRecord> recentEvents(int limit = 500) const;
     bool clearEvents();
-    // Retention cap: delete all but the newest `keep` events.
-    bool trimEvents(int keep);
+    // Age-based retention: delete events older than `maxAgeSecs`, returning the
+    // (non-empty) thumbnail paths of the rows removed so the caller can delete
+    // those files too.
+    QStringList purgeEventsOlderThan(qint64 maxAgeSecs);
+    // Safety-valve retention: for one host, delete all but the newest `keep`
+    // events, returning the thumbnail paths of the rows removed. Guards against
+    // a single flooding camera/host growing the store without bound between
+    // age-based purges.
+    QStringList trimHostEvents(qint64 hostId, int keep);
     bool setEventThumbnail(qint64 id, const QString &path);
+    bool setEventCamera(qint64 id, const QString &camera);
 
 private:
     bool migrate();

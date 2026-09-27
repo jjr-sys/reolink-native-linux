@@ -62,10 +62,14 @@ public:
     // up only after that many seconds without meaningful data (a slow link is fine, a dead
     // one is not). `progress(done, total)` is called as bytes arrive (total 0 if unknown);
     // setting `cancel` aborts promptly and removes the partial file.
+    // maxBytes > 0 stops the transfer once that much has been written, treated as success
+    // (not an error, file kept) rather than cancelled or failed — for a server that ignores
+    // HTTP Range and always sends a whole (possibly huge) file when only its start is wanted.
     bool downloadToFile(const QString &url, const QString &destPath, long timeoutSec = 0,
                         QString *error = nullptr,
                         const std::function<void(qint64 done, qint64 total)> &progress = {},
-                        long stallSec = 0, const std::atomic<bool> *cancel = nullptr);
+                        long stallSec = 0, const std::atomic<bool> *cancel = nullptr,
+                        qint64 maxBytes = -1);
 
     bool ensureLogin(QString *error = nullptr);
     void logout();

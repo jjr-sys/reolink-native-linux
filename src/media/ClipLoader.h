@@ -13,6 +13,13 @@ namespace rl {
 // and no index, which a player can neither measure nor seek.
 qint64 remuxToIndexedMp4(const QString &src, const QString &dst, QString *error = nullptr);
 
+// Copies [offsetSecs, offsetSecs+durationSecs) of `src` into an indexed, faststart MP4 at
+// `dst`, re-timestamped to start at zero. Stream-copy (no re-encode), audio and video kept
+// in step. Seeks near `offsetSecs` first, so this is fast even on a large source file.
+// Returns the clip's length in ms, or -1 with `error` set.
+qint64 trimToIndexedMp4(const QString &src, const QString &dst, double offsetSecs,
+                        double durationSecs, QString *error = nullptr);
+
 // Fetches a Frigate clip to a temporary file and makes it seekable, so the clip dialog
 // can play it with a scrub bar. The server sends the clip chunked (no length, no ranges),
 // so playing the URL directly cannot seek. Clips are a few MB.

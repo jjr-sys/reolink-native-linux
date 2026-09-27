@@ -11,6 +11,9 @@ import ReolinkApp.Core
 Item {
     id: page
     signal jumpToPlayback(var hostId, var channel, var timestamp)
+    signal openFootagePending(string camera, string when, string transcript)
+    signal footageFetched(string url)
+    signal footageFailedMsg(string message)
 
     readonly property int columnWidth: Math.min(width - Theme.spacing * 4, 820)
 
@@ -63,7 +66,44 @@ Item {
             else { page.clipError = error; page.playingId = ""; }
         }
     }
-    onShowAudioChanged: if (!showAudio) stopClip()
+    // The NVR keeps recordings 7 days. Within that, an audio event's picture and sound come
+    // from the NVR itself (fetched over its download API, not a streaming session).
+    readonly property real nvrKeepSecs: 7 * 86400 - 3600
+    property int footageRow: -1
+    property var footageHostId: -1
+    property int footageChannel: 0
+    property real footageStart: 0
+    property string footageWhen: ""
+    property string footageState: ""   // "" | "loading" | error text
+    function footageAvailable(cameraKey, endTime) {
+        return Devices.rowOfName(cameraKey) >= 0 && (Date.now() / 1000 - endTime) < nvrKeepSecs;
+    }
+    function watchFootage(cameraKey, startTime, endTime, whenText, transcript) {
+        var row = Devices.rowOfName(cameraKey);
+        if (row < 0) { footageState = qsTr("Camera not found: no camera named \u201c%1\u201d.").arg(cameraKey); return; }
+        footageRow = row;
+        footageHostId = Devices.hostIdOf(row);
+        footageChannel = Devices.channelOf(row);
+        footageStart = Math.floor(startTime) - 5;
+        footageWhen = whenText;
+        footageState = "";
+        // The player opens at once and shows progress; the recording is fetched behind it.
+        page.openFootagePending(Devices.nameAt(row), whenText, transcript);
+        var from = Math.floor(startTime) - 3;
+        Devices.fetchFootage(row, from, Math.max(6, Math.ceil(endTime - startTime) + 6));
+    }
+    Connections {
+        target: Devices
+        function onFootageReady(row, path) {
+            if (row !== page.footageRow) return;
+            page.footageFetched("file://" + path);
+        }
+        function onFootageFailed(row, error) {
+            if (row !== page.footageRow) return;
+            page.footageFailedMsg(qsTr("Could not get the recording from the NVR: %1. If it is busy, close a live view and try again.").arg(error));
+        }
+    }
+    onShowAudioChanged: if (!showAudio) { stopClip(); AudioAlerts.showAll = false; }
     function stopClip() { clipPlayer.stop(); clipPlayer.source = ""; playingId = ""; AudioAlerts.discardClips(); }
     function toggleClip(id) {
         clipError = "";
@@ -104,6 +144,41 @@ Item {
                 bottomPadding: 2
             }
             Item { Layout.fillWidth: true }
+            // Re-pull each Frigate property's own event history — the inbox only
+            // ever files what it saw live, so a quiet camera (or one that was
+            // cleared) can lag behind what Frigate itself actually recorded.
+            Rectangle {
+                implicitWidth: syncText.implicitWidth + 20
+                height: 30
+                radius: Theme.radius
+                color: syncHover.hovered ? Theme.surfaceAlt : "transparent"
+                border.color: Theme.border
+                Text {
+                    id: syncText
+                    anchors.centerIn: parent
+                    text: qsTr("Sync Frigate history")
+                    color: Theme.textMuted
+                    font.pixelSize: 12
+                }
+                HoverHandler { id: syncHover }
+                TapHandler { onTapped: Events.syncAllFrigateHistory() }
+            }
+            Rectangle {
+                implicitWidth: notifText.implicitWidth + 20
+                height: 30
+                radius: Theme.radius
+                color: notifHover.hovered ? Theme.surfaceAlt : "transparent"
+                border.color: Theme.border
+                Text {
+                    id: notifText
+                    anchors.centerIn: parent
+                    text: Events.desktopNotifications ? qsTr("Notifications: On") : qsTr("Notifications: Off")
+                    color: Events.desktopNotifications ? Theme.text : Theme.textMuted
+                    font.pixelSize: 12
+                }
+                HoverHandler { id: notifHover }
+                TapHandler { onTapped: Events.desktopNotifications = !Events.desktopNotifications }
+            }
             Rectangle {
                 visible: Events.count > 0
                 implicitWidth: clearText.implicitWidth + 20
@@ -180,11 +255,38 @@ Item {
         }
 
         // ---- Audio events ----
+        Row {
+            visible: page.showAudio && AudioAlerts.enabled
+            spacing: 6
+            Repeater {
+                model: [ { all: false, label: qsTr("Alerts only") }, { all: true, label: qsTr("All speech (7 days, as on the NVR)") } ]
+                Rectangle {
+                    required property var modelData
+                    property bool sel: AudioAlerts.showAll === modelData.all
+                    implicitWidth: scopeText.implicitWidth + 24
+                    height: 28
+                    radius: 14
+                    color: sel ? Theme.accentDim : Theme.surface
+                    border.color: sel ? Theme.accent : Theme.border
+                    Text { id: scopeText; anchors.centerIn: parent; text: parent.modelData.label
+                           color: parent.sel ? Theme.text : Theme.textMuted; font.pixelSize: 12 }
+                    TapHandler { onTapped: AudioAlerts.showAll = parent.modelData.all }
+                }
+            }
+        }
         Text {
             visible: page.showAudio && AudioAlerts.enabled && !AudioAlerts.reachable
             color: Theme.textMuted
             font.pixelSize: 12
             text: qsTr("The audio service is not answering.")
+        }
+        Text {
+            visible: page.showAudio && page.footageState.length > 0
+            color: page.footageState === "loading" ? Theme.textMuted : Theme.danger
+            font.pixelSize: 12
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+            text: page.footageState === "loading" ? qsTr("Fetching the recording from the NVR\u2026") : page.footageState
         }
         Text {
             visible: page.showAudio && page.clipError.length > 0
@@ -210,13 +312,17 @@ Item {
                 required property string scoreText
                 required property string transcript
                 required property bool hasClip
+                required property bool flagged
+                required property string cameraKey
+                required property var startTime
+                required property var endTime
                 width: ListView.view.width
                 height: audioCol.implicitHeight + 20
                 radius: Theme.radius
                 color: Theme.surface
                 border.color: Qt.rgba(1, 1, 1, 0.04)
                 Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                            width: 3; radius: Theme.radius; color: Theme.danger }
+                            width: 3; radius: Theme.radius; color: flagged ? Theme.danger : Theme.border }
                 ColumnLayout {
                     id: audioCol
                     anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
@@ -224,7 +330,7 @@ Item {
                     spacing: 4
                     RowLayout {
                         Layout.fillWidth: true
-                        Text { text: triggerText; color: Theme.danger; font.pixelSize: 14; font.bold: true }
+                        Text { text: triggerText; color: flagged ? Theme.danger : Theme.textMuted; font.pixelSize: 14; font.bold: true }
                         Text { text: camera; color: Theme.text; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
                         Text { text: timeText; color: Theme.textMuted; font.pixelSize: 12 }
                     }
@@ -237,15 +343,43 @@ Item {
                         color: Theme.text
                         font.pixelSize: 13
                         font.italic: true
+                        // Tapping the words opens the recording of that moment.
+                        TapHandler {
+                            enabled: page.footageAvailable(cameraKey, endTime)
+                            onTapped: page.watchFootage(cameraKey, startTime, endTime, timeText, transcript)
+                        }
                     }
-                    Text {
-                        visible: hasClip
-                        text: page.playingId === eventId ? qsTr("\u25a0 Stop clip") : qsTr("\u25b6 Play clip")
-                        color: Theme.accent
-                        font.pixelSize: 12
-                        TapHandler { onTapped: page.toggleClip(eventId) }
+                    Row {
+                        spacing: 16
+                        Text {
+                            visible: page.footageAvailable(cameraKey, endTime)
+                            text: qsTr("\u25b6 Watch on NVR")
+                            color: Theme.accent
+                            font.pixelSize: 12
+                            TapHandler { onTapped: page.watchFootage(cameraKey, startTime, endTime, timeText, transcript) }
+                        }
+                        Text {
+                            visible: hasClip
+                            text: page.playingId === eventId ? qsTr("\u25a0 Stop saved audio") : qsTr("\u25b6 Play saved audio")
+                            color: Theme.accent
+                            font.pixelSize: 12
+                            TapHandler { onTapped: page.toggleClip(eventId) }
+                        }
+                        Text {
+                            visible: !hasClip && !page.footageAvailable(cameraKey, endTime)
+                            text: qsTr("Recording no longer on the NVR")
+                            color: Theme.textMuted
+                            font.pixelSize: 11
+                        }
                     }
                 }
+            }
+            footer: Item {
+                width: audioList.width
+                height: AudioAlerts.canLoadMore ? 40 : 0
+                visible: AudioAlerts.canLoadMore
+                Text { anchors.centerIn: parent; text: qsTr("Load older"); color: Theme.accent; font.pixelSize: 12
+                       TapHandler { onTapped: AudioAlerts.loadMore() } }
             }
             Text {
                 anchors.centerIn: parent
@@ -290,7 +424,58 @@ Item {
                 }
             }
 
-            // Camera filter: a chip-styled dropdown listing the cameras.
+            // Property filter: a chip-styled dropdown listing the properties/sites
+            // (e.g. "Lascelles", "Farm"). Cameras with the same name on different
+            // properties (two "Kitchen"s) only get told apart once this is combined
+            // with the camera filter below, so picking a camera also pins its property.
+            Rectangle {
+                id: propChip
+                property bool active: Events.propertyFilter !== ""
+                implicitWidth: propChipText.implicitWidth + 34
+                height: 30
+                radius: 15
+                color: active ? Theme.accentDim : (propChipHover.hovered ? Theme.surfaceAlt : Theme.surface)
+                border.color: active ? Theme.accent : Theme.border
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 5
+                    Text {
+                        id: propChipText
+                        text: propChip.active ? Events.propertyFilter : qsTr("All properties")
+                        color: propChip.active ? Theme.text : Theme.textMuted
+                        font.pixelSize: 12
+                    }
+                    Text { text: "\u25be"; color: Theme.textMuted; font.pixelSize: 10
+                           anchors.verticalCenter: parent.verticalCenter }
+                }
+                HoverHandler { id: propChipHover }
+                TapHandler { onTapped: propMenu.popup() }
+                ThemedMenu {
+                    id: propMenu
+                    // Devices.count is read only to make this recompute when the
+                    // device list changes; propertyNames() itself isn't reactive.
+                    property var names: { Devices.count; return Devices.propertyNames() }
+                    ThemedMenuItem {
+                        text: qsTr("All properties")
+                        onTriggered: { Events.propertyFilter = ""; Events.cameraFilter = "" }
+                    }
+                    ThemedMenuSeparator {}
+                    Instantiator {
+                        model: propMenu.names
+                        delegate: ThemedMenuItem {
+                            required property string modelData
+                            text: modelData
+                            onTriggered: { Events.propertyFilter = modelData; Events.cameraFilter = "" }
+                        }
+                        onObjectAdded: (i, o) => propMenu.insertItem(i + 2, o)
+                        onObjectRemoved: (i, o) => propMenu.removeItem(o)
+                    }
+                }
+            }
+
+            // Camera filter: a chip-styled dropdown listing the cameras, scoped to
+            // the selected property (if any). Picking one pins its property too, so
+            // two same-named cameras on different properties can't be confused.
             Rectangle {
                 id: camChip
                 property bool active: Events.cameraFilter !== ""
@@ -322,8 +507,14 @@ Item {
                         model: Devices
                         delegate: ThemedMenuItem {
                             required property string name
-                            text: name
-                            onTriggered: Events.cameraFilter = name
+                            required property string hostName
+                            text: hostName.length > 0 ? name + " \u2014 " + hostName : name
+                            visible: Events.propertyFilter === "" || hostName === Events.propertyFilter
+                            height: visible ? implicitHeight : 0
+                            onTriggered: {
+                                Events.propertyFilter = hostName
+                                Events.cameraFilter = name
+                            }
                         }
                         onObjectAdded: (i, o) => camMenu.insertItem(i + 2, o)
                         onObjectRemoved: (i, o) => camMenu.removeItem(o)
@@ -347,6 +538,7 @@ Item {
                 required property int index
                 required property string type
                 required property string camera
+                required property string property
                 required property string timeText
                 required property string thumbnail
                 required property var hostId
@@ -410,7 +602,7 @@ Item {
                             font.bold: true
                         }
                         Text {
-                            text: camera
+                            text: property.length > 0 ? camera + "  ·  " + property : camera
                             color: Theme.text
                             font.pixelSize: 13
                             elide: Text.ElideRight
@@ -452,8 +644,10 @@ Item {
                 }
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: Events.filter.length > 0 ? qsTr("No events of this type")
-                                                   : qsTr("No events yet")
+                    text: (Events.filter.length > 0 || Events.cameraFilter.length > 0
+                           || Events.propertyFilter.length > 0)
+                          ? qsTr("No events match this filter")
+                          : qsTr("No events yet")
                     color: Theme.text
                     font.pixelSize: 14
                 }
@@ -463,6 +657,30 @@ Item {
                     color: Theme.textMuted
                     font.pixelSize: 12
                 }
+            }
+        }
+
+        // ---- History depth ----
+        // The inbox only ever holds events seen live since it was last connected,
+        // capped at 100 total across every camera on every property, so a busy
+        // camera can push a quiet one's older events out. This says plainly how
+        // far back the current view actually reaches.
+        Text {
+            Layout.fillWidth: true
+            Layout.topMargin: 2
+            visible: Events.count > 0
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            color: Theme.textMuted
+            font.pixelSize: 11
+            text: {
+                const oldest = Events.oldestVisibleTimestamp
+                if (oldest <= 0)
+                    return ""
+                const when = Qt.formatDateTime(new Date(oldest * 1000), "MMM d, yyyy hh:mm")
+                return Events.historyTrimmed
+                       ? qsTr("Showing back to %1 — older events were trimmed to keep the shared 100-event limit").arg(when)
+                       : qsTr("Showing the complete history, back to %1").arg(when)
             }
         }
     }

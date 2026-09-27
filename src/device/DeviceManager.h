@@ -12,6 +12,7 @@
 #include <QAbstractListModel>
 #include <QDateTime>
 #include <QFutureSynchronizer>
+#include <QTemporaryDir>
 #include <QHash>
 #include <QSet>
 #include <QSize>
@@ -74,6 +75,7 @@ public:
         RotationRole,
         IsFisheyeRole,
         ViewModeRole,
+        HostNameRole,
     };
 
     DeviceManager(Database *db, CredentialStore *credentials, QObject *parent = nullptr);
@@ -174,6 +176,15 @@ public:
     Q_INVOKABLE QVariantMap cameraInfo(int row) const;
     // Distinct host ids in list order (NVRs and standalone cameras), for grouping.
     Q_INVOKABLE QVariantList hostIds() const;
+    // The property/site name a host was added under (e.g. "Lascelles"), or empty
+    // if hostId is unknown. Distinct from a camera's own display name.
+    Q_INVOKABLE QString hostName(qint64 hostId) const;
+    // Distinct property/site names in list order, for a property filter.
+    Q_INVOKABLE QStringList propertyNames() const;
+    // Channel -> raw config-key camera name for a host (e.g. Frigate's "bosch_camera",
+    // not the pretty "Bosch Camera" NameRole shows). Frigate's own APIs need the raw
+    // key; each entry is {"channel": int, "camera": QString}.
+    Q_INVOKABLE QVariantList channelsForHost(qint64 hostId) const;
 
     // Live controls (channel 0). Fire-and-forget on the worker pool.
     Q_INVOKABLE void ptzMove(int row, const QString &op, int speed = 32);
@@ -199,6 +210,13 @@ public:
     // Save a main-stream clip covering [startEpoch, +durationSecs] into
     // ~/Videos/Reolink with a friendly name. Emits clipExported/clipExportFailed.
     Q_INVOKABLE void exportClip(int row, qint64 startEpoch, int durationSecs);
+    // The first camera row whose name matches (case-insensitive, trimmed), or -1.
+    Q_INVOKABLE int rowOfName(const QString &name) const;
+    Q_INVOKABLE qint64 hostIdOf(int row) const { return (row >= 0 && row < m_entries.size()) ? m_entries.at(row).rec.id : -1; }
+    // Fetches the NVR's recording of this moment into a temporary file (deleted at the next
+    // fetch or on exit) over the HTTP download API, which does not take one of the NVR's few
+    // media sessions the way streamed playback does. Emits footageReady or footageFailed.
+    Q_INVOKABLE void fetchFootage(int row, qint64 startEpoch, int durationSecs);
 
     // What the downloads queue needs to fetch this camera's recordings (invalid if the
     // device is not ready or has no recordings).
@@ -300,6 +318,8 @@ signals:
     void hdClipFailed(int row, const QString &error);
     void clipExported(int row, const QString &path);
     void clipExportFailed(int row, const QString &error);
+    void footageReady(int row, const QString &path);
+    void footageFailed(int row, const QString &error);
     void settingsLoaded(int row, const QVariantMap &values);
     void settingsFailed(int row, const QString &error);
     void settingApplied(int row, const QString &command, bool ok, const QString &error);
@@ -407,6 +427,7 @@ private:
     Validation validateFrigate(const HostRecord &rec);
     void searchFrigateRecordings(int row, int year, int month, int day);
     void pollFrigate();
+    void runExport(int row, qint64 startEpoch, int durationSecs, bool footage);
     int rowForHostId(qint64 hostId) const;
     void warmPushCache();   // fetch each camera's push state once, staggered
     void applyConnectivity(qint64 hostId, bool transportOk, const QHash<int, bool> &chanOnline);
@@ -448,6 +469,8 @@ private:
     // Weak: the StreamPlayer owns the client's lifetime.
     std::weak_ptr<BaichuanClient> m_playbackClient;
     int m_playbackRow = -1;
+    QTemporaryDir m_footageDir;
+    QString m_lastFootage;
 };
 
 } // namespace rl

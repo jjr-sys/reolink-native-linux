@@ -26,6 +26,7 @@ Dialog {
     property string transcript: ""
     property bool pending: false
     property string pendingError: ""
+    signal fallbackRequested()
 
     // Loop segment, in ms. loopEnd <= 0 means "to the end of the clip".
     property bool loopOn: false
@@ -218,6 +219,20 @@ Dialog {
                 fillMode: VideoOutput.PreserveAspectFit
             }
             TapHandler { onTapped: dialog.togglePause() }
+            Rectangle {
+                visible: dialog.pendingError !== ""
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 24
+                implicitWidth: fbText.implicitWidth + 28
+                height: 32
+                radius: Theme.radius
+                color: fbHover.hovered ? Theme.accentDim : "transparent"
+                border.color: Theme.accent
+                Text { id: fbText; anchors.centerIn: parent; text: qsTr("Open in Playback instead"); color: Theme.text; font.pixelSize: 13 }
+                HoverHandler { id: fbHover }
+                TapHandler { onTapped: dialog.fallbackRequested() }
+            }
             Text {
                 anchors.centerIn: parent
                 visible: dialog.failed || dialog.loading || dialog.pending || dialog.pendingError !== ""
