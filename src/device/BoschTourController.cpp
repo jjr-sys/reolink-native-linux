@@ -150,6 +150,12 @@ void BoschTourController::connectHomeAssistant(const QString &url, const QString
 
     stopIris();
     ++m_generation;
+    m_sceneModeReadPending = false;
+    m_sceneModePending = false;
+    m_sceneModeAvailable = false;
+    m_sceneModeStale = m_sceneModeId >= 0;
+    m_sceneModeError.clear();
+    emit sceneModeChanged();
     m_irisReadPending = false;
     m_irisPressId.clear();
     m_irisDirection.clear();
@@ -240,6 +246,13 @@ void BoschTourController::disconnectHomeAssistant()
     m_tourError.clear();
     m_route.clear();
     m_presets.clear();
+    m_sceneModeReadPending = false;
+    m_sceneModePending = false;
+    m_sceneModeAvailable = false;
+    m_sceneModeStale = m_sceneModeId >= 0;
+    m_sceneModeError = m_sceneModeStale
+                           ? QStringLiteral("Home Assistant is disconnected.")
+                           : QString();
     m_irisAvailable = false;
     m_irisReadPending = false;
     m_irisStatus = QStringLiteral("Not read");
@@ -255,6 +268,7 @@ void BoschTourController::disconnectHomeAssistant()
     emit patrolChanged();
     emit routeChanged();
     emit presetsChanged();
+    emit sceneModeChanged();
     emit irisChanged();
     emit messageChanged();
 }
@@ -312,7 +326,109 @@ void BoschTourController::refresh()
 {
     refreshPatrol();
     refreshPresets();
-    refreshIris();
+    refreshSceneMode();
+}
+
+void BoschTourController::refreshSceneMode()
+{
+    if (!configured() || m_sceneModeReadPending || m_sceneModePending)
+        return;
+    m_sceneModeReadPending = true;
+    callService(QStringLiteral("bosch_camera_get_scene_mode"), {}, true, false,
+                [this](int status, const QByteArray &body, const QString &networkError) {
+        m_sceneModeReadPending = false;
+        const QJsonObject response = serviceResponse(body);
+        if (status != 200 || !response.value(QStringLiteral("ok")).toBool(false)
+            || !applySceneModeResponse(response)) {
+            QString error = response.value(QStringLiteral("error")).toString();
+            if (error.isEmpty())
+                error = responseMessage(body);
+            if (error.isEmpty())
+                error = networkError;
+            if (error.isEmpty())
+                error = QStringLiteral("Home Assistant did not return the camera's Marked-range mode.");
+            failSceneModeRequest(error, true);
+            return;
+        }
+        setConnectionStatus(QStringLiteral("Connected"), true);
+        setMessage({});
+    });
+}
+
+void BoschTourController::setSceneMode(int modeId)
+{
+    if (!configured() || !m_sceneModeAvailable || m_sceneModePending)
+        return;
+    const bool modeExists = std::any_of(m_sceneModes.cbegin(), m_sceneModes.cend(),
+                                        [modeId](const QVariant &value) {
+        return value.toMap().value(QStringLiteral("id")).toInt() == modeId;
+    });
+    if (!modeExists)
+        return;
+
+    m_sceneModePending = true;
+    m_sceneModeError.clear();
+    emit sceneModeChanged();
+    callService(QStringLiteral("bosch_camera_set_scene_mode"),
+                {{QStringLiteral("mode_id"), modeId}}, true, false,
+                [this, modeId](int status, const QByteArray &body,
+                               const QString &networkError) {
+        m_sceneModePending = false;
+        const QJsonObject response = serviceResponse(body);
+        if (status != 200 || !response.value(QStringLiteral("ok")).toBool(false)
+            || response.value(QStringLiteral("mode_id")).toInt(-1) != modeId
+            || !applySceneModeResponse(response)) {
+            QString error = response.value(QStringLiteral("error")).toString();
+            if (error.isEmpty())
+                error = responseMessage(body);
+            if (error.isEmpty())
+                error = networkError;
+            if (error.isEmpty())
+                error = QStringLiteral("The camera did not confirm the selected Marked-range mode.");
+            failSceneModeRequest(error, true);
+            return;
+        }
+        setMessage({});
+    });
+}
+
+bool BoschTourController::applySceneModeResponse(const QJsonObject &response)
+{
+    const QJsonArray choices = response.value(QStringLiteral("modes")).toArray();
+    QVariantList modes;
+    QString selectedName;
+    const int selectedId = response.value(QStringLiteral("mode_id")).toInt(-1);
+    for (const QJsonValue &value : choices) {
+        const QJsonObject choice = value.toObject();
+        const int id = choice.value(QStringLiteral("id")).toInt(-1);
+        const QString name = choice.value(QStringLiteral("name")).toString().trimmed();
+        if (id < 1 || name.isEmpty())
+            continue;
+        modes.append(QVariantMap{{QStringLiteral("id"), id},
+                                 {QStringLiteral("name"), name}});
+        if (id == selectedId)
+            selectedName = name;
+    }
+    if (selectedName.isEmpty())
+        return false;
+
+    m_sceneModes = modes;
+    m_sceneModeId = selectedId;
+    m_sceneModeName = selectedName;
+    m_sceneModeError.clear();
+    m_sceneModeAvailable = true;
+    m_sceneModeStale = false;
+    emit sceneModeChanged();
+    return true;
+}
+
+void BoschTourController::failSceneModeRequest(const QString &error, bool stale)
+{
+    m_sceneModeAvailable = false;
+    m_sceneModeStale = stale && m_sceneModeId >= 0;
+    m_sceneModeError = error;
+    emit sceneModeChanged();
+    setMessage(QStringLiteral("Marked range: ") + error);
 }
 
 void BoschTourController::refreshIris()

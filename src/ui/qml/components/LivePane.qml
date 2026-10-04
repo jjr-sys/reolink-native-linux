@@ -170,15 +170,37 @@ Rectangle {
     onLabelChanged: {
         if (!isBoschFeed) {
             boschPtzOpen = false;
+            boschPicker.close();
             if (boschTourOwnedHere && BoschTour.selectionTourMode)
                 BoschTour.endSelectionTour();
             boschTourOwnedHere = false;
         }
     }
-    onVisibleChanged: { if (!visible) talk.stop(); updateSource(); }
-    onPageActiveChanged: { if (!pageActive) talk.stop(); updateSource(); }
+    onIsBoschFeedChanged: {
+        if (isBoschFeed && visible && pageActive)
+            BoschTour.refreshSceneMode();
+        else if (!isBoschFeed)
+            boschPicker.close();
+    }
+    onVisibleChanged: {
+        if (!visible) talk.stop();
+        if (visible && pageActive && isBoschFeed) BoschTour.refreshSceneMode();
+        updateSource();
+    }
+    onPageActiveChanged: {
+        if (!pageActive) talk.stop();
+        if (visible && pageActive && isBoschFeed) BoschTour.refreshSceneMode();
+        updateSource();
+    }
     onEffectiveMainChanged: { bcFallback = false; updateSource(); }
     Component.onCompleted: updateSource()
+
+    Timer {
+        interval: 30000
+        repeat: true
+        running: root.visible && root.pageActive && root.isBoschFeed && BoschTour.connected
+        onTriggered: BoschTour.refreshSceneMode()
+    }
 
     // The NVR grants only ~1 Baichuan session. If HD live can't get the slot,
     // fall back to RTSP main once (artifact-prone on 8K duos, but beats a dead
@@ -581,6 +603,26 @@ Rectangle {
         BoschTour.toggleSelectionTourPosition(String(preset.token));
     }
 
+    function openBoschPicker(anchor, kind) {
+        if (!BoschTour.connected)
+            return;
+        if (boschPicker.visible && boschPicker.kind === kind) {
+            boschPicker.close();
+            return;
+        }
+        boschPicker.kind = kind;
+        const overlay = Overlay.overlay;
+        if (!overlay)
+            return;
+        const point = anchor.mapToItem(overlay, 0, 0);
+        const available = kind === "scene" ? BoschTour.sceneModes : BoschTour.presets;
+        const rowCount = Math.max(1, available.length);
+        const desiredHeight = Math.min(280, rowCount * 34 + 12);
+        boschPicker.x = Math.max(8, Math.min(point.x, overlay.width - boschPicker.width - 8));
+        boschPicker.y = Math.max(8, point.y - desiredHeight - 7);
+        boschPicker.open();
+    }
+
     Loader {
         active: root.ptzOpen && root.capPtz
         anchors.right: parent.right
@@ -668,51 +710,52 @@ Rectangle {
                     }
                 }
 
-                component IrisButton: Rectangle {
-                    id: irisButton
-                    property string direction: "open"
-                    property string label: "Open"
-                    property bool requested: false
-                    readonly property string statusTip: direction === "open"
-                        ? qsTr("Open iris · %1").arg(BoschTour.irisStatus)
-                        : qsTr("Close iris · %1").arg(BoschTour.irisStatus)
-                    width: 48; height: 28; radius: 4
-                    visible: root.isBoschFeed && BoschTour.connected
-                    color: irisPress.pressed ? Theme.accentDim : Theme.surface
-                    opacity: root.isBoschFeed && BoschTour.connected && BoschTour.irisAvailable ? 1 : 0.45
-                    border.color: Theme.border
+                component ToolPickerButton: Rectangle {
+                    id: pickerButton
+                    property string label: ""
+                    property string kind: "positions"
+                    property string tip: ""
+                    property bool active: false
+                    property bool enabledTool: true
+                    signal activated()
+                    width: kind === "scene" ? 112 : 88
+                    height: 28
+                    radius: 4
+                    color: active ? Theme.accentDim : (pickerHover.hovered ? Theme.surfaceAlt : "transparent")
+                    opacity: enabledTool ? 1 : 0.48
                     Text {
-                        anchors.centerIn: parent
-                        text: irisButton.label
-                        color: Theme.text
+                        anchors.left: parent.left
+                        anchors.leftMargin: 8
+                        anchors.right: pickerArrow.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: pickerButton.label
+                        color: pickerButton.active ? Theme.text : Theme.textMuted
                         font.pixelSize: 10
                         font.bold: true
+                        elide: Text.ElideRight
+                        verticalAlignment: Text.AlignVCenter
                     }
-                    MouseArea {
-                        id: irisPress
-                        anchors.fill: parent
-                        enabled: root.isBoschFeed && BoschTour.connected && BoschTour.irisAvailable
-                        Accessible.name: irisButton.direction === "open"
-                            ? qsTr("Open iris; hold to adjust") : qsTr("Close iris; hold to adjust")
-                        onPressed: irisButton.requested = BoschTour.startIris(irisButton.direction)
-                        onReleased: {
-                            if (irisButton.requested)
-                                BoschTour.stopIris();
-                            irisButton.requested = false;
-                        }
-                        onCanceled: {
-                            if (irisButton.requested)
-                                BoschTour.stopIris();
-                            irisButton.requested = false;
-                        }
+                    Text {
+                        id: pickerArrow
+                        anchors.right: parent.right
+                        anchors.rightMargin: 7
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "⌃"
+                        color: pickerButton.active ? Theme.text : Theme.textMuted
+                        font.pixelSize: 13
                     }
-                    HoverHandler { id: irisHover }
+                    HoverHandler { id: pickerHover }
                     ToolTip {
-                        visible: irisHover.hovered
-                        delay: 500
-                        text: irisButton.statusTip
-                        contentItem: Text { text: irisButton.statusTip; color: Theme.text; font.pixelSize: 11 }
+                        visible: pickerHover.hovered && pickerButton.tip !== ""
+                        delay: 450
+                        text: pickerButton.tip
+                        contentItem: Text { text: pickerButton.tip; color: Theme.text; font.pixelSize: 11 }
                         background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                    }
+                    TapHandler {
+                        enabled: pickerButton.enabledTool
+                        gesturePolicy: TapHandler.ReleaseWithinBounds
+                        onTapped: root.openBoschPicker(pickerButton, pickerButton.kind)
                     }
                 }
 
@@ -723,107 +766,35 @@ Rectangle {
                     onActivated: root.qualityMain = !root.qualityMain
                 }
 
-                IrisButton { direction: "open"; label: qsTr("Open") }
-                IrisButton { direction: "close"; label: qsTr("Close") }
-                ToolButton {
-                    glyph: "A"
-                    active: BoschTour.irisStatus.startsWith("AUTO")
-                    enabledTool: root.isBoschFeed && BoschTour.connected
-                    tip: qsTr("Restore automatic exposure · current iris: %1").arg(BoschTour.irisStatus)
-                    onActivated: BoschTour.setIrisAuto()
+                ToolPickerButton {
+                    visible: root.isBoschFeed
+                    label: qsTr("Positions")
+                    kind: "positions"
+                    active: boschPicker.visible && boschPicker.kind === "positions"
+                    enabledTool: BoschTour.connected
+                    tip: BoschTour.connected
+                        ? qsTr("Choose a camera position%1").arg(BoschTour.selectionTourMode
+                            ? qsTr(" · tap to add or remove tour stops") : "")
+                        : qsTr("Home Assistant is disconnected")
                 }
-                ToolButton {
-                    glyph: "I"
-                    active: BoschTour.irisStatus.startsWith("MANUAL")
-                    enabledTool: root.isBoschFeed && BoschTour.connected
-                    tip: qsTr("Iris state: %1").arg(BoschTour.irisStatus)
-                    onActivated: BoschTour.refreshIris()
-                }
-
-                Repeater {
-                    model: root.isBoschFeed && BoschTour.connected ? BoschTour.presets : []
-                    delegate: Rectangle {
-                        id: presetButton
-                        required property var modelData
-                        readonly property string fullPositionName: String(modelData.name)
-                        readonly property string positionButtonText: root.forceMain
-                            ? fullPositionName
-                            : fullPositionName.trim().length > 0
-                                ? fullPositionName.trim().charAt(0).toUpperCase() : ""
-                        readonly property int tourIndex: root.positionSequenceIndex(modelData.token)
-                        readonly property string positionTip: !BoschTour.selectionTourMode
-                            ? qsTr("Camera Position")
-                            : tourIndex >= 0
-                                ? qsTr("Remove %1 from tour (step %2)")
-                                      .arg(fullPositionName).arg(tourIndex + 1)
-                                : qsTr("Add %1 to tour").arg(fullPositionName)
-                        readonly property bool positionEnabled: BoschTour.connected
-                            && (!BoschTour.busy || BoschTour.selectionTourRestoring)
-                            && (BoschTour.selectionTourMode || BoschTour.selectionTourRestoring
-                                || BoschTour.tourState === "stopped")
-                        width: root.forceMain
-                            ? Math.max(74, Math.min(150,
-                                fullPositionName.length * 6.3 + (tourIndex >= 0 ? 28 : 14)))
-                            : 28
-                        height: 28
-                        radius: 4
-                        color: tourIndex >= 0 ? Theme.accentDim
-                             : positionHover.hovered ? Theme.surfaceAlt : "transparent"
-                        border.color: tourIndex >= 0 || positionHover.hovered ? Theme.accent : Theme.border
-
-                        Text {
-                            id: positionLabel
-                            anchors.fill: parent
-                            anchors.leftMargin: root.forceMain
-                                ? (presetButton.tourIndex >= 0 ? 22 : 5) : 2
-                            anchors.rightMargin: root.forceMain ? 5 : 2
-                            anchors.topMargin: !root.forceMain && presetButton.tourIndex >= 0 ? 8 : 0
-                            text: presetButton.positionButtonText
-                            color: presetButton.positionEnabled ? Theme.text : Theme.textMuted
-                            font.pixelSize: root.forceMain ? 10 : 11
-                            font.bold: true
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            elide: Text.ElideRight
-                        }
-                        Rectangle {
-                            visible: presetButton.tourIndex >= 0
-                            anchors.left: parent.left
-                            anchors.leftMargin: root.forceMain ? 0 : 1
-                            y: root.forceMain ? (parent.height - height) / 2 : 1
-                            width: root.forceMain ? 17 : 12
-                            height: width
-                            radius: width / 2
-                            color: Theme.accent
-                            Text {
-                                anchors.centerIn: parent
-                                text: presetButton.tourIndex + 1
-                                color: Theme.window
-                                font.pixelSize: root.forceMain ? 9 : 8
-                                font.bold: true
-                            }
-                        }
-                        HoverHandler { id: positionHover }
-                        ToolTip {
-                            visible: positionHover.hovered
-                            delay: 500
-                            text: presetButton.positionTip
-                            contentItem: Text { text: presetButton.positionTip; color: Theme.text; font.pixelSize: 11 }
-                            background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
-                        }
-                        TapHandler {
-                            enabled: presetButton.positionEnabled
-                            gesturePolicy: TapHandler.ReleaseWithinBounds
-                            onTapped: root.toggleTourPosition(presetButton.modelData)
-                        }
-                    }
+                ToolPickerButton {
+                    visible: root.isBoschFeed
+                    label: qsTr("Marked range")
+                    kind: "scene"
+                    active: (boschPicker.visible && boschPicker.kind === "scene") || BoschTour.sceneModePending
+                    enabledTool: BoschTour.sceneModeAvailable && !BoschTour.sceneModePending
+                    tip: BoschTour.sceneModeName === ""
+                        ? (BoschTour.sceneModeError || qsTr("Marked-range mode unavailable"))
+                        : qsTr("Marked range: %1%2%3").arg(BoschTour.sceneModeName)
+                            .arg(BoschTour.sceneModeStale ? qsTr(" · stale") : "")
+                            .arg(BoschTour.sceneModeError === "" ? "" : " · " + BoschTour.sceneModeError)
                 }
 
                 ToolButton {
                     visible: root.isBoschFeed && !BoschTour.connected
                     glyph: "!"
                     active: true
-                    tip: qsTr("Home Assistant is disconnected. Reconnect to restore Bosch PTZ, iris, positions, and tours.")
+                    tip: qsTr("Home Assistant is disconnected. Reconnect to restore Bosch PTZ, positions, scene modes, and tours.")
                     onActivated: root.openBoschTourRequested()
                 }
 
@@ -920,6 +891,97 @@ Rectangle {
                     glyph: "⛶"
                     tip: root.forceMain ? qsTr("Restore grid") : qsTr("Maximize")
                     onActivated: if (root.hasSource) root.toggleMaximize(root.deviceRow)
+                }
+            }
+        }
+    }
+
+    Popup {
+        id: boschPicker
+        parent: Overlay.overlay
+        z: 1000
+        property string kind: "positions"
+        readonly property var optionModel: kind === "scene" ? BoschTour.sceneModes : BoschTour.presets
+        width: Math.min(230, Overlay.overlay ? Overlay.overlay.width - 16 : 230)
+        height: Math.min(Overlay.overlay ? Overlay.overlay.height - 16 : 280,
+                         Math.min(280, Math.max(46, optionModel.length * 34 + 12)))
+        padding: 6
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle {
+            color: Theme.surface
+            border.color: Theme.border
+            radius: Theme.radius
+        }
+        contentItem: Flickable {
+            clip: true
+            contentWidth: width
+            contentHeight: pickerRows.implicitHeight
+            flickableDirection: Flickable.VerticalFlick
+            boundsBehavior: Flickable.StopAtBounds
+            Column {
+                id: pickerRows
+                width: boschPicker.width - boschPicker.padding * 2
+                spacing: 2
+                Repeater {
+                    model: boschPicker.optionModel.length > 0
+                        ? boschPicker.optionModel
+                        : [{ id: -1, token: "", name: boschPicker.kind === "scene"
+                            ? qsTr("Marked range unavailable") : qsTr("No positions saved") }]
+                    delegate: Rectangle {
+                        id: pickerRow
+                        required property var modelData
+                        readonly property int tourOrder: boschPicker.kind === "positions"
+                            ? root.positionSequenceIndex(String(modelData.token)) : -1
+                        readonly property bool selected: boschPicker.kind === "scene"
+                            ? Number(modelData.id) === BoschTour.sceneModeId : tourOrder >= 0
+                        readonly property bool selectable: modelData.id !== -1
+                            && (boschPicker.kind === "scene"
+                                ? BoschTour.sceneModeAvailable && !BoschTour.sceneModePending
+                                : BoschTour.connected
+                                    && (!BoschTour.busy || BoschTour.selectionTourRestoring)
+                                    && (BoschTour.selectionTourMode || BoschTour.selectionTourRestoring
+                                        || BoschTour.tourState === "stopped"))
+                        width: pickerRows.width
+                        height: 32
+                        radius: 4
+                        color: pickerHover.hovered ? Theme.surfaceAlt
+                             : selected ? Theme.accentDim : "transparent"
+                        Text {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 9
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 22
+                            horizontalAlignment: Text.AlignHCenter
+                            text: pickerRow.selected ? "✓"
+                                : pickerRow.tourOrder >= 0 ? String(pickerRow.tourOrder + 1) : ""
+                            color: Theme.accent
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                        Text {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 36
+                            anchors.right: parent.right
+                            anchors.rightMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: String(pickerRow.modelData.name)
+                            color: pickerRow.selectable ? Theme.text : Theme.textMuted
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
+                        HoverHandler { id: pickerHover }
+                        TapHandler {
+                            enabled: pickerRow.selectable
+                            gesturePolicy: TapHandler.ReleaseWithinBounds
+                            onTapped: {
+                                boschPicker.close();
+                                if (boschPicker.kind === "scene")
+                                    BoschTour.setSceneMode(Number(pickerRow.modelData.id));
+                                else
+                                    root.toggleTourPosition(pickerRow.modelData);
+                            }
+                        }
+                    }
                 }
             }
         }

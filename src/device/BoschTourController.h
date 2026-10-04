@@ -36,6 +36,13 @@ class BoschTourController : public QObject
     Q_PROPERTY(int dwellSeconds READ dwellSeconds NOTIFY patrolChanged)
     Q_PROPERTY(QVariantList route READ route NOTIFY routeChanged)
     Q_PROPERTY(QVariantList presets READ presets NOTIFY presetsChanged)
+    Q_PROPERTY(QVariantList sceneModes READ sceneModes NOTIFY sceneModeChanged)
+    Q_PROPERTY(int sceneModeId READ sceneModeId NOTIFY sceneModeChanged)
+    Q_PROPERTY(QString sceneModeName READ sceneModeName NOTIFY sceneModeChanged)
+    Q_PROPERTY(QString sceneModeError READ sceneModeError NOTIFY sceneModeChanged)
+    Q_PROPERTY(bool sceneModeAvailable READ sceneModeAvailable NOTIFY sceneModeChanged)
+    Q_PROPERTY(bool sceneModePending READ sceneModePending NOTIFY sceneModeChanged)
+    Q_PROPERTY(bool sceneModeStale READ sceneModeStale NOTIFY sceneModeChanged)
     Q_PROPERTY(QString irisStatus READ irisStatus NOTIFY irisChanged)
     Q_PROPERTY(bool irisAvailable READ irisAvailable NOTIFY irisChanged)
     Q_PROPERTY(QVariantList selectionTourRoute READ selectionTourRoute NOTIFY selectionTourRouteChanged)
@@ -61,6 +68,13 @@ public:
     int dwellSeconds() const { return m_dwellSeconds; }
     QVariantList route() const { return m_route; }
     QVariantList presets() const { return m_presets; }
+    QVariantList sceneModes() const { return m_sceneModes; }
+    int sceneModeId() const { return m_sceneModeId; }
+    QString sceneModeName() const { return m_sceneModeName; }
+    QString sceneModeError() const { return m_sceneModeError; }
+    bool sceneModeAvailable() const { return m_sceneModeAvailable; }
+    bool sceneModePending() const { return m_sceneModePending; }
+    bool sceneModeStale() const { return m_sceneModeStale; }
     QString irisStatus() const { return m_irisStatus; }
     bool irisAvailable() const { return m_irisAvailable; }
     QVariantList selectionTourRoute() const { return m_selectionTourRequestedRoute; }
@@ -73,6 +87,8 @@ public:
     Q_INVOKABLE void disconnectHomeAssistant();
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void refreshPresets();
+    Q_INVOKABLE void refreshSceneMode();
+    Q_INVOKABLE void setSceneMode(int modeId);
     Q_INVOKABLE void refreshIris();
     Q_INVOKABLE void savePreset(const QString &name, const QString &token = QString());
     Q_INVOKABLE void removePreset(const QString &token);
@@ -96,6 +112,7 @@ signals:
     void patrolChanged();
     void routeChanged();
     void presetsChanged();
+    void sceneModeChanged();
     void irisChanged();
     void tourSaved(bool ok);
     void selectionTourModeChanged();
@@ -117,6 +134,8 @@ private:
     void sendIrisStart(bool heartbeat);
     void sendIrisStop(const QString &pressId);
     void applyIrisResponse(const QJsonObject &response);
+    bool applySceneModeResponse(const QJsonObject &response);
+    void failSceneModeRequest(const QString &error, bool stale);
     void applyPatrolResponse(const QJsonObject &response);
     QString presetNameForToken(const QString &token) const;
     bool applyPresetNamesToRoute();
@@ -145,6 +164,14 @@ private:
     int m_dwellSeconds = 1;
     QVariantList m_route;
     QVariantList m_presets;
+    QVariantList m_sceneModes;
+    int m_sceneModeId = -1;
+    QString m_sceneModeName;
+    QString m_sceneModeError;
+    bool m_sceneModeAvailable = false;
+    bool m_sceneModePending = false;
+    bool m_sceneModeStale = false;
+    bool m_sceneModeReadPending = false;
     QString m_irisStatus = QStringLiteral("Not read");
     QString m_irisPressId;
     QString m_irisDirection;
