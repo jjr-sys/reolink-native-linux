@@ -27,11 +27,18 @@ static const SecretSchema *schema()
 
 bool CredentialStore::store(qint64 hostId, const QString &password)
 {
+    return storeSecret(QString::number(hostId), password,
+                       QStringLiteral("Reolink device password"));
+}
+
+bool CredentialStore::storeSecret(const QString &key, const QString &secret,
+                                  const QString &label)
+{
     GError *error = nullptr;
     const bool ok = secret_password_store_sync(
-        schema(), SECRET_COLLECTION_DEFAULT, "Reolink device password",
-        password.toUtf8().constData(), nullptr, &error,
-        "host_id", QString::number(hostId).toUtf8().constData(), nullptr);
+        schema(), SECRET_COLLECTION_DEFAULT, label.toUtf8().constData(),
+        secret.toUtf8().constData(), nullptr, &error,
+        "host_id", key.toUtf8().constData(), nullptr);
     if (!ok && error) {
         m_lastError = QString::fromUtf8(error->message);
         qCWarning(lcCore) << "Keyring store failed:" << m_lastError;
@@ -42,9 +49,14 @@ bool CredentialStore::store(qint64 hostId, const QString &password)
 
 QString CredentialStore::lookup(qint64 hostId, bool *ok)
 {
+    return lookupSecret(QString::number(hostId), ok);
+}
+
+QString CredentialStore::lookupSecret(const QString &key, bool *ok)
+{
     GError *error = nullptr;
     gchar *secret = secret_password_lookup_sync(schema(), nullptr, &error,
-                                                "host_id", QString::number(hostId).toUtf8().constData(), nullptr);
+                                                "host_id", key.toUtf8().constData(), nullptr);
     if (error) {
         m_lastError = QString::fromUtf8(error->message);
         qCWarning(lcCore) << "Keyring lookup failed:" << m_lastError;
@@ -67,9 +79,14 @@ QString CredentialStore::lookup(qint64 hostId, bool *ok)
 
 bool CredentialStore::remove(qint64 hostId)
 {
+    return removeSecret(QString::number(hostId));
+}
+
+bool CredentialStore::removeSecret(const QString &key)
+{
     GError *error = nullptr;
     const bool ok = secret_password_clear_sync(schema(), nullptr, &error,
-                                               "host_id", QString::number(hostId).toUtf8().constData(), nullptr);
+                                               "host_id", key.toUtf8().constData(), nullptr);
     if (error) {
         m_lastError = QString::fromUtf8(error->message);
         g_error_free(error);

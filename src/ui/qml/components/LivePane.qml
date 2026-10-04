@@ -76,6 +76,7 @@ Rectangle {
     signal toggleMaximize(int index)
     signal clicked(int index)
     signal popOut(int deviceRow, string label)
+    signal openBoschTourRequested()
     // A camera was dropped onto this pane — from the sidebar or another pane.
     signal cameraDropped(int pane, int row)
 
@@ -159,7 +160,21 @@ Rectangle {
     // Talk ends with anything that takes the pane away from this camera: the camera
     // is swapped, the pane is hidden by a layout change, or the page is left —
     // the camera's speaker must never be left open behind the user's back.
-    onDeviceRowChanged: { talk.stop(); bcFallback = false; bcSub = false; releaseStream(); updateSource(); }
+    onDeviceRowChanged: {
+        talk.stop(); ptzOpen = false; boschPtzOpen = false;
+        if (boschTourOwnedHere && BoschTour.selectionTourMode)
+            BoschTour.endSelectionTour();
+        boschTourOwnedHere = false;
+        bcFallback = false; bcSub = false; releaseStream(); updateSource();
+    }
+    onLabelChanged: {
+        if (!isBoschFeed) {
+            boschPtzOpen = false;
+            if (boschTourOwnedHere && BoschTour.selectionTourMode)
+                BoschTour.endSelectionTour();
+            boschTourOwnedHere = false;
+        }
+    }
     onVisibleChanged: { if (!visible) talk.stop(); updateSource(); }
     onPageActiveChanged: { if (!pageActive) talk.stop(); updateSource(); }
     onEffectiveMainChanged: { bcFallback = false; updateSource(); }
@@ -208,7 +223,11 @@ Rectangle {
     // Microphone -> this camera's speaker.
     TalkSession { id: talk }
 
-    Component.onDestruction: { talk.stop(); player.stop(); }
+    Component.onDestruction: {
+        talk.stop(); player.stop();
+        if (root.boschTourOwnedHere && BoschTour.selectionTourMode)
+            BoschTour.endSelectionTour();
+    }
 
     // ---- Drag and drop -----------------------------------------------------
     // Dropping a camera here re-points this cell at it. Nothing needs to stop
@@ -281,6 +300,7 @@ Rectangle {
     property real panY: 0
 
     Item {
+        id: videoArea
         anchors.fill: parent
         anchors.margins: 1
         clip: true
@@ -470,7 +490,7 @@ Rectangle {
 
     // ---- Connection-state overlay -----------------------------------------
     Column {
-        anchors.centerIn: parent
+        anchors.centerIn: videoArea
         spacing: Theme.spacing
         visible: player.state !== StreamPlayer.Streaming
 
@@ -506,7 +526,7 @@ Rectangle {
         visible: root.hasSource &&
                  (talk.state === TalkSession.Error || talk.state === TalkSession.Connecting)
         anchors.top: parent.top
-        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.horizontalCenter: videoArea.horizontalCenter
         anchors.topMargin: 30
         radius: 3
         color: talk.state === TalkSession.Error ? "#cc7a1f1f" : "#cc0d141b"
@@ -530,6 +550,37 @@ Rectangle {
 
     // ---- PTZ joystick overlay ---------------------------------------------
     property bool ptzOpen: false
+    property bool boschPtzOpen: false
+    property bool boschTourOwnedHere: false
+    readonly property bool isBoschFeed: root.hasSource
+        && root.label.toLowerCase().indexOf("bosch") !== -1
+
+    function positionSequenceIndex(token) {
+        var sequence = BoschTour.selectionTourRoute;
+        for (var i = 0; i < sequence.length; ++i) {
+            if (String(sequence[i].token) === String(token))
+                return i;
+        }
+        return -1;
+    }
+
+    function activateTourSelection() {
+        if (BoschTour.selectionTourMode) {
+            root.boschTourOwnedHere = false;
+            BoschTour.endSelectionTour();
+        } else {
+            root.boschTourOwnedHere = BoschTour.beginSelectionTour();
+        }
+    }
+
+    function toggleTourPosition(preset) {
+        if (!BoschTour.selectionTourMode) {
+            BoschTour.gotoPreset(String(preset.token));
+            return;
+        }
+        BoschTour.toggleSelectionTourPosition(String(preset.token));
+    }
+
     Loader {
         active: root.ptzOpen && root.capPtz
         anchors.right: parent.right
@@ -541,137 +592,335 @@ Rectangle {
         }
     }
 
+    Loader {
+        active: root.boschPtzOpen && root.isBoschFeed
+        anchors.right: toolbar.right
+        anchors.bottom: toolbar.top
+        anchors.bottomMargin: 8
+        z: 23
+        sourceComponent: PtzPad {
+            deviceRow: -1
+            showZoom: true
+            boschCamera: true
+            onOpenBoschTourRequested: root.openBoschTourRequested()
+        }
+    }
+
     // ---- Floating toolbar (hover) -----------------------------------------
     HoverHandler { id: paneHover }
 
     Rectangle {
         id: toolbar
-        visible: root.hasSource && (paneHover.hovered || root.ptzOpen)
-        anchors.bottom: parent.bottom
-        anchors.horizontalCenter: parent.horizontalCenter
+        visible: root.hasSource && (paneHover.hovered || root.ptzOpen || root.boschPtzOpen)
+        anchors.bottom: videoArea.bottom
+        anchors.horizontalCenter: videoArea.horizontalCenter
         anchors.bottomMargin: 8
         radius: Theme.radius
         color: "#cc0d141b"
         border.color: Theme.border
-        height: 34
-        width: toolRow.implicitWidth + 16
+        height: Math.max(36, toolRow.implicitHeight + 16)
+        width: Math.min(toolRow.implicitWidth + 16, Math.max(1, videoArea.width - 16))
 
-        Row {
-            id: toolRow
-            anchors.centerIn: parent
-            spacing: 2
+        Flickable {
+            id: toolScroll
+            anchors.fill: parent
+            anchors.margins: 8
+            clip: true
+            contentWidth: Math.max(width, toolRow.implicitWidth)
+            contentHeight: toolRow.implicitHeight
+            flickableDirection: Flickable.HorizontalFlick
+            boundsBehavior: Flickable.StopAtBounds
+            interactive: contentWidth > width
 
-            component ToolButton: Rectangle {
-                property string glyph: ""
-                property string tip: ""
-                property bool active: false
-                property bool enabledTool: true
-                signal activated()
-                width: 28; height: 28; radius: 4
-                visible: enabledTool
-                color: active ? Theme.accentDim : (hover.hovered ? Theme.surfaceAlt : "transparent")
-                Text {
-                    anchors.centerIn: parent
-                    text: parent.glyph
-                    color: parent.active ? Theme.text : Theme.textMuted
-                    font.pixelSize: 14
-                }
-                HoverHandler { id: hover }
-                ToolTip {
-                    visible: hover.hovered && tip !== ""
-                    delay: 500
-                    x: (parent.width - width) / 2
-                    y: -height - 8
-                    contentItem: Text { text: tip; color: Theme.text; font.pixelSize: 11 }
-                    background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
-                }
-                // ReleaseWithinBounds takes an exclusive grab on press so the
-                // full-pane MouseArea (click-to-select / pan) behind the video
-                // can't steal the tap.
-                TapHandler {
-                    gesturePolicy: TapHandler.ReleaseWithinBounds
-                    onTapped: parent.activated()
-                }
-            }
+            Row {
+                id: toolRow
+                x: Math.max(0, (toolScroll.width - implicitWidth) / 2)
+                y: (toolScroll.height - implicitHeight) / 2
+                spacing: 2
 
-            // Quality: Fluent / (Balanced) / Clear. Balanced omitted until wired.
-            ToolButton {
-                glyph: root.qualityMain ? "HD" : "SD"
-                tip: root.qualityMain ? qsTr("Switch to Fluent (SD)") : qsTr("Switch to Clear (HD)")
-                active: root.qualityMain
-                onActivated: root.qualityMain = !root.qualityMain
-            }
-            ToolButton {
-                glyph: "◉"; enabledTool: true
-                tip: qsTr("Save snapshot")
-                onActivated: Devices.snapshot(root.deviceRow)
-            }
-            // Manual record: taps the displayed stream, no second connection.
-            ToolButton {
-                glyph: "⏺"; active: player.recording
-                tip: player.recording ? qsTr("Stop recording") : qsTr("Record video")
-                onActivated: player.recording ? player.stopRecording() : player.startRecording()
-            }
-            ToolButton {
-                glyph: "⟳"; active: root.viewRotation !== 0
-                tip: root.viewRotation !== 0 ? qsTr("Rotate view 90° (now %1°)").arg(root.viewRotation)
-                                            : qsTr("Rotate view 90°")
-                onActivated: Devices.setRotationOverride(root.deviceRow, root.viewRotation + 90)
-            }
-            // Fisheye cameras: pick how the picture is shown.
-            ToolButton {
-                id: viewModeButton
-                glyph: "◔"; active: root.dewarp; enabledTool: root.fisheyeLens
-                tip: qsTr("Fisheye view mode")
-                onActivated: viewModeMenu.popup(viewModeButton, 0, -viewModeMenu.implicitHeight - 6)
-            }
-            ToolButton {
-                glyph: "⊕"; active: root.zoom > 1.01
-                tip: root.zoom > 1.01 ? qsTr("Reset zoom") : qsTr("Digital zoom (scroll to adjust)")
-                onActivated: { if (root.zoom > 1.01) { root.zoom = 1; root.panX = 0; root.panY = 0; }
-                               else root.zoom = 2; }
-            }
-            ToolButton {
-                glyph: "⇅"; active: root.ptzOpen; enabledTool: root.capPtz
-                tip: qsTr("PTZ controls")
-                onActivated: root.ptzOpen = !root.ptzOpen
-            }
-            // Two-way talk over the Baichuan talk channel (DESIGN §5.4). Click to
-            // start, click again to stop; a failure shows on the tile.
-            ToolButton {
-                glyph: "🎙"; active: talk.active; enabledTool: root.capTalk
-                tip: talk.state === TalkSession.Talking ? qsTr("Talking — click to stop")
-                   : talk.state === TalkSession.Connecting ? qsTr("Connecting…")
-                   : qsTr("Two-way talk (click to start, click again to stop)")
-                onActivated: talk.active ? talk.stop() : Devices.startTalk(root.deviceRow, talk)
-            }
-            ToolButton {
-                glyph: "📢"; enabledTool: root.capSiren
-                tip: qsTr("Sound siren")
-                // AudioAlarmPlay takes its fields FLAT in param (verified on real
-                // firmware — a Set*-style wrapped object gets rspCode -4 "param
-                // error"). alarm_mode "times"/1 sounds a single blast.
-                onActivated: Devices.applySetting(root.deviceRow, "AudioAlarmPlay",
-                    { "alarm_mode": "times", "times": 1, "channel": Devices.channelOf(root.deviceRow) })
-            }
-            ToolButton {
-                glyph: "💡"; active: root.floodOn; enabledTool: root.capFloodlight
-                tip: qsTr("Toggle floodlight")
-                onActivated: {
-                    root.floodOn = !root.floodOn;       // optimistic; toast confirms
-                    Devices.toggleFloodlight(root.deviceRow);
+                component ToolButton: Rectangle {
+                    property string glyph: ""
+                    property string tip: ""
+                    property bool active: false
+                    property bool enabledTool: true
+                    signal activated()
+                    width: 28; height: 28; radius: 4
+                    visible: enabledTool
+                    color: active ? Theme.accentDim : (hover.hovered ? Theme.surfaceAlt : "transparent")
+                    Text {
+                        anchors.centerIn: parent
+                        text: parent.glyph
+                        color: parent.active ? Theme.text : Theme.textMuted
+                        font.pixelSize: 14
+                    }
+                    HoverHandler { id: hover }
+                    ToolTip {
+                        visible: hover.hovered && tip !== ""
+                        delay: 500
+                        x: (parent.width - width) / 2
+                        y: -height - 8
+                        contentItem: Text { text: tip; color: Theme.text; font.pixelSize: 11 }
+                        background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                    }
+                    TapHandler {
+                        gesturePolicy: TapHandler.ReleaseWithinBounds
+                        onTapped: parent.activated()
+                    }
                 }
-            }
-            // Pop out into a detached window (drag to another monitor).
-            ToolButton {
-                glyph: "⧉"
-                tip: qsTr("Pop out to a window")
-                onActivated: if (root.hasSource) root.popOut(root.deviceRow, root.label)
-            }
-            ToolButton {
-                glyph: "⛶"
-                tip: root.forceMain ? qsTr("Restore grid") : qsTr("Maximize")
-                onActivated: if (root.hasSource) root.toggleMaximize(root.deviceRow)
+
+                component IrisButton: Rectangle {
+                    id: irisButton
+                    property string direction: "open"
+                    property string label: "Open"
+                    property bool requested: false
+                    readonly property string statusTip: direction === "open"
+                        ? qsTr("Open iris · %1").arg(BoschTour.irisStatus)
+                        : qsTr("Close iris · %1").arg(BoschTour.irisStatus)
+                    width: 48; height: 28; radius: 4
+                    visible: root.isBoschFeed && BoschTour.connected
+                    color: irisPress.pressed ? Theme.accentDim : Theme.surface
+                    opacity: root.isBoschFeed && BoschTour.connected && BoschTour.irisAvailable ? 1 : 0.45
+                    border.color: Theme.border
+                    Text {
+                        anchors.centerIn: parent
+                        text: irisButton.label
+                        color: Theme.text
+                        font.pixelSize: 10
+                        font.bold: true
+                    }
+                    MouseArea {
+                        id: irisPress
+                        anchors.fill: parent
+                        enabled: root.isBoschFeed && BoschTour.connected && BoschTour.irisAvailable
+                        Accessible.name: irisButton.direction === "open"
+                            ? qsTr("Open iris; hold to adjust") : qsTr("Close iris; hold to adjust")
+                        onPressed: irisButton.requested = BoschTour.startIris(irisButton.direction)
+                        onReleased: {
+                            if (irisButton.requested)
+                                BoschTour.stopIris();
+                            irisButton.requested = false;
+                        }
+                        onCanceled: {
+                            if (irisButton.requested)
+                                BoschTour.stopIris();
+                            irisButton.requested = false;
+                        }
+                    }
+                    HoverHandler { id: irisHover }
+                    ToolTip {
+                        visible: irisHover.hovered
+                        delay: 500
+                        text: irisButton.statusTip
+                        contentItem: Text { text: irisButton.statusTip; color: Theme.text; font.pixelSize: 11 }
+                        background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                    }
+                }
+
+                ToolButton {
+                    glyph: root.qualityMain ? "HD" : "SD"
+                    tip: root.qualityMain ? qsTr("Switch to Fluent (SD)") : qsTr("Switch to Clear (HD)")
+                    active: root.qualityMain
+                    onActivated: root.qualityMain = !root.qualityMain
+                }
+
+                IrisButton { direction: "open"; label: qsTr("Open") }
+                IrisButton { direction: "close"; label: qsTr("Close") }
+                ToolButton {
+                    glyph: "A"
+                    active: BoschTour.irisStatus.startsWith("AUTO")
+                    enabledTool: root.isBoschFeed && BoschTour.connected
+                    tip: qsTr("Restore automatic exposure · current iris: %1").arg(BoschTour.irisStatus)
+                    onActivated: BoschTour.setIrisAuto()
+                }
+                ToolButton {
+                    glyph: "I"
+                    active: BoschTour.irisStatus.startsWith("MANUAL")
+                    enabledTool: root.isBoschFeed && BoschTour.connected
+                    tip: qsTr("Iris state: %1").arg(BoschTour.irisStatus)
+                    onActivated: BoschTour.refreshIris()
+                }
+
+                Repeater {
+                    model: root.isBoschFeed && BoschTour.connected ? BoschTour.presets : []
+                    delegate: Rectangle {
+                        id: presetButton
+                        required property var modelData
+                        readonly property string fullPositionName: String(modelData.name)
+                        readonly property string positionButtonText: root.forceMain
+                            ? fullPositionName
+                            : fullPositionName.trim().length > 0
+                                ? fullPositionName.trim().charAt(0).toUpperCase() : ""
+                        readonly property int tourIndex: root.positionSequenceIndex(modelData.token)
+                        readonly property string positionTip: !BoschTour.selectionTourMode
+                            ? qsTr("Camera Position")
+                            : tourIndex >= 0
+                                ? qsTr("Remove %1 from tour (step %2)")
+                                      .arg(fullPositionName).arg(tourIndex + 1)
+                                : qsTr("Add %1 to tour").arg(fullPositionName)
+                        readonly property bool positionEnabled: BoschTour.connected
+                            && (!BoschTour.busy || BoschTour.selectionTourRestoring)
+                            && (BoschTour.selectionTourMode || BoschTour.selectionTourRestoring
+                                || BoschTour.tourState === "stopped")
+                        width: root.forceMain
+                            ? Math.max(74, Math.min(150,
+                                fullPositionName.length * 6.3 + (tourIndex >= 0 ? 28 : 14)))
+                            : 28
+                        height: 28
+                        radius: 4
+                        color: tourIndex >= 0 ? Theme.accentDim
+                             : positionHover.hovered ? Theme.surfaceAlt : "transparent"
+                        border.color: tourIndex >= 0 || positionHover.hovered ? Theme.accent : Theme.border
+
+                        Text {
+                            id: positionLabel
+                            anchors.fill: parent
+                            anchors.leftMargin: root.forceMain
+                                ? (presetButton.tourIndex >= 0 ? 22 : 5) : 2
+                            anchors.rightMargin: root.forceMain ? 5 : 2
+                            anchors.topMargin: !root.forceMain && presetButton.tourIndex >= 0 ? 8 : 0
+                            text: presetButton.positionButtonText
+                            color: presetButton.positionEnabled ? Theme.text : Theme.textMuted
+                            font.pixelSize: root.forceMain ? 10 : 11
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                        Rectangle {
+                            visible: presetButton.tourIndex >= 0
+                            anchors.left: parent.left
+                            anchors.leftMargin: root.forceMain ? 0 : 1
+                            y: root.forceMain ? (parent.height - height) / 2 : 1
+                            width: root.forceMain ? 17 : 12
+                            height: width
+                            radius: width / 2
+                            color: Theme.accent
+                            Text {
+                                anchors.centerIn: parent
+                                text: presetButton.tourIndex + 1
+                                color: Theme.window
+                                font.pixelSize: root.forceMain ? 9 : 8
+                                font.bold: true
+                            }
+                        }
+                        HoverHandler { id: positionHover }
+                        ToolTip {
+                            visible: positionHover.hovered
+                            delay: 500
+                            text: presetButton.positionTip
+                            contentItem: Text { text: presetButton.positionTip; color: Theme.text; font.pixelSize: 11 }
+                            background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                        }
+                        TapHandler {
+                            enabled: presetButton.positionEnabled
+                            gesturePolicy: TapHandler.ReleaseWithinBounds
+                            onTapped: root.toggleTourPosition(presetButton.modelData)
+                        }
+                    }
+                }
+
+                ToolButton {
+                    visible: root.isBoschFeed && !BoschTour.connected
+                    glyph: "!"
+                    active: true
+                    tip: qsTr("Home Assistant is disconnected. Reconnect to restore Bosch PTZ, iris, positions, and tours.")
+                    onActivated: root.openBoschTourRequested()
+                }
+
+                ToolButton {
+                    glyph: "◉"
+                    tip: qsTr("Save snapshot")
+                    onActivated: Devices.snapshot(root.deviceRow)
+                }
+                ToolButton {
+                    glyph: "⏺"; active: player.recording
+                    tip: player.recording ? qsTr("Stop recording") : qsTr("Record video")
+                    onActivated: player.recording ? player.stopRecording() : player.startRecording()
+                }
+                ToolButton {
+                    glyph: "⟳"; active: root.viewRotation !== 0
+                    tip: root.viewRotation !== 0 ? qsTr("Rotate view 90° (now %1°)").arg(root.viewRotation)
+                                                : qsTr("Rotate view 90°")
+                    onActivated: Devices.setRotationOverride(root.deviceRow, root.viewRotation + 90)
+                }
+                ToolButton {
+                    id: viewModeButton
+                    glyph: "◔"; active: root.dewarp; enabledTool: root.fisheyeLens
+                    tip: qsTr("Fisheye view mode")
+                    onActivated: viewModeMenu.popup(viewModeButton, 0, -viewModeMenu.implicitHeight - 6)
+                }
+                ToolButton {
+                    glyph: "⊕"; active: root.zoom > 1.01
+                    tip: root.zoom > 1.01 ? qsTr("Reset zoom") : qsTr("Digital zoom (scroll to adjust)")
+                    onActivated: { if (root.zoom > 1.01) { root.zoom = 1; root.panX = 0; root.panY = 0; }
+                                   else root.zoom = 2; }
+                }
+                ToolButton {
+                    glyph: "⇅"; active: root.isBoschFeed ? root.boschPtzOpen : root.ptzOpen
+                    enabledTool: root.capPtz || (root.isBoschFeed && root.width >= 760 && root.height >= 460)
+                    tip: qsTr("PTZ controls")
+                    onActivated: {
+                        if (root.isBoschFeed) {
+                            root.boschPtzOpen = !root.boschPtzOpen;
+                            root.ptzOpen = false;
+                            if (root.boschPtzOpen && BoschTour.selectionTourMode)
+                                root.activateTourSelection();
+                        } else {
+                            root.ptzOpen = !root.ptzOpen;
+                        }
+                    }
+                }
+                ToolButton {
+                    glyph: "T"; active: BoschTour.selectionTourMode
+                    enabledTool: root.isBoschFeed && root.width >= 760 && root.height >= 460
+                    tip: !BoschTour.connected
+                         ? qsTr("Reconnect Home Assistant to restore positions and tours")
+                         : BoschTour.selectionTourMode
+                             ? qsTr("Turn off tour and clear positions")
+                             : qsTr("Select positions for a tour")
+                    onActivated: {
+                        if (!BoschTour.connected) {
+                            root.openBoschTourRequested();
+                            return;
+                        }
+                        if (!BoschTour.selectionTourMode) {
+                            root.boschPtzOpen = false;
+                            root.ptzOpen = false;
+                        }
+                        root.activateTourSelection();
+                    }
+                }
+                ToolButton {
+                    glyph: "🎙"; active: talk.active; enabledTool: root.capTalk
+                    tip: talk.state === TalkSession.Talking ? qsTr("Talking — click to stop")
+                       : talk.state === TalkSession.Connecting ? qsTr("Connecting…")
+                       : qsTr("Two-way talk (click to start, click again to stop)")
+                    onActivated: talk.active ? talk.stop() : Devices.startTalk(root.deviceRow, talk)
+                }
+                ToolButton {
+                    glyph: "📢"; enabledTool: root.capSiren
+                    tip: qsTr("Sound siren")
+                    onActivated: Devices.applySetting(root.deviceRow, "AudioAlarmPlay",
+                        { "alarm_mode": "times", "times": 1, "channel": Devices.channelOf(root.deviceRow) })
+                }
+                ToolButton {
+                    glyph: "💡"; active: root.floodOn; enabledTool: root.capFloodlight
+                    tip: qsTr("Toggle floodlight")
+                    onActivated: {
+                        root.floodOn = !root.floodOn;
+                        Devices.toggleFloodlight(root.deviceRow);
+                    }
+                }
+                ToolButton {
+                    glyph: "⧉"
+                    tip: qsTr("Pop out to a window")
+                    onActivated: if (root.hasSource) root.popOut(root.deviceRow, root.label)
+                }
+                ToolButton {
+                    glyph: "⛶"
+                    tip: root.forceMain ? qsTr("Restore grid") : qsTr("Maximize")
+                    onActivated: if (root.hasSource) root.toggleMaximize(root.deviceRow)
+                }
             }
         }
     }

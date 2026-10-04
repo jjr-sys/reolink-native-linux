@@ -38,6 +38,7 @@ add_library(reolink_core STATIC
     src/protocol/BaichuanControl.h src/protocol/BaichuanControl.cpp
     src/device/ActivityPolicy.h src/device/ActivityPolicy.cpp
     src/device/FrigateApi.h src/device/FrigateApi.cpp
+    src/device/BoschTourController.h src/device/BoschTourController.cpp
     src/device/ActivityGrid.h src/device/ActivityGrid.cpp
     src/device/DownloadPlan.h src/device/DownloadSource.h src/device/DownloadQueue.h src/device/DownloadQueue.cpp
     src/device/DeviceManager.h src/device/DeviceManager.cpp
@@ -93,6 +94,7 @@ set(APP_QML_FILES
     src/ui/qml/pages/PlaybackPage.qml
     src/ui/qml/pages/EventsPage.qml
     src/ui/qml/pages/DeviceSettingsPage.qml
+    src/ui/qml/pages/BoschTourPage.qml
     src/ui/qml/dialogs/AddDeviceDialog.qml
     src/ui/qml/dialogs/PropertiesDialog.qml
     src/ui/qml/dialogs/UserEditDialog.qml

@@ -62,7 +62,8 @@ Rectangle {
         Item { width: Theme.spacing * 2; height: 1 }
 
         Repeater {
-            model: [qsTr("Live View"), qsTr("Playback"), qsTr("Events"), qsTr("Device Settings")]
+            model: [qsTr("Live View"), qsTr("Playback"), qsTr("Events"),
+                    qsTr("Device Settings"), qsTr("Bosch Tour")]
 
             Rectangle {
                 required property int index

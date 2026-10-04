@@ -171,6 +171,7 @@ ApplicationWindow {
                     fullscreen: window.videoFullscreen
                     onFullscreenToggled: window.videoFullscreen = !window.videoFullscreen
                     onPopOut: (row, lbl) => window.openPopout(row, lbl)
+                    onOpenBoschTourRequested: nav.currentIndex = 4
                 }
                 PlaybackPage { id: playbackPage; active: nav.currentIndex === 1 }
                 EventsPage {
@@ -178,6 +179,7 @@ ApplicationWindow {
                         window.openEventPlayback(hostId, channel, timestamp)
                 }
                 DeviceSettingsPage { id: settingsPage }
+                BoschTourPage { id: boschTourPage }
             }
         }
     }

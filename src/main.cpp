@@ -6,6 +6,7 @@
 #include "core/Updater.h"
 #include "ui/TrayIcon.h"
 #include "device/DeviceDiscovery.h"
+#include "device/BoschTourController.h"
 #include "device/DeviceManager.h"
 #include "device/DownloadQueue.h"
 #include "device/ActivityGrid.h"
@@ -165,6 +166,7 @@ int main(int argc, char *argv[])
     rl::EventManager events(&database, &devices);
     rl::ActivityGrid activityGrid(&devices);
     rl::DeviceDiscovery discovery;
+    rl::BoschTourController boschTour(&credentials);
     rl::Updater updater;
     rl::DownloadQueue downloads([&devices](int row) { return devices.downloadSource(row); });
     rl::TrayIcon tray;
@@ -173,6 +175,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::ClipLoader>("ReolinkApp.Core", 1, 0, "ClipLoader");
     qmlRegisterType<rl::TalkSession>("ReolinkApp.Core", 1, 0, "TalkSession");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
+    qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Events", &events);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Activity", &activityGrid);
     // RL_MOCK_ACTIVITY="person:1:3@2;motion:1:4@4" plays scripted detections (Activity mode only).

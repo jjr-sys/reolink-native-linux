@@ -15,6 +15,7 @@ Item {
     property bool audioSuppressed: false // the doorbell pop-up is up: grid stays silent
     signal fullscreenToggled()
     signal popOut(int deviceRow, string label)
+    signal openBoschTourRequested()
 
     property int preset: 4
     property int maximizedIndex: -1
@@ -697,6 +698,7 @@ Item {
                     // again deselects it and mutes.
                     onClicked: (idx) => page.selectedIndex = page.selectedIndex === idx ? -1 : idx
                     onPopOut: (row, lbl) => page.popOut(row, lbl)
+                    onOpenBoschTourRequested: page.openBoschTourRequested()
                     onCameraDropped: (targetPane, row) => {
                         page.assignPane(targetPane, row);
                         if (page.activityMode) {
