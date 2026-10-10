@@ -56,9 +56,9 @@ private slots:
     void urls()
     {
         QCOMPARE(liveUrl("192.168.7.204", 5000, "bosch_camera"),
-                 QString("http://192.168.7.204:5000/api/go2rtc/api/stream.flv?src=bosch_camera"));
+                 QString("rtsp://192.168.7.204:8554/bosch_camera"));
         QCOMPARE(liveUrl("h", 5000, "a b&c"),
-                 QString("http://h:5000/api/go2rtc/api/stream.flv?src=a%20b%26c"));
+                 QString("rtsp://h:8554/a%20b%26c"));
         QCOMPARE(eventsUrl("h", 5000, 12.5, 50),
                  QString("http://h:5000/api/events?after=12.5&limit=50"));
         QCOMPARE(latestFrameUrl("h", 5000, "cam"), QString("http://h:5000/api/cam/latest.jpg"));

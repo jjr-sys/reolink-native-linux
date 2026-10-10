@@ -74,6 +74,7 @@ public:
         RotationRole,
         IsFisheyeRole,
         ViewModeRole,
+        HostNameRole,
     };
 
     DeviceManager(Database *db, CredentialStore *credentials, QObject *parent = nullptr);
@@ -111,9 +112,11 @@ public:
     Q_INVOKABLE void addDevice(const QString &addr, const QString &username,
                                const QString &password, bool https = true, int port = 0);
     // A Frigate server (http, no login): each enabled camera becomes a row.
-    Q_INVOKABLE void addFrigate(const QString &name, const QString &host, int port = 5000);
+    Q_INVOKABLE void addFrigate(const QString &name, const QString &host, int port = 8971,
+                                const QString &username = {}, const QString &password = {});
     // Checks the address answers like Frigate; reports through testDeviceResult.
-    Q_INVOKABLE void testFrigate(const QString &host, int port = 5000);
+    Q_INVOKABLE void testFrigate(const QString &host, int port = 8971,
+                                 const QString &username = {}, const QString &password = {});
     // Direct stream URL (rtsp://…, file …) — testing and generic-RTSP escape hatch.
     // Any embedded credentials are stripped to the keyring, not persisted in the DB.
     Q_INVOKABLE void addStreamUrl(const QString &name, const QString &url);
@@ -174,6 +177,15 @@ public:
     Q_INVOKABLE QVariantMap cameraInfo(int row) const;
     // Distinct host ids in list order (NVRs and standalone cameras), for grouping.
     Q_INVOKABLE QVariantList hostIds() const;
+    // The property/site name a host was added under (e.g. "Lascelles"), or empty
+    // if hostId is unknown. Distinct from a camera's own display name.
+    Q_INVOKABLE QString hostName(qint64 hostId) const;
+    // Distinct property/site names in list order, for a property filter.
+    Q_INVOKABLE QStringList propertyNames() const;
+    // Channel -> raw config-key camera name for a host (e.g. Frigate's "bosch_camera",
+    // not the pretty "Bosch Camera" NameRole shows). Frigate's own APIs need the raw
+    // key; each entry is {"channel": int, "camera": QString}.
+    Q_INVOKABLE QVariantList channelsForHost(qint64 hostId) const;
 
     // Live controls (channel 0). Fire-and-forget on the worker pool.
     Q_INVOKABLE void ptzMove(int row, const QString &op, int speed = 32);
@@ -404,7 +416,7 @@ private:
     // on the GUI thread. storeNew persists newPassword to the keyring first.
     void validateAsync(qint64 hostId, const QString &newPassword = QString(),
                        bool storeNew = false);
-    Validation validateFrigate(const HostRecord &rec);
+    Validation validateFrigate(const HostRecord &rec, const QString &password);
     void searchFrigateRecordings(int row, int year, int month, int day);
     void pollFrigate();
     int rowForHostId(qint64 hostId) const;

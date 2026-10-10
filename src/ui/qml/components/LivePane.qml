@@ -67,9 +67,20 @@ Rectangle {
     // streams stay RTSP (clean, and the NVR only allows ~1 Baichuan session).
     property string streamKey: ""
     property bool bcFallback: false // Baichuan slot busy → RTSP main for this round
+    // setPacketSource() stops the old stream synchronously. Ignore that expected
+    // Stopped state while replacing an RTSP source with Baichuan, or the recovery
+    // handler below schedules a timer that then stops every newly opened session.
+    property bool startingBaichuan: false
     // The NVR answered "stream not found" over RTSP (it relays some cameras, e.g. a
     // third-party one, only over its native protocol) → use Baichuan for the sub stream.
     property bool bcSub: false
+    // Baichuan sessions use a custom packet source, which StreamPlayer's worker
+    // deliberately does NOT auto-retry on a stall (unlike a plain RTSP pane) — the
+    // NVR's single Baichuan slot has to be re-requested through DeviceManager, not
+    // just re-read. Left alone, a mid-session stall would freeze this pane until the
+    // user swaps cameras or leaves and returns to Live View. bcRetries counts the
+    // unprompted restarts below; it resets once a frame actually arrives.
+    property int bcRetries: 0
 
     // These carry the DEVICE ROW, not the pane index: the page tracks which
     // camera is maximized/selected, so both survive a rearrange.
@@ -101,6 +112,14 @@ Rectangle {
         id: keepAlive
         interval: root.keepAliveMs
         onTriggered: root.releaseStream()
+    }
+
+    // Short pause before re-requesting a Baichuan session after an unprompted
+    // stall, so a genuinely down NVR doesn't spin in a tight restart loop.
+    Timer {
+        id: bcRetryTimer
+        interval: 1500
+        onTriggered: root.updateSource()
     }
 
     function updateSource() {
@@ -139,10 +158,14 @@ Rectangle {
             player.stop();
         } else if (key.substring(0, 3) === "bc:") {
             player.loop = false;
+            root.startingBaichuan = true;
             Devices.startBaichuanLive(root.deviceRow, player, true);
+            root.startingBaichuan = false;
         } else if (key.substring(0, 4) === "bcs:") {
             player.loop = false;
+            root.startingBaichuan = true;
             Devices.startBaichuanLive(root.deviceRow, player, false);
+            root.startingBaichuan = false;
         } else {
             // Set loop before start() so the worker sees the right value from
             // frame one (the declarative `loop:` binding can lag the handler).
@@ -165,7 +188,7 @@ Rectangle {
         if (boschTourOwnedHere && BoschTour.selectionTourMode)
             BoschTour.endSelectionTour();
         boschTourOwnedHere = false;
-        bcFallback = false; bcSub = false; releaseStream(); updateSource();
+        bcFallback = false; bcSub = false; bcRetries = 0; releaseStream(); updateSource();
     }
     onLabelChanged: {
         if (!isBoschFeed) {
@@ -202,16 +225,38 @@ Rectangle {
         onTriggered: BoschTour.refreshSceneMode()
     }
 
-    // The NVR grants only ~1 Baichuan session. If HD live can't get the slot,
-    // fall back to RTSP main once (artifact-prone on 8K duos, but beats a dead
-    // pane); the next SD/HD flip or camera change retries Baichuan.
+    // The NVR grants only ~1 Baichuan session, and its custom packet source is
+    // deliberately not auto-retried by StreamPlayer's worker the way an RTSP pane
+    // is (see runSession's packetSource check) — a stall, a slot that's busy, or
+    // the NVR just dropping the session all end the worker for good and need
+    // DeviceManager to re-request a session, which nothing else does on its own.
+    // Left alone, that freezes the pane until the user swaps cameras or leaves and
+    // returns to Live View. Retry a few times first (worth it — a blip shouldn't
+    // cost HD quality), then for the main/HD case fall back to RTSP once
+    // (artifact-prone on 8K duos, but beats a dead pane); the substream case has
+    // no RTSP fallback — that's why it's on Baichuan in the first place — so it
+    // just keeps retrying. The next SD/HD flip or camera change retries Baichuan.
     Connections {
         target: player
         function onStateChanged() {
-            if (player.state === StreamPlayer.Error && !root.bcFallback
-                && root.streamKey.substring(0, 3) === "bc:") {
-                root.bcFallback = true;
-                root.updateSource();
+            if (root.startingBaichuan && player.state === StreamPlayer.Stopped)
+                return;
+            if (player.state === StreamPlayer.Streaming) {
+                bcRetryTimer.stop();
+                root.bcRetries = 0;
+            } else if ((player.state === StreamPlayer.Stopped || player.state === StreamPlayer.Error)
+                       && root.streamKey !== ""
+                       && (root.streamKey.substring(0, 3) === "bc:"
+                           || root.streamKey.substring(0, 4) === "bcs:")) {
+                if (root.bcRetries < 3) {
+                    root.bcRetries++;
+                    root.streamKey = ""; // let updateSource() see this as a fresh request
+                    bcRetryTimer.restart();
+                } else if (root.streamKey.substring(0, 3) === "bc:" && !root.bcFallback) {
+                    root.bcFallback = true;
+                    root.streamKey = "";
+                    root.updateSource();
+                }
             } else if (player.state === StreamPlayer.Error && !root.bcSub && !root.effectiveMain
                        && root.streamKey.startsWith("rtsp://")
                        && player.errorString.indexOf("Stream not found") === 0) {

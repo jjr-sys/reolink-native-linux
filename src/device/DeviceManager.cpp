@@ -8,6 +8,7 @@
 #include "media/StreamPlayer.h"
 #include "protocol/BaichuanChannels.h"
 #include "protocol/BaichuanClient.h"
+#include "protocol/BcLiveFramePacer.h"
 #include "protocol/BaichuanControl.h"
 #include "protocol/ReolinkHttpClient.h"
 
@@ -60,16 +61,11 @@ QString viewModeKey(qint64 hostId, int channel)
 {
     return QStringLiteral("viewMode/%1:%2").arg(hostId).arg(channel);
 }
-// Frigate names its cameras like config keys ("bosch_camera"). Show those as a person
-// would write them; the raw key stays in the entry, since Frigate's URLs need it.
+// Frigate names its cameras like config keys ("bosch_camera"); show those as a person
+// would write them. The raw key stays in the entry, since Frigate's URLs need it.
 QString displayName(const QString &name, const QString &kind)
 {
-    if (kind != QLatin1String("frigate") || name.contains(QLatin1Char(' ')))
-        return name;
-    QStringList words = name.split(QRegularExpression(QStringLiteral("[_-]+")), Qt::SkipEmptyParts);
-    for (QString &w : words)
-        w[0] = w[0].toUpper();
-    return words.join(QLatin1Char(' '));
+    return kind == QLatin1String("frigate") ? frigate::displayCameraName(name) : name;
 }
 const QStringList kViewModes{"fisheye", "ptz", "panorama", "dual", "quad", "fisheye_ptz"};
 // Load a camera's saved fisheye settings into a device entry.
@@ -252,7 +248,8 @@ void DeviceManager::applyConnectivity(qint64 hostId, bool transportOk,
                 e.online = it.value();
                 e.status = it.value() ? tr("online") : tr("offline");
                 emit dataChanged(index(i), index(i));
-                emit connectivityChanged(hostId, e.channel, e.chanName, it.value());
+                emit connectivityChanged(hostId, e.channel, displayName(e.chanName, e.rec.kind),
+                                         it.value());
             }
             break;
         }
@@ -530,6 +527,8 @@ QVariant DeviceManager::data(const QModelIndex &index, int role) const
         return e.battery.present ? e.battery.percent : -1;
     case BatteryChargingRole:
         return e.battery.charging;
+    case HostNameRole:
+        return e.rec.name;
     }
     return {};
 }
@@ -560,6 +559,7 @@ QHash<int, QByteArray> DeviceManager::roleNames() const
         {RotationRole, "rotationOverride"},
         {IsFisheyeRole, "isFisheye"},
         {ViewModeRole, "viewMode"},
+        {HostNameRole, "hostName"},
     };
 }
 
@@ -925,15 +925,18 @@ void DeviceManager::postValidation(qint64 hostId, const Validation &v)
         this, [this, hostId, v] { applyValidation(hostId, v); }, Qt::QueuedConnection);
 }
 
-DeviceManager::Validation DeviceManager::validateFrigate(const HostRecord &rec)
+DeviceManager::Validation DeviceManager::validateFrigate(const HostRecord &rec,
+                                                          const QString &password)
 {
     Validation v;
+    frigate::setCredentials(rec.addr, rec.port, rec.username, password);
     QString error;
     const QByteArray body = frigate::httpGet(frigate::configUrl(rec.addr, rec.port), 10000, &error);
     const Json cfg = Json::parse(body.toStdString(), nullptr, false);
     const QStringList names = cfg.is_discarded() ? QStringList() : frigate::parseCameraNames(cfg);
     if (names.isEmpty()) {
-        v.problem = Problem::Unreachable;
+        v.problem = error.contains(QStringLiteral("sign-in"), Qt::CaseInsensitive)
+                        ? Problem::Auth : Problem::Unreachable;
         v.status = !error.isEmpty() ? error
                    : cfg.is_discarded() ? tr("not a Frigate server")
                                         : tr("Frigate has no enabled cameras");
@@ -955,14 +958,16 @@ DeviceManager::Validation DeviceManager::validateFrigate(const HostRecord &rec)
     return v;
 }
 
-void DeviceManager::addFrigate(const QString &name, const QString &host, int port)
+void DeviceManager::addFrigate(const QString &name, const QString &host, int port,
+                               const QString &username, const QString &password)
 {
     HostRecord rec;
     rec.kind = QStringLiteral("frigate");
     rec.name = name.trimmed().isEmpty() ? host : name.trimmed();
     rec.addr = host;
-    rec.port = port > 0 ? port : 5000;
-    rec.https = false;
+    rec.port = port > 0 ? port : 8971;
+    rec.https = rec.port == 8971;
+    rec.username = username.trimmed();
     rec.id = m_db->addHost(rec);
     if (rec.id < 0) {
         emit deviceError(host, m_db->lastError());
@@ -976,13 +981,15 @@ void DeviceManager::addFrigate(const QString &name, const QString &host, int por
     m_entries.append(e);
     endInsertRows();
     emit countChanged();
-    validateAsync(rec.id);
+    validateAsync(rec.id, password, !password.isEmpty());
 }
 
-void DeviceManager::testFrigate(const QString &host, int port)
+void DeviceManager::testFrigate(const QString &host, int port,
+                                const QString &username, const QString &password)
 {
-    const int portv = port > 0 ? port : 5000;
-    m_pending.addFuture(QtConcurrent::run([this, host, portv] {
+    const int portv = port > 0 ? port : 8971;
+    m_pending.addFuture(QtConcurrent::run([this, host, portv, username, password] {
+        frigate::setCredentials(host, portv, username.trimmed(), password);
         QString error;
         const QByteArray body = frigate::httpGet(frigate::configUrl(host, portv), 10000, &error);
         const Json cfg = Json::parse(body.toStdString(), nullptr, false);
@@ -990,7 +997,9 @@ void DeviceManager::testFrigate(const QString &host, int port)
         const bool ok = !names.isEmpty();
         QString problem, message;
         if (!ok) {
-            problem = error.isEmpty() ? QStringLiteral("protocol") : QStringLiteral("transport");
+            problem = error.contains(QStringLiteral("sign-in"), Qt::CaseInsensitive)
+                          ? QStringLiteral("auth")
+                          : error.isEmpty() ? QStringLiteral("protocol") : QStringLiteral("transport");
             message = !error.isEmpty() ? error
                       : cfg.is_discarded() ? tr("the address did not answer like a Frigate server")
                                            : tr("Frigate has no enabled cameras");
@@ -1067,7 +1076,8 @@ void DeviceManager::pollFrigate()
                         if (!frigate::startsNewBurst(last, ev.start))
                             continue;
                         last = ev.start;
-                        emit detectionEvent(hostId, channelOf.value(ev.camera), type, ev.camera);
+                        emit detectionEvent(hostId, channelOf.value(ev.camera), type,
+                                           displayName(ev.camera, QStringLiteral("frigate")));
                     }
                     m_frigateWatermark[hostId] = frigate::newWatermark(after, events);
                 },
@@ -1124,7 +1134,7 @@ void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, boo
         }
 
         if (rec.kind == QLatin1String("frigate")) {
-            postValidation(hostId, validateFrigate(rec));
+            postValidation(hostId, validateFrigate(rec, password));
             return;
         }
 
@@ -1760,6 +1770,8 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     p.uid = e.uid;
     p.mainStream = mainStream;
     p.startEpoch = startEpoch; // <= 0 = live (cmd 3 Preview), else by-time playback
+    const bool smoothLive = startEpoch <= 0 && player->smoothing();
+    p.smoothLive = smoothLive;
 
     auto client = std::make_shared<BaichuanClient>(p);
     client->setAudioHandler(player->audioFeed()); // before start(): read by the worker
@@ -1783,7 +1795,8 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     player->setPacketSource(
         [client](unsigned char *buf, int size) { return client->read(buf, size); },
         format,
-        [client] { client->stop(); });
+        [client] { client->stop(); },
+        smoothLive ? int(BcLiveFramePacer::kDelayUs / 1000) : 0);
     player->start();
 }
 
@@ -2205,6 +2218,37 @@ QVariantList DeviceManager::hostIds() const
         if (!ids.contains(e.rec.id))
             ids.append(e.rec.id);
     return ids;
+}
+
+QString DeviceManager::hostName(qint64 hostId) const
+{
+    for (const Entry &e : m_entries)
+        if (e.rec.id == hostId)
+            return e.rec.name;
+    return {};
+}
+
+QStringList DeviceManager::propertyNames() const
+{
+    QStringList names;
+    for (const Entry &e : m_entries)
+        if (!names.contains(e.rec.name))
+            names.append(e.rec.name);
+    return names;
+}
+
+QVariantList DeviceManager::channelsForHost(qint64 hostId) const
+{
+    QVariantList out;
+    for (const Entry &e : m_entries) {
+        if (e.rec.id != hostId)
+            continue;
+        QVariantMap m;
+        m["channel"] = e.channel;
+        m["camera"] = e.chanName;
+        out.append(m);
+    }
+    return out;
 }
 
 void DeviceManager::toggleFloodlight(int row)

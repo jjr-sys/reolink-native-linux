@@ -40,6 +40,7 @@ public:
         int channel = 0;
         QString uid;                    // camera UID (from GetChannelstatus)
         bool mainStream = true;
+        bool smoothLive = false;        // pace live access units on their camera timestamps
         qint64 startEpoch = 0;          // 0 => live preview; else recorded playback from here
     };
 

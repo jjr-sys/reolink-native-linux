@@ -75,6 +75,41 @@ Item {
                 bottomPadding: 2
             }
             Item { Layout.fillWidth: true }
+            // Re-pull each Frigate property's own event history — the inbox only
+            // ever files what it saw live, so a quiet camera (or one that was
+            // cleared) can lag behind what Frigate itself actually recorded.
+            Rectangle {
+                implicitWidth: syncText.implicitWidth + 20
+                height: 30
+                radius: Theme.radius
+                color: syncHover.hovered ? Theme.surfaceAlt : "transparent"
+                border.color: Theme.border
+                Text {
+                    id: syncText
+                    anchors.centerIn: parent
+                    text: qsTr("Sync Frigate history")
+                    color: Theme.textMuted
+                    font.pixelSize: 12
+                }
+                HoverHandler { id: syncHover }
+                TapHandler { onTapped: Events.syncAllFrigateHistory() }
+            }
+            Rectangle {
+                implicitWidth: notifText.implicitWidth + 20
+                height: 30
+                radius: Theme.radius
+                color: notifHover.hovered ? Theme.surfaceAlt : "transparent"
+                border.color: Theme.border
+                Text {
+                    id: notifText
+                    anchors.centerIn: parent
+                    text: Events.desktopNotifications ? qsTr("Notifications: On") : qsTr("Notifications: Off")
+                    color: Events.desktopNotifications ? Theme.text : Theme.textMuted
+                    font.pixelSize: 12
+                }
+                HoverHandler { id: notifHover }
+                TapHandler { onTapped: Events.desktopNotifications = !Events.desktopNotifications }
+            }
             Rectangle {
                 visible: Events.count > 0
                 implicitWidth: clearText.implicitWidth + 20
@@ -127,7 +162,58 @@ Item {
                 }
             }
 
-            // Camera filter: a chip-styled dropdown listing the cameras.
+            // Property filter: a chip-styled dropdown listing the properties/sites
+            // (e.g. "Lascelles", "Farm"). Cameras with the same name on different
+            // properties (two "Kitchen"s) only get told apart once this is combined
+            // with the camera filter below, so picking a camera also pins its property.
+            Rectangle {
+                id: propChip
+                property bool active: Events.propertyFilter !== ""
+                implicitWidth: propChipText.implicitWidth + 34
+                height: 30
+                radius: 15
+                color: active ? Theme.accentDim : (propChipHover.hovered ? Theme.surfaceAlt : Theme.surface)
+                border.color: active ? Theme.accent : Theme.border
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 5
+                    Text {
+                        id: propChipText
+                        text: propChip.active ? Events.propertyFilter : qsTr("All properties")
+                        color: propChip.active ? Theme.text : Theme.textMuted
+                        font.pixelSize: 12
+                    }
+                    Text { text: "\u25be"; color: Theme.textMuted; font.pixelSize: 10
+                           anchors.verticalCenter: parent.verticalCenter }
+                }
+                HoverHandler { id: propChipHover }
+                TapHandler { onTapped: propMenu.popup() }
+                ThemedMenu {
+                    id: propMenu
+                    // Devices.count is read only to make this recompute when the
+                    // device list changes; propertyNames() itself isn't reactive.
+                    property var names: { Devices.count; return Devices.propertyNames() }
+                    ThemedMenuItem {
+                        text: qsTr("All properties")
+                        onTriggered: { Events.propertyFilter = ""; Events.cameraFilter = "" }
+                    }
+                    ThemedMenuSeparator {}
+                    Instantiator {
+                        model: propMenu.names
+                        delegate: ThemedMenuItem {
+                            required property string modelData
+                            text: modelData
+                            onTriggered: { Events.propertyFilter = modelData; Events.cameraFilter = "" }
+                        }
+                        onObjectAdded: (i, o) => propMenu.insertItem(i + 2, o)
+                        onObjectRemoved: (i, o) => propMenu.removeItem(o)
+                    }
+                }
+            }
+
+            // Camera filter: a chip-styled dropdown listing the cameras, scoped to
+            // the selected property (if any). Picking one pins its property too, so
+            // two same-named cameras on different properties can't be confused.
             Rectangle {
                 id: camChip
                 property bool active: Events.cameraFilter !== ""
@@ -159,8 +245,14 @@ Item {
                         model: Devices
                         delegate: ThemedMenuItem {
                             required property string name
-                            text: name
-                            onTriggered: Events.cameraFilter = name
+                            required property string hostName
+                            text: hostName.length > 0 ? name + " \u2014 " + hostName : name
+                            visible: Events.propertyFilter === "" || hostName === Events.propertyFilter
+                            height: visible ? implicitHeight : 0
+                            onTriggered: {
+                                Events.propertyFilter = hostName
+                                Events.cameraFilter = name
+                            }
                         }
                         onObjectAdded: (i, o) => camMenu.insertItem(i + 2, o)
                         onObjectRemoved: (i, o) => camMenu.removeItem(o)
@@ -183,6 +275,7 @@ Item {
                 required property int index
                 required property string type
                 required property string camera
+                required property string property
                 required property string timeText
                 required property string thumbnail
                 required property var hostId
@@ -246,7 +339,7 @@ Item {
                             font.bold: true
                         }
                         Text {
-                            text: camera
+                            text: property.length > 0 ? camera + "  ·  " + property : camera
                             color: Theme.text
                             font.pixelSize: 13
                             elide: Text.ElideRight
@@ -288,8 +381,10 @@ Item {
                 }
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: Events.filter.length > 0 ? qsTr("No events of this type")
-                                                   : qsTr("No events yet")
+                    text: (Events.filter.length > 0 || Events.cameraFilter.length > 0
+                           || Events.propertyFilter.length > 0)
+                          ? qsTr("No events match this filter")
+                          : qsTr("No events yet")
                     color: Theme.text
                     font.pixelSize: 14
                 }
@@ -299,6 +394,30 @@ Item {
                     color: Theme.textMuted
                     font.pixelSize: 12
                 }
+            }
+        }
+
+        // ---- History depth ----
+        // The inbox only ever holds events seen live since it was last connected,
+        // capped at 100 total across every camera on every property, so a busy
+        // camera can push a quiet one's older events out. This says plainly how
+        // far back the current view actually reaches.
+        Text {
+            Layout.fillWidth: true
+            Layout.topMargin: 2
+            visible: Events.count > 0
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            color: Theme.textMuted
+            font.pixelSize: 11
+            text: {
+                const oldest = Events.oldestVisibleTimestamp
+                if (oldest <= 0)
+                    return ""
+                const when = Qt.formatDateTime(new Date(oldest * 1000), "MMM d, yyyy hh:mm")
+                return Events.historyTrimmed
+                       ? qsTr("Showing back to %1 — older events were trimmed to keep the shared 100-event limit").arg(when)
+                       : qsTr("Showing the complete history, back to %1").arg(when)
             }
         }
     }

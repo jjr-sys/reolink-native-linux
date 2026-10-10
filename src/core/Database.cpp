@@ -2,6 +2,7 @@
 
 #include "Log.h"
 
+#include <QDateTime>
 #include <QFile>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -204,18 +205,61 @@ bool Database::setEventThumbnail(qint64 id, const QString &path)
     return true;
 }
 
-bool Database::trimEvents(int keep)
+bool Database::setEventCamera(qint64 id, const QString &camera)
 {
     QSqlQuery q(db());
-    q.prepare(QStringLiteral(
-        "DELETE FROM events WHERE id NOT IN "
-        "(SELECT id FROM events ORDER BY ts DESC, id DESC LIMIT :keep)"));
-    q.bindValue(QStringLiteral(":keep"), keep);
+    q.prepare(QStringLiteral("UPDATE events SET camera = :cam WHERE id = :id"));
+    q.bindValue(QStringLiteral(":cam"), camera);
+    q.bindValue(QStringLiteral(":id"), id);
     if (!q.exec()) {
         m_lastError = q.lastError().text();
         return false;
     }
     return true;
+}
+
+QStringList Database::purgeEventsOlderThan(qint64 maxAgeSecs)
+{
+    const qint64 cutoff = QDateTime::currentSecsSinceEpoch() - maxAgeSecs;
+    QStringList thumbs;
+    QSqlQuery sel(db());
+    sel.prepare(QStringLiteral(
+        "SELECT thumbnail FROM events WHERE ts < :cutoff AND thumbnail != ''"));
+    sel.bindValue(QStringLiteral(":cutoff"), cutoff);
+    if (sel.exec())
+        while (sel.next())
+            thumbs.append(sel.value(0).toString());
+
+    QSqlQuery del(db());
+    del.prepare(QStringLiteral("DELETE FROM events WHERE ts < :cutoff"));
+    del.bindValue(QStringLiteral(":cutoff"), cutoff);
+    if (!del.exec())
+        m_lastError = del.lastError().text();
+    return thumbs;
+}
+
+QStringList Database::trimHostEvents(qint64 hostId, int keep)
+{
+    QStringList thumbs;
+    QSqlQuery sel(db());
+    sel.prepare(QStringLiteral(
+        "SELECT thumbnail FROM events WHERE host_id = :host AND thumbnail != '' AND id NOT IN "
+        "(SELECT id FROM events WHERE host_id = :host ORDER BY ts DESC, id DESC LIMIT :keep)"));
+    sel.bindValue(QStringLiteral(":host"), hostId);
+    sel.bindValue(QStringLiteral(":keep"), keep);
+    if (sel.exec())
+        while (sel.next())
+            thumbs.append(sel.value(0).toString());
+
+    QSqlQuery del(db());
+    del.prepare(QStringLiteral(
+        "DELETE FROM events WHERE host_id = :host AND id NOT IN "
+        "(SELECT id FROM events WHERE host_id = :host ORDER BY ts DESC, id DESC LIMIT :keep)"));
+    del.bindValue(QStringLiteral(":host"), hostId);
+    del.bindValue(QStringLiteral(":keep"), keep);
+    if (!del.exec())
+        m_lastError = del.lastError().text();
+    return thumbs;
 }
 
 qint64 Database::addHost(const HostRecord &rec)

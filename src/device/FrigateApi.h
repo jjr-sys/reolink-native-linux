@@ -8,10 +8,9 @@
 #include <QStringList>
 #include <QVector>
 
-// A Frigate NVR server (http, port 5000, no login), used by DeviceManager as a third
-// kind of site. Only the parts the app needs: the camera list, live video, and
-// detection events. Live video goes through Frigate's own go2rtc proxy over the
-// normal port as an HTTP-FLV stream — go2rtc's RTSP port is often not published.
+// A Frigate server, used by DeviceManager as a third kind of site. Port 8971 uses
+// Frigate's authenticated HTTPS API; port 5000 remains supported for legacy servers.
+// Live video uses Frigate's go2rtc RTSP restream on port 8554.
 namespace rl::frigate {
 
 struct Event {
@@ -23,6 +22,10 @@ struct Event {
 
 // Enabled cameras in /api/config. go2rtc-only streams are not cameras and are ignored.
 QStringList parseCameraNames(const Json &config);
+// Frigate names its cameras like config keys ("bosch_camera"). Show that the way a
+// person would write it; a name that already has a space (e.g. previously stored
+// under an older, already-pretty form) is returned unchanged.
+QString displayCameraName(const QString &name);
 // /api/events reply. Entries without id, camera and start_time are dropped.
 QVector<Event> parseEvents(const Json &events);
 // The app's detection type for a Frigate object label ("person", "vehicle", "pet"),
@@ -45,6 +48,10 @@ inline bool startsNewBurst(double lastRaisedStart, double start)
 inline constexpr int kClipPreSecs = 25;
 inline constexpr int kClipPostSecs = 20;
 QString clipUrl(const QString &host, int port, const QString &camera, qint64 timestamp);
+// The frame Frigate saved for a specific event (its own event id, e.g.
+// "1790171530.03951-kul3vc") — unlike a live snapshot, this is the actual frame from
+// when the event happened, so it's what backfilled history has to use for a thumbnail.
+QString snapshotUrl(const QString &host, int port, const QString &eventId);
 
 // ---- Recordings (Playback page) -------------------------------------------------------
 // Frigate stores ~10 s segments. The timeline wants continuous ranges, and the calendar
@@ -70,6 +77,11 @@ QString configUrl(const QString &host, int port);
 QString eventsUrl(const QString &host, int port, double after, int limit);
 QString liveUrl(const QString &host, int port, const QString &camera);
 QString latestFrameUrl(const QString &host, int port, const QString &camera);
+
+// Register the Frigate login for this host. The HTTP helper obtains and caches the
+// session cookie; credentials are kept by the OS keyring, not in this module.
+void setCredentials(const QString &host, int port, const QString &username,
+                    const QString &password);
 
 // Blocking GET for worker threads. Empty result with `error` set on failure.
 QByteArray httpGet(const QString &url, int timeoutMs, QString *error = nullptr);
