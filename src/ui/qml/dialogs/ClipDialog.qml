@@ -15,7 +15,7 @@ Dialog {
     id: dialog
     modal: true
     width: Math.min(900, Overlay.overlay ? Overlay.overlay.width - 60 : 900)
-    height: width * 9 / 16 + 240 + (transcript !== "" ? 70 : 0)
+    height: width * 9 / 16 + 240 + (transcript !== "" ? 86 : 0)
     anchors.centerIn: Overlay.overlay
     padding: Theme.spacing * 2
 
@@ -24,6 +24,9 @@ Dialog {
     property string url: ""
     // Audio events: what was said, and the state of an NVR fetch still in progress.
     property string transcript: ""
+    // Which model produced `transcript` (e.g. "Parakeet", "Mega-ASR"). Empty for non-audio
+    // clips (a Frigate detection has no transcript or model at all).
+    property string modelLabel: ""
     property bool pending: false
     property string pendingError: ""
     signal fallbackRequested()
@@ -47,26 +50,28 @@ Dialog {
     // Events page that is a row, whose tap opens the clip again. Ignore opens that arrive
     // right after a close.
     property double closedAt: 0
-    function openClip(cameraName, timeText, clipUrl, transcriptText) {
+    function openClip(cameraName, timeText, clipUrl, transcriptText, modelLabelText) {
         if (Date.now() - closedAt < 500)
             return;
         camera = cameraName;
         when = timeText;
         url = clipUrl;
         transcript = transcriptText || "";
+        modelLabel = modelLabelText || "";
         pending = false;
         pendingError = "";
         open();
     }
     // Opens at once while the recording is still being fetched from the NVR; provide() or
     // fail() finish it.
-    function openPending(cameraName, timeText, transcriptText) {
+    function openPending(cameraName, timeText, transcriptText, modelLabelText) {
         if (Date.now() - closedAt < 500)
             return;
         camera = cameraName;
         when = timeText;
         url = "";
         transcript = transcriptText || "";
+        modelLabel = modelLabelText || "";
         pending = true;
         pendingError = "";
         open();
@@ -249,16 +254,26 @@ Dialog {
         }
 
         // ---- What was said (audio events) ----
-        Text {
-            visible: dialog.transcript !== ""
+        ColumnLayout {
             Layout.fillWidth: true
-            Layout.maximumHeight: 64
-            wrapMode: Text.Wrap
-            elide: Text.ElideRight
-            color: Theme.text
-            font.pixelSize: 14
-            font.italic: true
-            text: "\u201c" + dialog.transcript + "\u201d"
+            spacing: 2
+            visible: dialog.transcript !== ""
+            Text {
+                visible: dialog.modelLabel !== ""
+                text: dialog.modelLabel
+                color: Theme.textMuted
+                font.pixelSize: 11
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.maximumHeight: 64
+                wrapMode: Text.Wrap
+                elide: Text.ElideRight
+                color: Theme.text
+                font.pixelSize: 14
+                font.italic: true
+                text: "\u201c" + dialog.transcript + "\u201d"
+            }
         }
 
         // ---- Scrub bar ----

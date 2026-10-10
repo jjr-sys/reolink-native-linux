@@ -67,6 +67,10 @@ Rectangle {
     // streams stay RTSP (clean, and the NVR only allows ~1 Baichuan session).
     property string streamKey: ""
     property bool bcFallback: false // Baichuan slot busy → RTSP main for this round
+    // setPacketSource() stops the old stream synchronously. Ignore that expected
+    // Stopped state while replacing an RTSP source with Baichuan, or the recovery
+    // handler below schedules a timer that then stops every newly opened session.
+    property bool startingBaichuan: false
     // The NVR answered "stream not found" over RTSP (it relays some cameras, e.g. a
     // third-party one, only over its native protocol) → use Baichuan for the sub stream.
     property bool bcSub: false
@@ -153,10 +157,14 @@ Rectangle {
             player.stop();
         } else if (key.substring(0, 3) === "bc:") {
             player.loop = false;
+            root.startingBaichuan = true;
             Devices.startBaichuanLive(root.deviceRow, player, true);
+            root.startingBaichuan = false;
         } else if (key.substring(0, 4) === "bcs:") {
             player.loop = false;
+            root.startingBaichuan = true;
             Devices.startBaichuanLive(root.deviceRow, player, false);
+            root.startingBaichuan = false;
         } else {
             // Set loop before start() so the worker sees the right value from
             // frame one (the declarative `loop:` binding can lag the handler).
@@ -194,7 +202,10 @@ Rectangle {
     Connections {
         target: player
         function onStateChanged() {
+            if (root.startingBaichuan && player.state === StreamPlayer.Stopped)
+                return;
             if (player.state === StreamPlayer.Streaming) {
+                bcRetryTimer.stop();
                 root.bcRetries = 0;
             } else if ((player.state === StreamPlayer.Stopped || player.state === StreamPlayer.Error)
                        && root.streamKey !== ""

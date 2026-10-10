@@ -68,6 +68,9 @@ QVector<Event> parseEvents(const Json &events)
                     ev.triggers << QString::fromStdString(t.get<std::string>());
         ev.scoreText = e.contains("scores") ? scoreTextFor(e["scores"]) : QString();
         ev.transcript = str(e, "transcript"); // null -> empty
+        ev.model = str(e, "model");
+        if (e.contains("mega_asr") && e["mega_asr"].is_object())
+            ev.megaAsrTranscript = str(e["mega_asr"], "transcript"); // null/absent -> empty (not done yet, or failed)
         ev.hasClip = e.contains("has_clip") && e["has_clip"].is_boolean() && e["has_clip"].get<bool>();
         out.append(ev);
     }
@@ -84,6 +87,18 @@ Status parseStatus(const Json &status)
     s.transcriptionPaused = status["transcription_paused"].get<bool>();
     s.pausedReason = str(status, "paused_reason");
     return s;
+}
+
+QString modelDisplayName(const QString &raw)
+{
+    if (raw.isEmpty())
+        return {};
+    if (raw == QLatin1String("parakeet"))
+        return QObject::tr("Parakeet");
+    if (raw == QLatin1String("mega-asr"))
+        return QObject::tr("Mega-ASR");
+    // Whisper models are stored/named by their model directory, e.g. "small.en".
+    return QObject::tr("Whisper (%1)").arg(raw);
 }
 
 QString triggerText(const QStringList &triggers)

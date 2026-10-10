@@ -47,11 +47,40 @@ private slots:
     {
         const auto v = parseEvents(J("[{'id':'a-b','time':5,'camera':'kitchen','triggers':['threat_speech'],"
                                      "'scores':{'phrases':2,'categories':['threat','abuse']},"
-                                     "'transcript':'i will hurt you','has_clip':false}]"));
+                                     "'transcript':'i will hurt you','model':'parakeet','has_clip':false}]"));
         QCOMPARE(v.size(), 1);
         QCOMPARE(v[0].transcript, QString("i will hurt you"));
+        QCOMPARE(v[0].model, QString("parakeet"));
         QCOMPARE(v[0].scoreText, QString("2 phrase(s) · threat, abuse"));
         QVERIFY(!v[0].hasClip);
+    }
+    // ticket 19: a raised_voice event starts with no primary transcript (model absent) and can
+    // later be patched with a mega_asr result by a separate, async backlog pass.
+    void parse_megaAsrPatchedIn()
+    {
+        const auto v = parseEvents(J("[{'id':'a','time':1,'camera':'kitchen','triggers':['raised_voice'],"
+                                     "'transcript':null,"
+                                     "'mega_asr':{'status':'done','transcript':'get out now','time':2}}]"));
+        QCOMPARE(v.size(), 1);
+        QVERIFY(v[0].model.isEmpty());
+        QCOMPARE(v[0].megaAsrTranscript, QString("get out now"));
+    }
+    void parse_megaAsrAbsentOrFailedLeavesTranscriptEmpty()
+    {
+        // Never run yet: no "mega_asr" key at all.
+        auto v = parseEvents(J("[{'id':'a','time':1,'camera':'k','triggers':['raised_voice']}]"));
+        QVERIFY(v[0].megaAsrTranscript.isEmpty());
+        // Ran, but failed or found no NVR recording: the sub-object exists with a null transcript.
+        v = parseEvents(J("[{'id':'a','time':1,'camera':'k','triggers':['raised_voice'],"
+                          "'mega_asr':{'status':'error','transcript':null,'time':2}}]"));
+        QVERIFY(v[0].megaAsrTranscript.isEmpty());
+    }
+    void modelDisplayName_mapsKnownAndUnknownModels()
+    {
+        QCOMPARE(modelDisplayName(QString()), QString());
+        QCOMPARE(modelDisplayName(QStringLiteral("parakeet")), QString("Parakeet"));
+        QCOMPARE(modelDisplayName(QStringLiteral("mega-asr")), QString("Mega-ASR"));
+        QCOMPARE(modelDisplayName(QStringLiteral("small.en")), QString("Whisper (small.en)"));
     }
     void parse_dropsMalformedAndTolerantOfBadShapes()
     {

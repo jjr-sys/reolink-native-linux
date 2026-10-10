@@ -9,6 +9,7 @@
 #include "media/StreamPlayer.h"
 #include "protocol/BaichuanChannels.h"
 #include "protocol/BaichuanClient.h"
+#include "protocol/BcLiveFramePacer.h"
 #include "protocol/BaichuanControl.h"
 #include "protocol/ReolinkHttpClient.h"
 
@@ -925,15 +926,18 @@ void DeviceManager::postValidation(qint64 hostId, const Validation &v)
         this, [this, hostId, v] { applyValidation(hostId, v); }, Qt::QueuedConnection);
 }
 
-DeviceManager::Validation DeviceManager::validateFrigate(const HostRecord &rec)
+DeviceManager::Validation DeviceManager::validateFrigate(const HostRecord &rec,
+                                                          const QString &password)
 {
     Validation v;
+    frigate::setCredentials(rec.addr, rec.port, rec.username, password);
     QString error;
     const QByteArray body = frigate::httpGet(frigate::configUrl(rec.addr, rec.port), 10000, &error);
     const Json cfg = Json::parse(body.toStdString(), nullptr, false);
     const QStringList names = cfg.is_discarded() ? QStringList() : frigate::parseCameraNames(cfg);
     if (names.isEmpty()) {
-        v.problem = Problem::Unreachable;
+        v.problem = error.contains(QStringLiteral("sign-in"), Qt::CaseInsensitive)
+                        ? Problem::Auth : Problem::Unreachable;
         v.status = !error.isEmpty() ? error
                    : cfg.is_discarded() ? tr("not a Frigate server")
                                         : tr("Frigate has no enabled cameras");
@@ -955,14 +959,16 @@ DeviceManager::Validation DeviceManager::validateFrigate(const HostRecord &rec)
     return v;
 }
 
-void DeviceManager::addFrigate(const QString &name, const QString &host, int port)
+void DeviceManager::addFrigate(const QString &name, const QString &host, int port,
+                               const QString &username, const QString &password)
 {
     HostRecord rec;
     rec.kind = QStringLiteral("frigate");
     rec.name = name.trimmed().isEmpty() ? host : name.trimmed();
     rec.addr = host;
-    rec.port = port > 0 ? port : 5000;
-    rec.https = false;
+    rec.port = port > 0 ? port : 8971;
+    rec.https = rec.port == 8971;
+    rec.username = username.trimmed();
     rec.id = m_db->addHost(rec);
     if (rec.id < 0) {
         emit deviceError(host, m_db->lastError());
@@ -976,13 +982,15 @@ void DeviceManager::addFrigate(const QString &name, const QString &host, int por
     m_entries.append(e);
     endInsertRows();
     emit countChanged();
-    validateAsync(rec.id);
+    validateAsync(rec.id, password, !password.isEmpty());
 }
 
-void DeviceManager::testFrigate(const QString &host, int port)
+void DeviceManager::testFrigate(const QString &host, int port,
+                                const QString &username, const QString &password)
 {
-    const int portv = port > 0 ? port : 5000;
-    m_pending.addFuture(QtConcurrent::run([this, host, portv] {
+    const int portv = port > 0 ? port : 8971;
+    m_pending.addFuture(QtConcurrent::run([this, host, portv, username, password] {
+        frigate::setCredentials(host, portv, username.trimmed(), password);
         QString error;
         const QByteArray body = frigate::httpGet(frigate::configUrl(host, portv), 10000, &error);
         const Json cfg = Json::parse(body.toStdString(), nullptr, false);
@@ -990,7 +998,9 @@ void DeviceManager::testFrigate(const QString &host, int port)
         const bool ok = !names.isEmpty();
         QString problem, message;
         if (!ok) {
-            problem = error.isEmpty() ? QStringLiteral("protocol") : QStringLiteral("transport");
+            problem = error.contains(QStringLiteral("sign-in"), Qt::CaseInsensitive)
+                          ? QStringLiteral("auth")
+                          : error.isEmpty() ? QStringLiteral("protocol") : QStringLiteral("transport");
             message = !error.isEmpty() ? error
                       : cfg.is_discarded() ? tr("the address did not answer like a Frigate server")
                                            : tr("Frigate has no enabled cameras");
@@ -1125,7 +1135,7 @@ void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, boo
         }
 
         if (rec.kind == QLatin1String("frigate")) {
-            postValidation(hostId, validateFrigate(rec));
+            postValidation(hostId, validateFrigate(rec, password));
             return;
         }
 
@@ -1855,6 +1865,8 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     p.uid = e.uid;
     p.mainStream = mainStream;
     p.startEpoch = startEpoch; // <= 0 = live (cmd 3 Preview), else by-time playback
+    const bool smoothLive = startEpoch <= 0 && player->smoothing();
+    p.smoothLive = smoothLive;
 
     auto client = std::make_shared<BaichuanClient>(p);
     client->setAudioHandler(player->audioFeed()); // before start(): read by the worker
@@ -1878,7 +1890,8 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     player->setPacketSource(
         [client](unsigned char *buf, int size) { return client->read(buf, size); },
         format,
-        [client] { client->stop(); });
+        [client] { client->stop(); },
+        smoothLive ? int(BcLiveFramePacer::kDelayUs / 1000) : 0);
     player->start();
 }
 

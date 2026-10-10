@@ -59,9 +59,9 @@ class StreamPlayer : public QObject
     Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
     // True once the stream is known to carry an audio track we can decode.
     Q_PROPERTY(bool hasAudio READ hasAudio NOTIFY hasAudioChanged)
-    // Live smoothing: hold the picture back about a second and show frames on their own
-    // timestamps, so a network stall or burst does not freeze and then rush the video.
-    // Only affects live RTSP; playback and native Baichuan are shown as they arrive.
+    // Live smoothing absorbs delivery bursts using source timestamps. RTSP queues decoded
+    // frames here; native Baichuan paces encoded frames before decode. Playback has its
+    // own clock.
     // Sound is delayed by the same amount so lips stay in sync.
     Q_PROPERTY(bool smoothing READ smoothing WRITE setSmoothing NOTIFY smoothingChanged)
     // Recorded playback: sound gets a short, fixed cushion so it stays in step with the
@@ -141,7 +141,7 @@ public:
     // stop()/destruction to unblock and tear down the source. Set before start();
     // cleared by setSource(). Not a QML API.
     void setPacketSource(std::function<int(unsigned char *, int)> reader, const QString &format,
-                         std::function<void()> onStop);
+                         std::function<void()> onStop, int presentationDelayMs = 0);
 
     QVideoSink *videoSink() const;
     void setVideoSink(QVideoSink *sink);
@@ -238,6 +238,7 @@ private:
     std::function<int(unsigned char *, int)> m_pendingReader;
     QString m_pendingFormat;
     std::function<void()> m_pendingStop; // teardown for the not-yet-started source
+    int m_pendingPresentationDelayMs = 0;
     std::function<void()> m_activeStop;  // teardown for the running session's source
     bool m_loop = false;
 

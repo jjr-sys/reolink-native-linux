@@ -36,7 +36,8 @@ Dialog {
             }
             testing = true;
             Devices.testFrigate(frigateHostField.text.trim(),
-                                frigatePortField.text.length > 0 ? parseInt(frigatePortField.text) : 5000);
+                                frigatePortField.text.length > 0 ? parseInt(frigatePortField.text) : 8971,
+                                frigateUserField.text.trim(), frigatePasswordField.text);
             return;
         }
         if (addrField.text.trim().length === 0) {
@@ -62,8 +63,11 @@ Dialog {
             if (tabs.currentIndex === 2) {
                 if (ok) {
                     Devices.addFrigate(frigateNameField.text, frigateHostField.text.trim(),
-                                       frigatePortField.text.length > 0 ? parseInt(frigatePortField.text) : 5000);
+                                       frigatePortField.text.length > 0 ? parseInt(frigatePortField.text) : 8971,
+                                       frigateUserField.text.trim(), frigatePasswordField.text);
                     dialog.close();
+                } else if (problem === "auth") {
+                    dialog.errorText = qsTr("Frigate rejected the sign-in. Check the username and password.");
                 } else if (problem === "transport") {
                     dialog.errorText = qsTr("Can't reach %1 — check the address and port.")
                         .arg(frigateHostField.text.trim()) + "\n" + message;
@@ -404,13 +408,22 @@ Dialog {
                     }
                     ThemedField {
                         id: frigatePortField
-                        placeholderText: qsTr("Port (5000)")
+                        placeholderText: qsTr("Port (8971)")
                         validator: IntValidator { bottom: 1; top: 65535 }
                     }
                 }
+                ThemedField {
+                    id: frigateUserField
+                    placeholderText: qsTr("Frigate username (optional for port 5000)")
+                }
+                ThemedField {
+                    id: frigatePasswordField
+                    placeholderText: qsTr("Frigate password")
+                    echoMode: TextInput.Password
+                }
                 Text {
                     Layout.fillWidth: true
-                    text: qsTr("A Frigate server without a login. Each of its cameras is added, with live view and detections.")
+                    text: qsTr("Use the authenticated Frigate port 8971 and your login. Older servers can use port 5000. Each camera is added with live view and detections.")
                     color: Theme.textMuted
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap
@@ -439,6 +452,8 @@ Dialog {
         frigateNameField.text = "";
         frigateHostField.text = "";
         frigatePortField.text = "";
+        frigateUserField.text = "";
+        frigatePasswordField.text = "";
         discoveredModel.clear();
         testing = false;
         errorText = "";

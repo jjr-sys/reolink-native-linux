@@ -11,7 +11,7 @@ import ReolinkApp.Core
 Item {
     id: page
     signal jumpToPlayback(var hostId, var channel, var timestamp)
-    signal openFootagePending(string camera, string when, string transcript)
+    signal openFootagePending(string camera, string when, string transcript, string modelLabel)
     signal footageFetched(string url)
     signal footageFailedMsg(string message)
 
@@ -78,7 +78,7 @@ Item {
     function footageAvailable(cameraKey, endTime) {
         return Devices.rowOfName(cameraKey) >= 0 && (Date.now() / 1000 - endTime) < nvrKeepSecs;
     }
-    function watchFootage(cameraKey, startTime, endTime, whenText, transcript) {
+    function watchFootage(cameraKey, startTime, endTime, whenText, transcript, modelLabel) {
         var row = Devices.rowOfName(cameraKey);
         if (row < 0) { footageState = qsTr("Camera not found: no camera named \u201c%1\u201d.").arg(cameraKey); return; }
         footageRow = row;
@@ -88,7 +88,7 @@ Item {
         footageWhen = whenText;
         footageState = "";
         // The player opens at once and shows progress; the recording is fetched behind it.
-        page.openFootagePending(Devices.nameAt(row), whenText, transcript);
+        page.openFootagePending(Devices.nameAt(row), whenText, transcript, modelLabel || "");
         var from = Math.floor(startTime) - 3;
         Devices.fetchFootage(row, from, Math.max(6, Math.ceil(endTime - startTime) + 6));
     }
@@ -311,6 +311,9 @@ Item {
                 required property string triggerText
                 required property string scoreText
                 required property string transcript
+                required property string sttModel
+                required property string megaAsrTranscript
+                required property string megaAsrModel
                 required property bool hasClip
                 required property bool flagged
                 required property string cameraKey
@@ -335,18 +338,45 @@ Item {
                         Text { text: timeText; color: Theme.textMuted; font.pixelSize: 12 }
                     }
                     Text { visible: scoreText.length > 0; text: scoreText; color: Theme.textMuted; font.pixelSize: 11 }
-                    Text {
-                        visible: transcript.length > 0
+                    // Two independent transcripts can exist for the same moment: the fast model
+                    // that ran at trigger time, and (for raised_voice/threat_speech, added later
+                    // and asynchronously) ticket 19's bigger backlog-pass model. Each labeled with
+                    // whichever model actually produced it, never assumed from current config.
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                        text: "\u201c" + transcript + "\u201d"
-                        color: Theme.text
-                        font.pixelSize: 13
-                        font.italic: true
-                        // Tapping the words opens the recording of that moment.
-                        TapHandler {
-                            enabled: page.footageAvailable(cameraKey, endTime)
-                            onTapped: page.watchFootage(cameraKey, startTime, endTime, timeText, transcript)
+                        spacing: 2
+                        visible: transcript.length > 0
+                        Text { text: sttModel; visible: sttModel.length > 0; color: Theme.textMuted; font.pixelSize: 10 }
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                            text: "\u201c" + transcript + "\u201d"
+                            color: Theme.text
+                            font.pixelSize: 13
+                            font.italic: true
+                            // Tapping the words opens the recording of that moment.
+                            TapHandler {
+                                enabled: page.footageAvailable(cameraKey, endTime)
+                                onTapped: page.watchFootage(cameraKey, startTime, endTime, timeText, transcript, sttModel)
+                            }
+                        }
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        visible: megaAsrTranscript.length > 0
+                        Text { text: megaAsrModel; color: Theme.textMuted; font.pixelSize: 10 }
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                            text: "\u201c" + megaAsrTranscript + "\u201d"
+                            color: Theme.text
+                            font.pixelSize: 13
+                            font.italic: true
+                            TapHandler {
+                                enabled: page.footageAvailable(cameraKey, endTime)
+                                onTapped: page.watchFootage(cameraKey, startTime, endTime, timeText, megaAsrTranscript, megaAsrModel)
+                            }
                         }
                     }
                     Row {
@@ -356,7 +386,13 @@ Item {
                             text: qsTr("\u25b6 Watch on NVR")
                             color: Theme.accent
                             font.pixelSize: 12
-                            TapHandler { onTapped: page.watchFootage(cameraKey, startTime, endTime, timeText, transcript) }
+                            TapHandler {
+                                onTapped: {
+                                    var t = transcript.length > 0 ? transcript : megaAsrTranscript;
+                                    var m = transcript.length > 0 ? sttModel : megaAsrModel;
+                                    page.watchFootage(cameraKey, startTime, endTime, timeText, t, m);
+                                }
+                            }
                         }
                         Text {
                             visible: hasClip

@@ -177,7 +177,7 @@ ApplicationWindow {
                     id: eventsPage
                     onJumpToPlayback: (hostId, channel, timestamp) =>
                         window.openEventPlayback(hostId, channel, timestamp)
-                    onOpenFootagePending: (camera, when, transcript) => clipDialog.openPending(camera, when, transcript)
+                    onOpenFootagePending: (camera, when, transcript, modelLabel) => clipDialog.openPending(camera, when, transcript, modelLabel)
                     onFootageFetched: (url) => clipDialog.provide(url)
                     onFootageFailedMsg: (message) => clipDialog.fail(message)
                 }

@@ -2,10 +2,19 @@
 
 #include <QEventLoop>
 #include <algorithm>
+#include <QDateTime>
+#include <QHash>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QNetworkAccessManager>
+#include <QNetworkCookie>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QRegularExpression>
+#include <QSslConfiguration>
+#include <QSslSocket>
 #include <QTimer>
 #include <QUrl>
 
@@ -79,7 +88,8 @@ double newWatermark(double current, const QVector<Event> &events)
 
 static QString base(const QString &host, int port)
 {
-    return QStringLiteral("http://%1:%2").arg(host).arg(port);
+    const QString scheme = port == 8971 ? QStringLiteral("https") : QStringLiteral("http");
+    return QStringLiteral("%1://%2:%3").arg(scheme, host).arg(port);
 }
 static QString enc(const QString &s)
 {
@@ -172,7 +182,8 @@ QString eventsUrl(const QString &host, int port, double after, int limit)
 
 QString liveUrl(const QString &host, int port, const QString &camera)
 {
-    return base(host, port) + QStringLiteral("/api/go2rtc/api/stream.flv?src=") + enc(camera);
+    Q_UNUSED(port);
+    return QStringLiteral("rtsp://%1:8554/%2").arg(host, enc(camera));
 }
 
 QString clipUrl(const QString &host, int port, const QString &camera, qint64 timestamp)
@@ -193,10 +204,52 @@ QString snapshotUrl(const QString &host, int port, const QString &eventId)
     return base(host, port) + QStringLiteral("/api/events/") + enc(eventId) + QStringLiteral("/snapshot.jpg");
 }
 
-QByteArray httpGet(const QString &url, int timeoutMs, QString *error)
+namespace {
+
+struct AuthEntry {
+    QString username;
+    QString password;
+    QByteArray cookie;
+    QDateTime expiresAt;
+};
+
+QMutex &authMutex()
 {
-    QNetworkAccessManager nam; // thread-local: safe on any worker thread
-    QNetworkReply *reply = nam.get(QNetworkRequest(QUrl(url)));
+    static QMutex mutex;
+    return mutex;
+}
+
+QHash<QString, AuthEntry> &authEntries()
+{
+    static QHash<QString, AuthEntry> entries;
+    return entries;
+}
+
+QString authKey(const QString &host, int port)
+{
+    return host.trimmed().toLower() + QLatin1Char(':') + QString::number(port);
+}
+
+QString authKey(const QUrl &url)
+{
+    return authKey(url.host(), url.port(url.scheme() == QLatin1String("https") ? 443 : 80));
+}
+
+void configureTls(QNetworkRequest &request)
+{
+    if (request.url().scheme() != QLatin1String("https"))
+        return;
+
+    // Frigate commonly uses its generated, self-signed certificate on port 8971.
+    // The connection remains encrypted and is scoped by the host's private tailnet.
+    QSslConfiguration ssl = request.sslConfiguration();
+    ssl.setPeerVerifyMode(QSslSocket::VerifyNone);
+    request.setSslConfiguration(ssl);
+}
+
+QByteArray awaitReply(QNetworkReply *reply, int timeoutMs, QString *error,
+                      int *status = nullptr, QByteArray *setCookie = nullptr)
+{
     QEventLoop loop;
     QTimer timer;
     timer.setSingleShot(true);
@@ -204,18 +257,146 @@ QByteArray httpGet(const QString &url, int timeoutMs, QString *error)
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     timer.start(timeoutMs);
     loop.exec();
+
+    const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (status)
+        *status = code;
+    if (setCookie)
+        *setCookie = reply->rawHeader("Set-Cookie");
+
     QByteArray body;
     if (!reply->isFinished()) {
         if (error)
             *error = QStringLiteral("timed out");
         reply->abort();
-    } else if (reply->error() != QNetworkReply::NoError) {
-        if (error)
-            *error = reply->errorString();
     } else {
         body = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError && error) {
+            if (code == 401 || code == 403)
+                *error = QStringLiteral("Frigate sign-in failed");
+            else if (code >= 400)
+                *error = QStringLiteral("Frigate returned HTTP %1").arg(code);
+            else
+                *error = reply->errorString();
+        }
     }
     delete reply;
+    return body;
+}
+
+QByteArray cookieValue(const QByteArray &setCookie)
+{
+    const QList<QNetworkCookie> cookies = QNetworkCookie::parseCookies(setCookie);
+    for (const QNetworkCookie &cookie : cookies)
+        if (cookie.name() == QByteArrayLiteral("frigate_token"))
+            return cookie.name() + QByteArrayLiteral("=") + cookie.value();
+    return {};
+}
+
+QByteArray sessionCookie(const QUrl &target, QNetworkAccessManager &nam,
+                         int timeoutMs, QString *error)
+{
+    QMutexLocker lock(&authMutex());
+    auto it = authEntries().find(authKey(target));
+    if (it == authEntries().end() || it->username.isEmpty() || it->password.isEmpty())
+        return {};
+
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    if (!it->cookie.isEmpty() && it->expiresAt > now)
+        return it->cookie;
+
+    QUrl loginUrl = target;
+    loginUrl.setPath(QStringLiteral("/api/login"));
+    loginUrl.setQuery(QString());
+    QNetworkRequest request(loginUrl);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    configureTls(request);
+    const QJsonObject credentials{
+        {QStringLiteral("user"), it->username},
+        {QStringLiteral("password"), it->password},
+    };
+    const QByteArray body = QJsonDocument(credentials).toJson(QJsonDocument::Compact);
+    int status = 0;
+    QByteArray setCookie;
+    QString loginError;
+    awaitReply(nam.post(request, body), timeoutMs, &loginError, &status, &setCookie);
+    const QByteArray cookie = cookieValue(setCookie);
+    if (status != 200 || cookie.isEmpty()) {
+        if (error)
+            *error = status == 401 || status == 403
+                         ? QStringLiteral("Frigate sign-in failed")
+                         : status >= 400 ? QStringLiteral("Frigate login returned HTTP %1").arg(status)
+                                         : loginError.isEmpty() ? QStringLiteral("Frigate login returned no session")
+                                                                : loginError;
+        return {};
+    }
+
+    it->cookie = cookie;
+    it->expiresAt = now.addSecs(6 * 60 * 60);
+    return it->cookie;
+}
+
+void clearSession(const QUrl &url)
+{
+    QMutexLocker lock(&authMutex());
+    auto it = authEntries().find(authKey(url));
+    if (it != authEntries().end()) {
+        it->cookie.clear();
+        it->expiresAt = {};
+    }
+}
+
+} // namespace
+
+void setCredentials(const QString &host, int port, const QString &username,
+                    const QString &password)
+{
+    QMutexLocker lock(&authMutex());
+    const QString key = authKey(host, port);
+    if (username.isEmpty() || password.isEmpty()) {
+        authEntries().remove(key);
+        return;
+    }
+    AuthEntry &entry = authEntries()[key];
+    if (entry.username != username || entry.password != password) {
+        entry.username = username;
+        entry.password = password;
+        entry.cookie.clear();
+        entry.expiresAt = {};
+    }
+}
+
+QByteArray httpGet(const QString &url, int timeoutMs, QString *error)
+{
+    QNetworkAccessManager nam; // thread-local: safe on any worker thread
+    if (error)
+        error->clear();
+    const QUrl target(url);
+    const QByteArray cookie = sessionCookie(target, nam, timeoutMs, error);
+    if (error && !error->isEmpty())
+        return {};
+
+    auto get = [&](const QByteArray &session) {
+        QNetworkRequest request(target);
+        if (!session.isEmpty())
+            request.setRawHeader("Cookie", session);
+        configureTls(request);
+        int status = 0;
+        QByteArray body = awaitReply(nam.get(request), timeoutMs, error, &status);
+        return qMakePair(body, status);
+    };
+
+    auto result = get(cookie);
+    if (result.second == 401 && !cookie.isEmpty()) {
+        clearSession(target);
+        if (error)
+            error->clear();
+        const QByteArray renewedCookie = sessionCookie(target, nam, timeoutMs, error);
+        if (error && !error->isEmpty())
+            return {};
+        result = get(renewedCookie);
+    }
+    const QByteArray body = result.first;
     return body;
 }
 

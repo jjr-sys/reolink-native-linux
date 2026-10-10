@@ -125,6 +125,12 @@ QVariant AudioMonitor::data(const QModelIndex &index, int role) const
     case StartRole: return static_cast<qint64>(e.start);
     case EndRole: return static_cast<qint64>(e.end);
     case RawCameraRole: return e.camera;
+    // "model" is avoided as a role name: QML delegates already have an implicit `model`
+    // context property, so a role of that name would be unreachable/shadowed.
+    case SttModelRole: return audio::modelDisplayName(e.model);
+    case MegaAsrTranscriptRole: return e.megaAsrTranscript;
+    case MegaAsrModelRole: return e.megaAsrTranscript.isEmpty() ? QString()
+                                                                 : audio::modelDisplayName(QStringLiteral("mega-asr"));
     }
     return {};
 }
@@ -134,7 +140,8 @@ QHash<int, QByteArray> AudioMonitor::roleNames() const
     return {{IdRole, "eventId"},        {TimestampRole, "timestamp"}, {TimeTextRole, "timeText"},
             {CameraRole, "camera"},     {TriggerTextRole, "triggerText"}, {TriggersRole, "triggers"},
             {ScoreTextRole, "scoreText"}, {TranscriptRole, "transcript"}, {HasClipRole, "hasClip"}, {FlaggedRole, "flagged"},
-            {StartRole, "startTime"}, {EndRole, "endTime"}, {RawCameraRole, "cameraKey"}};
+            {StartRole, "startTime"}, {EndRole, "endTime"}, {RawCameraRole, "cameraKey"},
+            {SttModelRole, "sttModel"}, {MegaAsrTranscriptRole, "megaAsrTranscript"}, {MegaAsrModelRole, "megaAsrModel"}};
 }
 
 void AudioMonitor::setNotificationsEnabled(bool on)

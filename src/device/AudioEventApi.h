@@ -29,6 +29,10 @@ struct Event {
     QStringList triggers;
     QString scoreText;   // human-readable score for the trigger(s)
     QString transcript;  // empty when speech-to-text did not run (raised-voice events)
+    QString model;       // which model produced `transcript`, e.g. "parakeet" - empty if transcript is
+    QString megaAsrTranscript; // ticket 19's backlog pass: a second, later transcription of the same
+                               // moment from a bigger model, patched in asynchronously - empty until
+                               // (and unless) it completes. Independent of `transcript`, never replaces it.
     bool hasClip = false;
     // An alert (raised voice or threat speech), as opposed to plain speech. Only these
     // light the red border or notify.
@@ -52,6 +56,10 @@ Status parseStatus(const Json &status);
 // "Loud voice" / "Threatening words" / both, joined. Deliberately not "hostile": the
 // classifier hears volume and phrases, not intent.
 QString triggerText(const QStringList &triggers);
+
+// A raw model id (as stored/sent by the server, e.g. "parakeet", "mega-asr", or a whisper
+// model directory name like "small.en") to a name fit for display. Empty in, empty out.
+QString modelDisplayName(const QString &raw);
 
 // limit is capped by the server at 500; `before` (epoch s, 0 = none) pages back.
 QString eventsUrl(const QString &host, int port, int limit = 100, double before = 0, bool flaggedOnly = false);

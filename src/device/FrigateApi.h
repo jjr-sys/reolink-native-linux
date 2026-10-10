@@ -8,10 +8,9 @@
 #include <QStringList>
 #include <QVector>
 
-// A Frigate NVR server (http, port 5000, no login), used by DeviceManager as a third
-// kind of site. Only the parts the app needs: the camera list, live video, and
-// detection events. Live video goes through Frigate's own go2rtc proxy over the
-// normal port as an HTTP-FLV stream — go2rtc's RTSP port is often not published.
+// A Frigate server, used by DeviceManager as a third kind of site. Port 8971 uses
+// Frigate's authenticated HTTPS API; port 5000 remains supported for legacy servers.
+// Live video uses Frigate's go2rtc RTSP restream on port 8554.
 namespace rl::frigate {
 
 struct Event {
@@ -78,6 +77,11 @@ QString configUrl(const QString &host, int port);
 QString eventsUrl(const QString &host, int port, double after, int limit);
 QString liveUrl(const QString &host, int port, const QString &camera);
 QString latestFrameUrl(const QString &host, int port, const QString &camera);
+
+// Register the Frigate login for this host. The HTTP helper obtains and caches the
+// session cookie; credentials are kept by the OS keyring, not in this module.
+void setCredentials(const QString &host, int port, const QString &username,
+                    const QString &password);
 
 // Blocking GET for worker threads. Empty result with `error` set on failure.
 QByteArray httpGet(const QString &url, int timeoutMs, QString *error = nullptr);

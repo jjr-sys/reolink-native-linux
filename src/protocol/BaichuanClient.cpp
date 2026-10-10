@@ -1,6 +1,7 @@
 #include "BaichuanClient.h"
 
 #include "protocol/BcCrypto.h"
+#include "protocol/BcLiveFramePacer.h"
 
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -330,10 +331,16 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
     // After a seek, discard old in-flight frames until an I-frame at the new
     // position (POSIX seconds); 0 = no seek pending.
     qint64 seekTarget = 0;
-    // Recorded playback is delivered faster than realtime; pace it to 1x from the
-    // frame timestamps so it doesn't fast-forward. Live preview is not paced.
+    // Recorded playback is delivered faster than realtime, while selected live views
+    // can arrive in short network bursts. Pace both from the camera clock; live uses a
+    // small cushion to absorb bursts without discarding encoded reference frames.
     const bool pace = m_p.startEpoch > 0;
+    const bool paceLive = !pace && m_p.smoothLive;
     QElapsedTimer clock;
+    QElapsedTimer liveClock;
+    if (paceLive)
+        liveClock.start();
+    BcLiveFramePacer livePacer;
     quint32 firstMicros = 0;
     double pacedSpeed = 1.0; // speed the pacing anchor was set at
     parser.onVideo = [&](const BcMediaParser::VideoFrame &f) {
@@ -376,13 +383,29 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
                     QThread::msleep(static_cast<unsigned long>(qMin<qint64>(wait, 50)));
             }
         }
-        pushAnnexB(f.annexB);
+        if (paceLive && (f.microseconds != 0 || livePacer.hasAnchor())) {
+            livePacer.push(f.annexB, f.microseconds,
+                           liveClock.nsecsElapsed() / 1000, f.keyFrame);
+        } else {
+            pushAnnexB(f.annexB);
+        }
+    };
+
+    auto releaseDueLiveFrame = [&]() {
+        if (!paceLive)
+            return false;
+        QByteArray annexB;
+        if (!livePacer.popDue(liveClock.nsecsElapsed() / 1000, annexB))
+            return false;
+        pushAnnexB(annexB);
+        return true;
     };
 
     QByteArray netBuf = m_streamTail;
     Msg m;
     int stalls = 0;
     while (!m_abort.load()) {
+        releaseDueLiveFrame();
         // In-place seek: reissue by-time playback and reset the media pipeline. The
         // BC message framing stays intact (continuous connection); only the BCMedia
         // layer resets, resyncing on the new position's first I-frame.
@@ -410,7 +433,17 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
         if (!parseMessage(netBuf, m)) {
             // Short wait so abort is honored quickly; recorded playback bursts then
             // stalls, so nudge it with a keep-alive after ~1s of silence.
-            if (!sock.waitForReadyRead(300)) {
+            const qint64 dueUs = paceLive ? livePacer.nextDueUs() : -1;
+            const qint64 waitForDueUs = dueUs < 0 ? -1 : dueUs - liveClock.nsecsElapsed() / 1000;
+            const bool waitingForVideo = dueUs >= 0 && waitForDueUs < 300000;
+            const int waitMs = waitingForVideo
+                ? int(qMax<qint64>(1, (waitForDueUs + 999) / 1000))
+                : 300;
+            if (!sock.waitForReadyRead(waitMs)) {
+                if (waitingForVideo) {
+                    releaseDueLiveFrame();
+                    continue;
+                }
                 if (++stalls >= 4) {
                     stalls = 0;
                     sock.write(frame(93, 0, 0, 99, 0, 0x6414, QByteArray())); // keep-alive: connection-level

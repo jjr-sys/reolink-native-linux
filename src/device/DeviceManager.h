@@ -112,10 +112,12 @@ public:
 
     Q_INVOKABLE void addDevice(const QString &addr, const QString &username,
                                const QString &password, bool https = true, int port = 0);
-    // A Frigate server (http, no login): each enabled camera becomes a row.
-    Q_INVOKABLE void addFrigate(const QString &name, const QString &host, int port = 5000);
+    // A Frigate server: each enabled camera becomes a row.
+    Q_INVOKABLE void addFrigate(const QString &name, const QString &host, int port = 8971,
+                                const QString &username = {}, const QString &password = {});
     // Checks the address answers like Frigate; reports through testDeviceResult.
-    Q_INVOKABLE void testFrigate(const QString &host, int port = 5000);
+    Q_INVOKABLE void testFrigate(const QString &host, int port = 8971,
+                                 const QString &username = {}, const QString &password = {});
     // Direct stream URL (rtsp://…, file …) — testing and generic-RTSP escape hatch.
     // Any embedded credentials are stripped to the keyring, not persisted in the DB.
     Q_INVOKABLE void addStreamUrl(const QString &name, const QString &url);
@@ -424,7 +426,7 @@ private:
     // on the GUI thread. storeNew persists newPassword to the keyring first.
     void validateAsync(qint64 hostId, const QString &newPassword = QString(),
                        bool storeNew = false);
-    Validation validateFrigate(const HostRecord &rec);
+    Validation validateFrigate(const HostRecord &rec, const QString &password);
     void searchFrigateRecordings(int row, int year, int month, int day);
     void pollFrigate();
     void runExport(int row, qint64 startEpoch, int durationSecs, bool footage);

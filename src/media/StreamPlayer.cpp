@@ -1218,6 +1218,7 @@ void StreamPlayer::setSource(const QString &source)
     m_pendingReader = nullptr; // URL source supersedes any packet source
     m_pendingFormat.clear();
     m_pendingStop = nullptr;
+    m_pendingPresentationDelayMs = 0;
     m_source = source;
     emit sourceChanged();
 }
@@ -1231,12 +1232,14 @@ void StreamPlayer::setExpectedSize(const QSize &size)
 }
 
 void StreamPlayer::setPacketSource(std::function<int(unsigned char *, int)> reader,
-                                   const QString &format, std::function<void()> onStop)
+                                   const QString &format, std::function<void()> onStop,
+                                   int presentationDelayMs)
 {
     stop();
     m_pendingReader = std::move(reader);
     m_pendingFormat = format;
     m_pendingStop = std::move(onStop);
+    m_pendingPresentationDelayMs = qMax(0, presentationDelayMs);
     m_source.clear();
     emit sourceChanged();
 }
@@ -1289,6 +1292,7 @@ void StreamPlayer::start()
         return;
     stop();
     resetPlayout();
+    m_liveDelayMs = m_pendingPresentationDelayMs;
 
     auto s = std::make_shared<Session>();
     s->player = this;
