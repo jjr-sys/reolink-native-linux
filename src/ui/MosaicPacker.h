@@ -108,12 +108,16 @@ struct Result {
     // Smallest Large pane area ÷ its area with every pane Normal; infinity without Large.
     double growth = std::numeric_limits<double>::infinity();
     bool held = false;       // the held tree was kept
+    // False when a held layout falls short of the rule a fresh one meets (Large panes grown
+    // as much as fresh, up to `growth`, within `blackCap`): it should be re-packed once the
+    // resize settles. Always true for fresh layouts and without Large.
+    bool meetsFresh = true;
 };
 
 struct Rules {
     double growth = 1.3;       // a fresh layout grows every Large pane at least this much...
     double blackCap = 1.0;     // ...for at most this many points more black than plain
-    double holdGrowth = 1.1;   // while resizing, a held layout must keep this growth...
+    double holdGrowth = 1.0;   // while resizing, a held layout must keep this growth...
     double holdBlack = 2.0;    // ...and stay within this many points of plain's black
     double keepLarge = 0.05;   // held within 5% of the fresh score (mosaic with Large)
     double keepNormal = 0.02;  // held within 2% (no Large)
@@ -128,6 +132,8 @@ struct Rules {
 //   - Given the held tree (the one on screen while the window is resized), keep it if it
 //     scores within keepLarge / keepNormal of the fresh choice and, with Large panes, stays
 //     within holdBlack of plain and grows ≥ holdGrowth (or as much as the fresh choice).
+//     holdGrowth is 1.0: any gate above it flips back and forth as growth hovers at it
+//     (ticket 18). Result::meetsFresh says when a held layout should be re-packed.
 // Fresh layouts (no held tree) are a pure function of panes and box.
 class Mosaic
 {

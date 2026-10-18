@@ -469,10 +469,9 @@ private slots:
     }
 
     // 18. With the resize hold, jiggling the 19 Large sets (each camera alone, and the
-    // three) never changes them. Research 11 expected at most 3 returns within 50 px in the
-    // sweep, but its counter missed direct A→B→A returns: counted directly the decided hold
-    // (5% / 1.1× / +2 points) gives 20, some 2 px apart, where the plain packer with 2%
-    // hysteresis gives 0. Open on the map as "Make the Large resize hold as stable as plain".
+    // three) never changes them, and the sweep never goes back to the layout just left
+    // within 50 px, as the plain packer with 2% hysteresis. The growth gate at 1.1× gave 20
+    // such returns, some 2 px apart (ticket 18); at 1.0× it gives none.
     void stableWithHold()
     {
         std::vector<std::set<int>> sets;
@@ -495,8 +494,96 @@ private slots:
             jig += jiggle(step);
         }
         QCOMPARE(jig, 0);
-        QEXPECT_FAIL("", "the decided hold flips back 20 times; open on the map", Continue);
-        QVERIFY2(back <= 3, qPrintable(QString::number(back)));
+        QCOMPARE(back, 0);
+    }
+
+    // 20. A held layout says whether it still meets the full fresh rule (every Large pane
+    // grown as much as a fresh layout would, up to 1.3×, for at most +1 point of black),
+    // across the 3-Large sweep; some held steps fall short.
+    void heldMeetsFresh()
+    {
+        const auto panes = fixture(kThreeLarge);
+        Mosaic m;
+        m.build(panes);
+        Packer plain(Mosaic::plainParams());
+        plain.build(panes);
+        Tree held;
+        bool have = false;
+        int short_ = 0, kept = 0;
+        for (int W = 1000; W <= 3440; ++W) {
+            const Result fresh = m.layout(W, 1080, kGap);
+            QVERIFY(fresh.meetsFresh);
+            const Result r = m.layout(W, 1080, kGap, have ? &held : nullptr);
+            held = r.tree;
+            have = true;
+            if (!r.held)
+                continue;
+            ++kept;
+            std::vector<Rect> p;
+            plain.layout(W, 1080, kGap, p);
+            const bool meets = r.black <= blackOf(p, W, 1080) + 1.0 + 1e-9 &&
+                               r.growth >= std::min(1.3, fresh.growth) - 1e-9;
+            QCOMPARE(r.meetsFresh, meets);
+            short_ += !meets;
+        }
+        QVERIFY(kept > 0);
+        QVERIFY(short_ > 0);
+    }
+
+    // 21. The wrapper re-packs fresh once a resize has settled, if the held layout falls
+    // short of the fresh rule, and lays a jump of more than 10% out fresh at once.
+    void qmlWrapperSettle()
+    {
+        QVariantList panes;
+        for (int i = 0; i < 18; ++i)
+            panes.append(QVariantMap{{QStringLiteral("ratio"), kCameras[i].ratio},
+                                     {QStringLiteral("large"), kThreeLarge.count(i) > 0}});
+        auto fresh = [&](int W) {
+            rl::MosaicLayout f;
+            f.setWidth(W);
+            f.setHeight(1080);
+            f.setPanes(panes);
+            [&] { QTRY_VERIFY(!f.building()); }();
+            return f.rects();
+        };
+        // The first width where the held layout falls short, dragging up from 1000 px.
+        Mosaic m;
+        m.build(fixture(kThreeLarge));
+        Tree held;
+        int at = -1;
+        for (int W = 1000; W <= 3440 && at < 0; ++W) {
+            const Result r = m.layout(W, 1080, kGap, W > 1000 ? &held : nullptr);
+            held = r.tree;
+            if (r.held && !r.meetsFresh)
+                at = W;
+        }
+        QVERIFY(at > 0);
+        const int far = at + at / 5;
+        // Before driving `layout`: waiting on these runs the event loop.
+        const QVariantList freshAt = fresh(at), freshFar = fresh(far);
+
+        rl::MosaicLayout layout;
+        layout.setSettleMs(20);
+        layout.setWidth(1000);
+        layout.setHeight(1080);
+        layout.setPanes(panes);
+        QTRY_VERIFY(!layout.building());
+        QSignalSpy settled(&layout, &rl::MosaicLayout::settled);
+        for (int W = 1001; W <= at; ++W)
+            layout.setWidth(W);
+        QVERIFY(layout.rects() != freshAt); // held while dragging
+        QTRY_COMPARE(settled.count(), 1);
+        QCOMPARE(layout.rects(), freshAt);
+
+        // Settled and meeting the rule: nothing more happens.
+        QTest::qWait(60);
+        QCOMPARE(settled.count(), 1);
+
+        // A jump: fresh at once, with no settle needed.
+        layout.setWidth(far);
+        QCOMPARE(layout.rects(), freshFar);
+        QTest::qWait(60);
+        QCOMPARE(settled.count(), 1);
     }
 
     // 19. The tie-breaker's own build for 18 panes stays under 10 ms (measured ~6.5 ms).

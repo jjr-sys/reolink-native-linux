@@ -443,10 +443,13 @@ Result Mosaic::layout(double W, double H, double gap, const Tree *held)
                      (g >= m_r.holdGrowth || g >= res.growth);
             }
             if (ok) {
+                const double black = blackOf(r, W, H);
+                res.meetsFresh = !m_large || (black <= black0 + m_r.blackCap &&
+                                              g >= std::min(m_r.growth, res.growth));
                 res.rects = std::move(r);
                 res.tree = *held;
                 res.score = s;
-                res.black = blackOf(res.rects, W, H);
+                res.black = black;
                 res.growth = g;
                 res.held = true;
             }

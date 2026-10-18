@@ -5,11 +5,25 @@
 #include <QVariantMap>
 #include <QtConcurrent>
 
+#include <cmath>
+
 namespace rl {
 
 using EnginePtr = std::shared_ptr<mosaic::Mosaic>;
 
-MosaicLayout::MosaicLayout(QObject *parent) : QObject(parent) {}
+MosaicLayout::MosaicLayout(QObject *parent) : QObject(parent)
+{
+    m_settle.setSingleShot(true);
+    m_settle.setInterval(500);
+    connect(&m_settle, &QTimer::timeout, this, [this] {
+        emit settled();
+        relayout(true);
+    });
+}
+
+namespace {
+bool jump(qreal from, qreal to) { return from > 0 && std::abs(to - from) > 0.1 * from; }
+} // namespace
 
 void MosaicLayout::setPanes(const QVariantList &panes)
 {
@@ -45,18 +59,20 @@ void MosaicLayout::setWidth(qreal w)
 {
     if (w == m_w)
         return;
+    const bool fresh = jump(m_w, w);
     m_w = w;
     emit widthChanged();
-    relayout(false);
+    relayout(fresh);
 }
 
 void MosaicLayout::setHeight(qreal h)
 {
     if (h == m_h)
         return;
+    const bool fresh = jump(m_h, h);
     m_h = h;
     emit heightChanged();
-    relayout(false);
+    relayout(fresh);
 }
 
 void MosaicLayout::setGap(qreal g)
@@ -112,6 +128,10 @@ void MosaicLayout::relayout(bool fresh)
             m_engine->layout(m_w, m_h, m_gap, m_haveTree ? &m_tree : nullptr);
         m_tree = res.tree;
         m_haveTree = true;
+        if (res.held && !res.meetsFresh)
+            m_settle.start();
+        else
+            m_settle.stop();
         black = res.black;
         for (const mosaic::Rect &r : mosaic::snapped(res.rects))
             out.append(QRectF(r.x, r.y, r.w, r.h));

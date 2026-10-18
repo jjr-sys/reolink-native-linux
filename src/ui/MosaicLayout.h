@@ -3,6 +3,7 @@
 #include "ui/MosaicPacker.h"
 
 #include <QObject>
+#include <QTimer>
 #include <QVariantList>
 
 #include <memory>
@@ -14,8 +15,11 @@ namespace rl {
 // (up to ~60 ms for 25 panes with Large); the previous layout stays until it is done, so
 // `rects` can briefly still describe the previous panes while `building` is true.
 // A resize only re-scores (well under 1 ms) and holds the layout on screen while it is
-// still good enough, so dragging the window does not flap between layouts. New panes,
-// a new gap or reset() start fresh.
+// still good enough, so dragging the window does not flap between layouts. With Large
+// panes the hold can fall short of the fresh rule; the layout is then re-packed fresh once
+// the size has been still for `settleMs`, announced by settled() just before `rects`
+// changes. New panes, a new gap, reset() or a jump of more than 10% in width or height
+// start fresh at once.
 class MosaicLayout : public QObject
 {
     Q_OBJECT
@@ -52,6 +56,9 @@ public:
     // The mosaic was reopened: forget the held layout.
     Q_INVOKABLE void reset();
 
+    int settleMs() const { return m_settle.interval(); }
+    void setSettleMs(int ms) { m_settle.setInterval(ms); }
+
 signals:
     void panesChanged();
     void widthChanged();
@@ -60,6 +67,7 @@ signals:
     void rectsChanged();
     void layoutPanesChanged();
     void buildingChanged();
+    void settled(); // a held layout is about to be replaced by a fresh one
 
 private:
     void startBuild();
@@ -76,6 +84,7 @@ private:
     QVariantList m_rects;
     QVariantList m_layoutPanes;
     qreal m_black = 0;
+    QTimer m_settle;
 };
 
 } // namespace rl
