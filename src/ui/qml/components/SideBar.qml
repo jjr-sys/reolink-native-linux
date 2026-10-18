@@ -1,3 +1,4 @@
+import QtCore
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Window
@@ -7,8 +8,17 @@ import ReolinkApp.Core
 
 Rectangle {
     id: root
-    width: Theme.sidebarWidth
+    implicitWidth: compact ? Theme.sidebarStripWidth : Theme.sidebarWidth
+    width: implicitWidth
     color: Theme.surface
+
+    // Collapsed sidebar: a narrow strip of device icons with their status, names in
+    // tooltips. Clicking, dragging and the menus keep working. Remembered across launches.
+    property bool compact: false
+    Settings {
+        category: "sidebar"
+        property alias compact: root.compact
+    }
 
     signal addRequested()
     signal deviceClicked(int row)      // open this camera in Live View
@@ -72,12 +82,13 @@ Rectangle {
             Layout.fillWidth: true
             Layout.margins: Theme.spacing
             Text {
+                visible: !root.compact
                 text: qsTr("Devices")
                 color: Theme.text
                 font.pixelSize: 14
                 font.bold: true
             }
-            Item { Layout.fillWidth: true }
+            Item { Layout.fillWidth: true; visible: !root.compact }
             Rectangle {
                 width: 26
                 height: 26
@@ -153,20 +164,24 @@ Rectangle {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: Theme.spacing
-                    anchors.rightMargin: Theme.spacing
+                    anchors.leftMargin: root.compact ? (root.width - 20) / 2 : Theme.spacing
+                    anchors.rightMargin: root.compact ? 0 : Theme.spacing
                     spacing: 7
                     Text {
+                        visible: !root.compact
                         text: root.collapsed[nvrHeader.section] ? "▸" : "▾"
                         color: Theme.textMuted; font.pixelSize: 11
                         Layout.preferredWidth: 10
                     }
                     DeviceGlyph {
                         kind: "nvr"
-                        tint: nvrHeader.host && nvrHeader.host.online ? Theme.accent : Theme.textMuted
+                        tint: nvrHeader.host && nvrHeader.host.online ? Theme.accent
+                            : root.compact && nvrHeader.inTrouble ? Theme.danger : Theme.textMuted
                         Layout.alignment: Qt.AlignVCenter
                     }
+                    Item { Layout.fillWidth: true; visible: root.compact }
                     ColumnLayout {
+                        visible: !root.compact
                         Layout.fillWidth: true
                         spacing: 1
                         Text {
@@ -207,6 +222,15 @@ Rectangle {
                     }
                 }
                 HoverHandler { id: nvrHover }
+                ToolTip {
+                    visible: root.compact && nvrHover.hovered && !!nvrHeader.host
+                    delay: 400
+                    text: nvrHeader.host ? nvrHeader.host.name + "\n"
+                          + (nvrHeader.inTrouble || nvrHeader.host.channelCount === undefined
+                             ? nvrHeader.host.status
+                             : nvrHeader.host.onlineCount + "/" + nvrHeader.host.channelCount
+                               + qsTr(" cameras")) : ""
+                }
                 MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
@@ -265,7 +289,7 @@ Rectangle {
                 readonly property bool hidden: underNvr && root.collapsed[hostId] === true
 
                 width: ListView.view.width
-                height: hidden ? 0 : 48
+                height: hidden ? 0 : root.compact ? 34 : 48
                 visible: !hidden
                 clip: true
                 color: delegateArea.containsMouse ? Theme.surfaceAlt : "transparent"
@@ -273,20 +297,21 @@ Rectangle {
                 // Tree connector: a vertical trunk plus a branch to each camera,
                 // making the nesting under the NVR obvious.
                 Rectangle {
-                    visible: camRow.underNvr && !camRow.hidden
+                    visible: camRow.underNvr && !camRow.hidden && !root.compact
                     x: 17; y: 0; width: 2; height: parent.height
                     color: Theme.textMuted; opacity: 0.35
                 }
                 Rectangle {
-                    visible: camRow.underNvr && !camRow.hidden
+                    visible: camRow.underNvr && !camRow.hidden && !root.compact
                     x: 17; y: parent.height / 2 - 1; width: 13; height: 2
                     color: Theme.textMuted; opacity: 0.35
                 }
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: camRow.underNvr ? 30 : Theme.spacing
-                    anchors.rightMargin: Theme.spacing
+                    anchors.leftMargin: root.compact ? (root.width - 20) / 2
+                                      : camRow.underNvr ? 30 : Theme.spacing
+                    anchors.rightMargin: root.compact ? 0 : Theme.spacing
                     anchors.topMargin: 4
                     anchors.bottomMargin: 4
                     spacing: Theme.spacing
@@ -295,8 +320,19 @@ Rectangle {
                         kind: "cam"
                         tint: camRow.online ? Theme.accent : Theme.textMuted
                         Layout.alignment: Qt.AlignVCenter
+                        // In the strip the status dot sits on the icon's corner.
+                        Rectangle {
+                            visible: root.compact
+                            x: parent.width - 5; y: -1
+                            width: 7; height: 7; radius: 3.5
+                            border.color: Theme.surface
+                            color: camRow.online ? Theme.online
+                                 : camRow.inTrouble ? Theme.danger : Theme.textMuted
+                        }
                     }
+                    Item { Layout.fillWidth: true; visible: root.compact }
                     ColumnLayout {
+                        visible: !root.compact
                         Layout.fillWidth: true
                         spacing: 2
                         Text {
@@ -332,7 +368,7 @@ Rectangle {
 
                     // Battery badge (battery/solar cameras only).
                     Row {
-                        visible: batteryPercent >= 0
+                        visible: batteryPercent >= 0 && !root.compact
                         spacing: 3
                         Text {
                             text: batteryCharging ? "⚡" : ""
@@ -406,7 +442,7 @@ Rectangle {
                 // The full name and state when either is cut short by the sidebar's width.
                 ToolTip {
                     visible: delegateArea.containsMouse && !delegateArea.dragging
-                             && (nameText.truncated || statusText.truncated)
+                             && (root.compact || nameText.truncated || statusText.truncated)
                     delay: 600
                     text: camRow.name + "\n" + statusText.text
                 }

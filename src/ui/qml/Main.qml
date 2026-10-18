@@ -44,6 +44,10 @@ ApplicationWindow {
     }
 
     Shortcut {
+        sequence: "Ctrl+B"
+        onActivated: sideBar.compact = !sideBar.compact
+    }
+    Shortcut {
         sequence: "F11"
         onActivated: window.videoFullscreen = !window.videoFullscreen
     }
@@ -61,6 +65,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             visible: !window.videoFullscreen
             onFullscreenRequested: window.videoFullscreen = true
+            onSidebarToggleRequested: sideBar.compact = !sideBar.compact
         }
 
         Rectangle { // divider
@@ -136,6 +141,7 @@ ApplicationWindow {
             spacing: 0
 
             SideBar {
+                id: sideBar
                 Layout.fillHeight: true
                 visible: !window.videoFullscreen
                 onAddRequested: addDeviceDialog.open()
@@ -233,6 +239,7 @@ ApplicationWindow {
         function onDetectionEvent(hostId, channel, type, camera) {
             if (type === "visitor") {
                 doorbell.deviceRow = Devices.rowOfHostChannel(hostId, channel);
+                doorbell.cameraIdentity = { hostId: hostId, channel: channel };
                 doorbell.camera = camera;
                 doorbell.active = true;
             }
@@ -249,8 +256,10 @@ ApplicationWindow {
             // RL_MOCK_DOORBELL=<hostId>:<channel> aims the mock at a real doorbell.
             var t = String(mockDoorbellTarget).split(":");
             doorbell.camera = "Front Door";
-            if (t.length === 2)
+            if (t.length === 2) {
                 doorbell.deviceRow = Devices.rowOfHostChannel(parseInt(t[0]), parseInt(t[1]));
+                doorbell.cameraIdentity = { hostId: parseInt(t[0]), channel: parseInt(t[1]) };
+            }
             doorbell.active = true;
         }
         // First run: no devices yet → open Add Device and scan the network, like
@@ -327,7 +336,12 @@ ApplicationWindow {
     // Detached camera windows for multi-monitor viewing.
     Component { id: popoutComponent; PoppedWindow {} }
     function openPopout(row, label) {
-        popoutComponent.createObject(window, { deviceRow: row, label: label });
+        const camera = Devices.cameraInfo(row);
+        if (!camera || camera.hostId === undefined)
+            return;
+        popoutComponent.createObject(window, {
+            cameraIdentity: { hostId: camera.hostId, channel: camera.channel }, label: label
+        });
     }
 
     // Transient status toast for one-shot camera actions (snapshot, siren,

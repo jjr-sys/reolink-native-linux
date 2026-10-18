@@ -1,6 +1,16 @@
-# Bosch camera controls
+# Camera client terminology
 
-This context describes the named camera positions and automatic patrol shared between the Lascelles Home Assistant dashboard and the Reolink fork.
+This glossary describes live viewing in the Reolink fork and the Bosch camera controls shared with the Lascelles Home Assistant dashboard.
+
+## Live viewing
+
+**Live stream**:
+A camera's ongoing picture and available sound, viewed as it arrives rather than from stored footage.
+_Avoid_: recorded playback
+
+**Degraded live stream**:
+A live stream using a fallback transport after its preferred transport fails; the picture may be less reliable even at the same resolution.
+_Avoid_: SD (when referring to transport fallback)
 
 ## Camera positions and tours
 

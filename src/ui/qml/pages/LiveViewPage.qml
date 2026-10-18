@@ -5,7 +5,7 @@ import QtQuick.Layouts
 import ReolinkApp
 import ReolinkApp.Core
 
-// The live grid: 1/4/9/16 presets, double-click a pane to maximize/restore,
+// The live grid: 1/4/6/9/16/20/25 presets, double-click a pane to maximize/restore,
 // fullscreen hides all chrome (handled by Main).
 Item {
     id: page
@@ -33,9 +33,13 @@ Item {
         maximizedIndex = row;
         selectedIndex = row;
     }
-    // Column/row counts per preset. 6 is the only non-square layout (3x2).
-    readonly property int cols: preset === 1 ? 1 : preset === 4 ? 2 : (preset === 6 || preset === 9) ? 3 : 4
-    readonly property int rows: preset === 1 ? 1 : (preset === 4 || preset === 6) ? 2 : preset === 9 ? 3 : 4
+    // Column/row counts per preset. 6 (3x2) and 20 (5x4) are the non-square layouts,
+    // both wider than tall to suit a landscape screen.
+    readonly property var presets: [1, 4, 6, 9, 16, 20, 25]
+    readonly property int cols: preset === 1 ? 1 : preset === 4 ? 2 : (preset === 6 || preset === 9) ? 3
+                              : preset === 16 ? 4 : 5
+    readonly property int rows: preset === 1 ? 1 : (preset === 4 || preset === 6) ? 2 : preset === 9 ? 3
+                              : (preset === 16 || preset === 20) ? 4 : 5
 
     // ---- Paging ---------------------------------------------------------------
     // With more cameras than the grid has cells, the grid shows one page of `preset`
@@ -44,7 +48,7 @@ Item {
     readonly property int pageCount: Math.max(1, Math.ceil(Devices.count / preset))
     readonly property int curPage: Math.min(gridPage, pageCount - 1)
     readonly property int pageOffset: curPage * preset
-    onPresetChanged: { gridPage = 0; syncActivityBaseline(); }
+    onPresetChanged: { gridPage = 0; syncActivityBaseline(); layoutStore.preset = preset; }
 
     // Previous/next: a maximized camera steps to its neighbour in pane order;
     // otherwise the grid moves a page. Both wrap around.
@@ -68,7 +72,7 @@ Item {
     // straight 1:1 map of model order, so a camera can only ever appear in the
     // pane matching its position in the sidebar. Always kept at maxPanes long so
     // an arrangement made in the 16-grid survives a trip through the 4-grid. Longer than
-    // the biggest grid so cameras beyond 16 can still be reached by paging.
+    // the biggest grid so cameras beyond 25 can still be reached by paging.
     readonly property int maxPanes: 32
     property var paneSlots: []
 
@@ -204,6 +208,7 @@ Item {
         id: layoutStore
         category: "liveGrid"
         property string arrangement: ""
+        property int preset: 4   // last grid preset picked, reopened at next launch
     }
     property bool layoutRestored: false
 
@@ -355,6 +360,8 @@ Item {
     }
 
     Component.onCompleted: {
+        if (presets.indexOf(layoutStore.preset) >= 0)
+            preset = layoutStore.preset;
         restoreLayout();
         Activity.trackedTypes = activityStore.types.length > 0 ? activityStore.types.split(",") : [];
         // RL_MOCK_ACTIVITY starts the page in Activity mode so a script can drive it.
@@ -373,7 +380,7 @@ Item {
             visible: !page.fullscreen
 
             Repeater {
-                model: [1, 4, 6, 9, 16]
+                model: page.presets
                 Rectangle {
                     required property int modelData
                     width: 34
@@ -646,6 +653,8 @@ Item {
                 LivePane {
                     id: pane
                     required property int index
+                    required property var hostId
+                    required property int channel
                     required property string name
                     required property bool hasPtz
                     required property bool hasZoom
@@ -671,6 +680,7 @@ Item {
                     y: isMaximized || slot < 0 ? 0 : gridArea.slotY(slot)
                     paneIndex: slot
                     deviceRow: index
+                    cameraIdentity: ({ hostId: pane.hostId, channel: pane.channel })
                     label: name
                     viewRotation: rotationOverride
                     fisheyeLens: isFisheye

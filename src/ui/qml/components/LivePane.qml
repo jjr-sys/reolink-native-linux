@@ -16,7 +16,8 @@ Rectangle {
     clip: true
 
     property int paneIndex: -1     // grid slot
-    property int deviceRow: -1     // row in the Devices model (-1 = empty slot)
+    property int deviceRow: -1     // row for camera controls, never stream identity
+    property var cameraIdentity: ({})
     property string label: ""
     property bool selected: false
     property bool forceMain: false // maximizing DEFAULTS a pane to the main stream
@@ -60,28 +61,6 @@ Rectangle {
     readonly property bool effectiveMain: qualityMain
     onForceMainChanged: qualityMain = forceMain
     readonly property bool hasSource: deviceRow >= 0
-    // What this pane is currently streaming: an RTSP URL, or "bc:<row>" for native
-    // Baichuan HD live. HD (main) live goes over Baichuan because the NVR's RTSP
-    // output for 8K duo main streams is itself corrupt (verified against raw
-    // captures) — the official clients use Baichuan for live too. The grid's sub
-    // streams stay RTSP (clean, and the NVR only allows ~1 Baichuan session).
-    property string streamKey: ""
-    property bool bcFallback: false // Baichuan slot busy → RTSP main for this round
-    // setPacketSource() stops the old stream synchronously. Ignore that expected
-    // Stopped state while replacing an RTSP source with Baichuan, or the recovery
-    // handler below schedules a timer that then stops every newly opened session.
-    property bool startingBaichuan: false
-    // The NVR answered "stream not found" over RTSP (it relays some cameras, e.g. a
-    // third-party one, only over its native protocol) → use Baichuan for the sub stream.
-    property bool bcSub: false
-    // Baichuan sessions use a custom packet source, which StreamPlayer's worker
-    // deliberately does NOT auto-retry on a stall (unlike a plain RTSP pane) — the
-    // NVR's single Baichuan slot has to be re-requested through DeviceManager, not
-    // just re-read. Left alone, a mid-session stall would freeze this pane until the
-    // user swaps cameras or leaves and returns to Live View. bcRetries counts the
-    // unprompted restarts below; it resets once a frame actually arrives.
-    property int bcRetries: 0
-
     // These carry the DEVICE ROW, not the pane index: the page tracks which
     // camera is maximized/selected, so both survive a rearrange.
     signal toggleMaximize(int index)
@@ -94,90 +73,6 @@ Rectangle {
     // True while a drag hovers this pane, so it can show where it would land.
     property bool dropTarget: false
 
-    // A pane hidden by a layout change holds its stream this long before
-    // dropping it, so coming straight back costs nothing.
-    property int keepAliveMs: 5000
-
-    // Drop the stream for good. Separate from updateSource() so the deferred
-    // path and the immediate one can't disagree about what "stopped" means.
-    function releaseStream() {
-        keepAlive.stop();
-        if (streamKey === "")
-            return;
-        streamKey = "";
-        player.stop();
-    }
-
-    Timer {
-        id: keepAlive
-        interval: root.keepAliveMs
-        onTriggered: root.releaseStream()
-    }
-
-    // Short pause before re-requesting a Baichuan session after an unprompted
-    // stall, so a genuinely down NVR doesn't spin in a tight restart loop.
-    Timer {
-        id: bcRetryTimer
-        interval: 1500
-        onTriggered: root.updateSource()
-    }
-
-    function updateSource() {
-        // Hidden by a layout change — maximizing another pane, or switching to a
-        // preset this slot falls outside of. Hold the stream briefly rather than
-        // tearing it down: restoring, or flipping 6 -> 4 -> 6, then reuses the
-        // running session instead of reconnecting every pane (each reconnect
-        // waits for the next keyframe, so it costs seconds per camera).
-        //
-        // Leaving Live View entirely is deliberately NOT covered: Playback needs
-        // the NVR's session slots, and hidden panes holding them starve it.
-        if (deviceRow >= 0 && pageActive && !visible) {
-            if (streamKey !== "")
-                keepAlive.restart();
-            return;
-        }
-        keepAlive.stop();   // visible again (or shutting down): cancel the drop
-
-        // Only stream when the pane is laid out AND its page is actually on screen
-        // — otherwise hidden Live View panes keep streaming and exhaust the NVR's
-        // limited session slots (starving Playback and other cameras).
-        var want = deviceRow >= 0 && visible && pageActive;
-        var key = "";
-        if (want) {
-            if (effectiveMain && !bcFallback && !Devices.isDirectAt(deviceRow))
-                key = "bc:" + deviceRow;
-            else if (!effectiveMain && bcSub && !Devices.isDirectAt(deviceRow))
-                key = "bcs:" + deviceRow;
-            else
-                key = Devices.liveUrl(deviceRow, effectiveMain);
-        }
-        if (key === streamKey)
-            return;
-        streamKey = key;
-        if (key === "") {
-            player.stop();
-        } else if (key.substring(0, 3) === "bc:") {
-            player.loop = false;
-            root.startingBaichuan = true;
-            Devices.startBaichuanLive(root.deviceRow, player, true);
-            root.startingBaichuan = false;
-        } else if (key.substring(0, 4) === "bcs:") {
-            player.loop = false;
-            root.startingBaichuan = true;
-            Devices.startBaichuanLive(root.deviceRow, player, false);
-            root.startingBaichuan = false;
-        } else {
-            // Set loop before start() so the worker sees the right value from
-            // frame one (the declarative `loop:` binding can lag the handler).
-            player.loop = !key.startsWith("rtsp://") && !key.startsWith("rtmp://")
-                       && !key.startsWith("tcp://") && !key.startsWith("udp://");
-            // Declared size for the stream we're opening, so a transmitted-rotated
-            // main stream (e.g. Duo 3) is presented upright.
-            player.expectedSize = Devices.declaredSize(root.deviceRow, root.effectiveMain);
-            player.source = key;
-            player.start();
-        }
-    }
     // A pane pointed at a different camera must let the old one go now — its
     // session is wanted elsewhere (a swap hands it straight to another pane).
     // Talk ends with anything that takes the pane away from this camera: the camera
@@ -188,7 +83,6 @@ Rectangle {
         if (boschTourOwnedHere && BoschTour.selectionTourMode)
             BoschTour.endSelectionTour();
         boschTourOwnedHere = false;
-        bcFallback = false; bcSub = false; bcRetries = 0; releaseStream(); updateSource();
     }
     onLabelChanged: {
         if (!isBoschFeed) {
@@ -208,15 +102,11 @@ Rectangle {
     onVisibleChanged: {
         if (!visible) talk.stop();
         if (visible && pageActive && isBoschFeed) BoschTour.refreshSceneMode();
-        updateSource();
     }
     onPageActiveChanged: {
         if (!pageActive) talk.stop();
         if (visible && pageActive && isBoschFeed) BoschTour.refreshSceneMode();
-        updateSource();
     }
-    onEffectiveMainChanged: { bcFallback = false; updateSource(); }
-    Component.onCompleted: updateSource()
 
     Timer {
         interval: 30000
@@ -225,83 +115,29 @@ Rectangle {
         onTriggered: BoschTour.refreshSceneMode()
     }
 
-    // The NVR grants only ~1 Baichuan session, and its custom packet source is
-    // deliberately not auto-retried by StreamPlayer's worker the way an RTSP pane
-    // is (see runSession's packetSource check) — a stall, a slot that's busy, or
-    // the NVR just dropping the session all end the worker for good and need
-    // DeviceManager to re-request a session, which nothing else does on its own.
-    // Left alone, that freezes the pane until the user swaps cameras or leaves and
-    // returns to Live View. Retry a few times first (worth it — a blip shouldn't
-    // cost HD quality), then for the main/HD case fall back to RTSP once
-    // (artifact-prone on 8K duos, but beats a dead pane); the substream case has
-    // no RTSP fallback — that's why it's on Baichuan in the first place — so it
-    // just keeps retrying. The next SD/HD flip or camera change retries Baichuan.
-    Connections {
-        target: player
-        function onStateChanged() {
-            if (root.startingBaichuan && player.state === StreamPlayer.Stopped)
-                return;
-            if (player.state === StreamPlayer.Streaming) {
-                bcRetryTimer.stop();
-                root.bcRetries = 0;
-            } else if ((player.state === StreamPlayer.Stopped || player.state === StreamPlayer.Error)
-                       && root.streamKey !== ""
-                       && (root.streamKey.substring(0, 3) === "bc:"
-                           || root.streamKey.substring(0, 4) === "bcs:")) {
-                if (root.bcRetries < 3) {
-                    root.bcRetries++;
-                    root.streamKey = ""; // let updateSource() see this as a fresh request
-                    bcRetryTimer.restart();
-                } else if (root.streamKey.substring(0, 3) === "bc:" && !root.bcFallback) {
-                    root.bcFallback = true;
-                    root.streamKey = "";
-                    root.updateSource();
-                }
-            } else if (player.state === StreamPlayer.Error && !root.bcSub && !root.effectiveMain
-                       && root.streamKey.startsWith("rtsp://")
-                       && player.errorString.indexOf("Stream not found") === 0) {
-                root.bcSub = true;
-                root.updateSource();
-            }
-        }
-    }
-
-    // Recompute when the backing device finishes priming / changes.
-    Connections {
-        target: Devices
-        function onDataChanged(topLeft, bottomRight) {
-            if (root.deviceRow >= topLeft.row && root.deviceRow <= bottomRight.row)
-                root.updateSource();
-        }
-    }
-
-    StreamPlayer {
+    LiveStream {
         id: player
+        devices: Devices
+        camera: root.cameraIdentity
+        mainStream: root.effectiveMain
+        active: root.pageActive
+        viewVisible: root.visible
         videoSink: video.videoSink
-        // Hold the picture back ~1 s so network stalls do not show (playback is untouched).
-        smoothing: true
-        // Audible only while asked for AND actually on screen: a pane held briefly
-        // after a layout change must not keep talking.
-        // Also silent while we talk: the camera's own sound coming out of the
-        // laptop would be picked up by the microphone and fed straight back.
-        muted: !(root.audioOn && root.audioAllowed && root.visible && root.pageActive && !talk.active)
+        muted: !(root.audioOn && root.audioAllowed && !talk.active)
     }
 
     // Microphone -> this camera's speaker.
     TalkSession { id: talk }
 
     Component.onDestruction: {
-        talk.stop(); player.stop();
+        talk.stop(); player.release();
         if (root.boschTourOwnedHere && BoschTour.selectionTourMode)
             BoschTour.endSelectionTour();
     }
 
     // ---- Drag and drop -----------------------------------------------------
-    // Dropping a camera here re-points this cell at it. Nothing needs to stop
-    // the outgoing stream by hand: changing deviceRow (or dropping out of the
-    // visible preset) runs updateSource(), and both StreamPlayer.setSource and
-    // setPacketSource stop the running session first — which for an HD pane also
-    // fires the Baichuan client's stop callback and frees the NVR's single slot.
+    // A camera assignment changes the live stream's stable identity. Its module
+    // releases the previous transport before opening the replacement.
     DropArea {
         anchors.fill: parent
         keys: ["reolink/camera"]
@@ -547,6 +383,12 @@ Rectangle {
                 font.pixelSize: 11
             }
             Text {
+                visible: player.degraded
+                text: qsTr("Degraded · RTSP fallback")
+                color: Theme.warning
+                font.pixelSize: 11
+            }
+            Text {
                 visible: root.zoom > 1.01
                 text: root.zoom.toFixed(1) + "×"
                 color: Theme.accent
@@ -579,7 +421,8 @@ Rectangle {
                 if (!root.hasSource) return qsTr("No camera");
                 switch (player.state) {
                 case StreamPlayer.Connecting: return qsTr("Connecting…");
-                case StreamPlayer.Error: return player.errorString;
+                case StreamPlayer.Error: return player.errorString
+                    + (player.recovering ? qsTr(" · Reconnecting…") : "");
                 case StreamPlayer.Stopped: return qsTr("Stopped");
                 default: return "";
                 }

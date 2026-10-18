@@ -6,13 +6,11 @@ import ReolinkApp
 import ReolinkApp.Core
 
 // A detached live-view window for one camera — drag it to a second monitor for
-// multi-screen viewing (DESIGN §6.2). Plays the main ("Clear") stream over
-// native Baichuan — the NVR's RTSP output for 8K duo mains is corrupt (see
-// LivePane) — falling back to RTSP main once if the Baichuan slot is busy.
-// Closing stops the player; Esc closes.
+// multi-screen viewing (DESIGN §6.2). Shares live transport and recovery rules
+// with the grid. Closing releases the live stream; Esc closes.
 Window {
     id: win
-    property int deviceRow: -1
+    property var cameraIdentity: ({})
     property string label: ""
 
     width: 960
@@ -82,67 +80,21 @@ Window {
     // Camera audio: off until asked for (a popped-out window is usually one of
     // several), and only offered when the stream carries a track.
     property bool audioOn: false
-    StreamPlayer {
+    LiveStream {
         id: player
+        devices: Devices
+        camera: win.cameraIdentity
+        mainStream: true
+        active: win.visible
         videoSink: video.videoSink
-        // Hold the picture back ~1 s so network stalls do not show (playback is untouched).
-        smoothing: true
         muted: !win.audioOn
     }
-    property bool bcFallback: false // Baichuan slot busy -> RTSP main this round
-    // Baichuan's custom packet source is deliberately not auto-retried by
-    // StreamPlayer's worker on a stall (see LivePane.qml) — a mid-session drop ends
-    // the worker for good, leaving this window frozen unless something re-requests
-    // the session. Counts unprompted restarts below; resets once frames arrive.
-    property int bcRetries: 0
-    Timer {
-        id: bcRetryTimer
-        interval: 1500
-        onTriggered: win.startStream()
-    }
-    function startStream() {
-        if (win.deviceRow < 0)
-            return;
-        if (!bcFallback) {
-            player.loop = false;
-            Devices.startBaichuanLive(win.deviceRow, player, true);
-            return;
-        }
-        var url = Devices.liveUrl(win.deviceRow, true); // degraded: RTSP main
-        if (url.length > 0) {
-            player.expectedSize = Devices.declaredSize(win.deviceRow, true); // main
-            player.source = url;
-            player.start();
-        }
-    }
-    Component.onCompleted: startStream()
-    Connections {
-        target: player
-        function onStateChanged() {
-            if (player.state === StreamPlayer.Streaming) {
-                win.bcRetries = 0;
-            } else if ((player.state === StreamPlayer.Stopped || player.state === StreamPlayer.Error)
-                       && !win.bcFallback) {
-                // Baichuan's custom packet source is deliberately not auto-retried by
-                // StreamPlayer's worker on a stall — this covers both that unprompted
-                // end and the original "couldn't get the slot" failure. Retry a
-                // couple of times (worth it for HD quality) before giving up to RTSP.
-                if (win.bcRetries < 3) {
-                    win.bcRetries++;
-                    bcRetryTimer.restart();
-                } else {
-                    win.bcFallback = true;
-                    win.startStream();
-                }
-            }
-        }
-    }
-    onClosing: player.stop()
+    onClosing: player.release()
 
     Text {
         anchors.centerIn: parent
         visible: player.state !== StreamPlayer.Streaming
-        text: player.state === StreamPlayer.Error ? player.errorString : qsTr("Connecting…")
+        text: player.errorString !== "" ? player.errorString : qsTr("Connecting…")
         color: Theme.textMuted
         font.pixelSize: 13
     }
@@ -155,6 +107,12 @@ Window {
         Row {
             id: nmRow; anchors.centerIn: parent; spacing: 6
             Text { text: win.label; color: "white"; font.pixelSize: 12 }
+            Text {
+                visible: player.degraded
+                text: qsTr("Degraded · RTSP fallback")
+                color: Theme.warning
+                font.pixelSize: 11
+            }
             Text {
                 visible: win.zoom > 1.01
                 text: win.zoom.toFixed(1) + "×"

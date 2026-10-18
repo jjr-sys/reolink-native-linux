@@ -11,12 +11,41 @@ Rectangle {
 
     property int currentIndex: (typeof initialPage !== "undefined") ? initialPage : 0
     signal fullscreenRequested()
+    signal sidebarToggleRequested()
 
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: Theme.spacing * 2
         anchors.rightMargin: Theme.spacing * 2
         spacing: Theme.spacing
+
+        Rectangle {
+            width: 32
+            height: 32
+            radius: Theme.radius
+            color: sidebarArea.containsMouse ? Theme.surfaceAlt : "transparent"
+            Text {
+                anchors.centerIn: parent
+                text: "☰"
+                color: Theme.textMuted
+                font.pixelSize: 16
+            }
+            MouseArea {
+                id: sidebarArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.sidebarToggleRequested()
+            }
+            ToolTip {
+                visible: sidebarArea.containsMouse
+                delay: 500
+                x: (parent.width - width) / 2
+                y: parent.height + 6
+                contentItem: Text { text: qsTr("Collapse or expand the sidebar (Ctrl+B)"); color: Theme.text; font.pixelSize: 11 }
+                background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+            }
+        }
 
         Text {
             text: qsTr("Reolink Client")

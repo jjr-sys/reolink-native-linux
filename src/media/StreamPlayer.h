@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LatestValueMailbox.h"
 #include "VideoPlayoutQueue.h"
 
 #include <QElapsedTimer>
@@ -77,17 +78,42 @@ public:
     enum class State { Idle, Connecting, Streaming, Error, Stopped };
     Q_ENUM(State)
 
+    // File finalization can outlive its media session. This target lasts for
+    // the player lifetime, independently of any particular session's back-pointer.
+    struct RecordingTarget {
+        QMutex mutex;
+        QPointer<StreamPlayer> player;
+    };
+
     // Shared between the StreamPlayer and its detached worker thread.
     struct Session {
+        struct PendingFrame {
+            QVideoFrame frame;
+            qint64 ptsUs = 0;
+            qint64 delayUs = 0;
+            qint64 bytes = 0;
+        };
+
         std::atomic<bool> abort{false};
         std::atomic<bool> loop{false};
         std::atomic<qint64> framesDecoded{0};
+        std::atomic<int> playoutFrames{0};
+        std::atomic<int> playoutPeakFrames{0};
+        std::atomic<qint64> playoutBytes{0};
+        std::atomic<qint64> playoutPeakBytes{0};
+        std::atomic<qint64> playoutLateDrops{0};
+        std::atomic<qint64> playoutOverflowDrops{0};
         std::atomic<bool> lastWasError{false}; // the last state posted was Error
+        // A render-thread import failure disables future VAAPI DMA-BUF frames for
+        // this session; Qt and the decoder then use the software upload fallback.
+        std::shared_ptr<std::atomic_bool> vaapiInteropUnavailable =
+            std::make_shared<std::atomic_bool>(false);
         // Playback speed (1 = real time), shared with the player and the native client.
         std::shared_ptr<std::atomic<double>> speed = std::make_shared<std::atomic<double>>(1.0);
         // The most recent decoded picture, for saving a snapshot of what is on screen.
         QMutex lastFrameMutex;
         QVideoFrame lastFrame;
+        LatestValueMailbox<PendingFrame> frameHandoff;
         QString source;
         QSize expectedSize; // declared size for rotation detection (see property)
 
@@ -120,6 +146,7 @@ public:
         // it under the lock before detaching, closing the lifetime race.
         QMutex backMutex;
         QPointer<StreamPlayer> player;
+        std::weak_ptr<RecordingTarget> recordingTarget;
 
         // The sink is owned by QML; delivery hops to the GUI thread where it lives.
         QMutex sinkMutex;
@@ -195,15 +222,17 @@ public:
 
     // Called on the GUI thread by the worker (via QMetaObject::invokeMethod).
     // Public so the worker helpers can reach it; not part of the QML API.
-    void applyStateFromWorker(State state, const QString &error);
-    void applyRecordingState(bool recording, const QString &path, const QString &error);
-    void applyAudioFromWorker(const QByteArray &pcm);
-    void applyAudioFlush();
+    void applyStateFromWorker(const std::shared_ptr<Session> &s, State state, const QString &error);
+    void applyFramesTickFromWorker(const std::shared_ptr<Session> &s);
+    void applyRecordingState(const std::shared_ptr<Session> &s, bool recording,
+                             const QString &path, const QString &error);
+    void applyAudioFromWorker(const std::shared_ptr<Session> &s, const QByteArray &pcm);
+    void applyAudioFlush(const std::shared_ptr<Session> &s);
     // A decoded frame with its camera timestamp. delayUs > 0: hold it on the playout
     // schedule; 0: show it now. `s` identifies the session so a stopped one is ignored.
     void applyFrameFromWorker(const std::shared_ptr<Session> &s, const QVideoFrame &frame,
                               qint64 ptsUs, qint64 delayUs, qint64 bytes);
-    void applyHasAudio(bool hasAudio);
+    void applyHasAudioFromWorker(const std::shared_ptr<Session> &s, bool hasAudio);
 
     struct AudioTap; // Baichuan audio entry point; defined in the .cpp
 
@@ -228,8 +257,10 @@ signals:
 
 private:
     void applyState(State state, const QString &error);
+    void applyHasAudio(bool hasAudio);
     void presentFrame(const QVideoFrame &frame);
     void servicePlayout();
+    void updatePlayoutMetrics();
     void resetPlayout();
     qint64 nowUs() const { return m_clock.nsecsElapsed() / 1000; }
 
@@ -258,6 +289,7 @@ private:
     VideoPlayoutQueue<QVideoFrame> m_playout;
     std::unique_ptr<AudioPlayback> m_audioOut; // created on the first audible chunk
     std::shared_ptr<AudioTap> m_tap;           // lazily created by audioFeed()
+    std::shared_ptr<RecordingTarget> m_recordingTarget;
 
     // Set via QML before start(); copied into each new Session. Survives stop().
     QPointer<QVideoSink> m_pendingSink;

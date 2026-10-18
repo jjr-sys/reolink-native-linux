@@ -232,7 +232,28 @@ Actions: `PtzCtrl`, `PtzCheck`, `StartZoomFocus`, `Snap`, `Search`, `Download`, 
 - **Software fallback is per-stream and silent.** If HW-device creation fails, `get_format` is never offered the HW pixfmt, or the first frames error (exotic HEVC Main10 / 4:2:2 / unusual GOP that a given VAAPI driver rejects), tear down and reopen that one stream on the threaded software H.264/HEVC decoder. One bad camera profile must never kill the grid. Software H.264/HEVC is the universal floor.
 - **NVDEC concurrency:** consumer GeForce **no longer enforces a concurrent decode-session cap** (the historical driver cap applied to NVENC *encode*) — but validate this on the min-spec driver rather than assuming it; Intel/AMD fixed-function decode blocks handle many low-res sub-streams comfortably.
 
-### 5.2 Render — threading, sharing, and fencing model (concrete)
+### 5.2 Render — current path and target architecture
+
+**Current implementation (Linux, Qt 6.8):**
+
+- Each decode worker publishes one pending frame through `LatestValueMailbox`, which
+  coalesces GUI wake-ups. `VideoPlayoutQueue` still applies the camera timestamp
+  delay for smoothing and drops old frames when its per-stream memory limit is hit.
+- On compatible VAAPI streams, the worker maps NV12 frames to DRM PRIME with
+  `av_hwframe_map`. Qt Quick imports the R8 luma and GR88 chroma DMA-BUF planes as
+  `QRhiTexture`s through the private `QHwVideoBuffer::mapTextures` hook. The normal
+  QML `VideoOutput` continues to handle scaling, rotation and YUV conversion.
+- Other formats, Qt render backends, missing EGL modifiers, and import failures
+  use the CPU transfer and texture-upload path. Import failure disables this path
+  for that stream. Snapshots can map an imported frame back to CPU memory.
+- The private Qt hook is enabled only for Qt 6.8 builds with the Qt private targets
+  and OpenGL/EGL development files. The Intel Iris Xe / Mesa OpenGL path is the
+  validated configuration; other VAAPI drivers need their own runtime validation.
+  The implementation relies on Qt's per-frame-slot texture pool to retain source
+  frames while imported textures are in use; it does not yet add the explicit EGL
+  fence described in the target design below.
+
+**Target architecture:**
 
 The rule that makes 16 streams tractable: **decode threads never touch GL.** The handoff is data, not GL objects.
 
@@ -296,6 +317,20 @@ idle → connecting → streaming → degraded → backoff → connecting → �
 - **Auth integration:** any 401/expired-token error triggers a **token refresh** (re-Login) via the device session before retrying — never counted as a network failure. **Credential rotation** (password changed on the device) is detected as repeated auth failures post-refresh and surfaces a re-authentication prompt on the device entry rather than hammering the device into lockout.
 - **UI surfacing:** each pane binds to its stream's state — spinner while *connecting*, live video while *streaming*, a stale-frame overlay + reconnect note in *degraded*, an offline badge with countdown in *backoff*. The device list mirrors aggregate health.
 - Recording taps survive reconnects: the remuxer tolerates discontinuities by starting a new fragment on timestamp jumps.
+
+**Current live-view module:** `media/LiveStream` owns one view's player and lifecycle;
+both the grid and detached windows supply camera identity (`hostId`, `channel`),
+quality, activity, visibility and audio choice. Transport selection, Baichuan
+recovery, fallback and hidden-view expiry stay behind this interface. Main-stream
+Baichuan failures fall back to RTSP after three retries, with a degraded indicator;
+the fallback remains until the camera or quality changes, or the view reopens.
+Baichuan substreams keep retrying temporary failures with delays capped at 30 s.
+Hidden grid streams have a fixed five-second grace period and are silent; leaving
+Live View or closing a detached window cancels recovery immediately. URL recovery
+remains inside the player, so no transport has two retry loops. Recorded playback
+continues to use `StreamPlayer` directly. `test_livestream` tests the shared
+interface with scripted transport and time adapters; `test_livestreamqml` exercises
+the actual grid, detached-window and doorbell QML callers with local sources.
 
 ---
 

@@ -18,6 +18,7 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
     libavformat libavcodec libavutil libswscale libswresample)
 pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
 pkg_check_modules(SECRET REQUIRED IMPORTED_TARGET libsecret-1)
+find_package(OpenGL QUIET COMPONENTS OpenGL EGL)
 
 # ---------------------------------------------------------------------------
 # Core library: protocol, storage, media — everything testable without a GUI
@@ -44,7 +45,9 @@ add_library(reolink_core STATIC
     src/device/DeviceManager.h src/device/DeviceManager.cpp
     src/device/DeviceDiscovery.h src/device/DeviceDiscovery.cpp
     src/device/EventManager.h src/device/EventManager.cpp
-    src/media/StreamPlayer.h src/media/StreamPlayer.cpp
+    src/media/LatestValueMailbox.h src/media/StreamPlayer.h src/media/StreamPlayer.cpp
+    src/media/VaapiVideoBuffer.h src/media/VaapiVideoBuffer.cpp
+    src/media/LiveStream.h src/media/LiveStream.cpp src/media/LiveStreamTransport.h
     src/media/ClipLoader.h src/media/ClipLoader.cpp
     src/media/AudioDecoder.h src/media/AudioDecoder.cpp
     src/media/AudioPlayback.h src/media/AudioPlayback.cpp
@@ -63,8 +66,17 @@ target_compile_definitions(reolink_core PUBLIC
     RL_UPSTREAM_BASE="${RL_UPSTREAM_BASE}")
 target_include_directories(reolink_core PUBLIC src third_party)
 target_link_libraries(reolink_core PUBLIC
-    Qt6::Core Qt6::Gui Qt6::Sql Qt6::Multimedia Qt6::Concurrent Qt6::Network Qt6::DBus
+    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Sql Qt6::Multimedia Qt6::Concurrent Qt6::Network Qt6::DBus
     PkgConfig::FFMPEG PkgConfig::CURL PkgConfig::SECRET)
+# The VAAPI→DMA-BUF renderer uses Qt 6.8's private multimedia/RHI bridge.
+# Keep it optional: unsupported Qt builds retain the normal CPU upload path.
+if(Qt6_VERSION VERSION_GREATER_EQUAL "6.8.0" AND Qt6_VERSION VERSION_LESS "6.9.0"
+   AND TARGET Qt6::GuiPrivate AND TARGET Qt6::MultimediaPrivate
+   AND TARGET OpenGL::OpenGL AND TARGET OpenGL::EGL)
+    target_compile_definitions(reolink_core PRIVATE RL_HAVE_VAAPI_DMABUF_RHI=1)
+    target_link_libraries(reolink_core PRIVATE
+        Qt6::GuiPrivate Qt6::MultimediaPrivate OpenGL::OpenGL OpenGL::EGL)
+endif()
 
 # ---------------------------------------------------------------------------
 # Application
@@ -168,7 +180,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_activity test_frigate test_clipremux test_baichuanchannels)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_activity test_frigate test_clipremux test_baichuanchannels test_livestream)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})
@@ -177,3 +189,11 @@ endforeach()
 # test_tls stands up a TLS server and drives a real FFmpeg open on a worker
 # thread; it needs longer than the default and its own network permission.
 set_tests_properties(test_tls PROPERTIES TIMEOUT 90)
+
+qt_add_executable(test_livestreamqml tests/test_livestreamqml.cpp)
+target_link_libraries(test_livestreamqml PRIVATE reolink_core Qt6::Test Qt6::QuickControls2)
+target_compile_definitions(test_livestreamqml PRIVATE
+    RL_QML_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/ui/qml")
+add_test(NAME test_livestreamqml COMMAND test_livestreamqml)
+set_tests_properties(test_livestreamqml PROPERTIES ENVIRONMENT
+    "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent-livestream-test-bus")

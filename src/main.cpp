@@ -12,6 +12,7 @@
 #include "device/ActivityGrid.h"
 #include "device/EventManager.h"
 #include "media/StreamPlayer.h"
+#include "media/LiveStream.h"
 #include "media/ClipLoader.h"
 #include "media/TalkSession.h"
 
@@ -172,6 +173,7 @@ int main(int argc, char *argv[])
     rl::TrayIcon tray;
 
     qmlRegisterType<rl::StreamPlayer>("ReolinkApp.Core", 1, 0, "StreamPlayer");
+    qmlRegisterType<rl::LiveStream>("ReolinkApp.Core", 1, 0, "LiveStream");
     qmlRegisterType<rl::ClipLoader>("ReolinkApp.Core", 1, 0, "ClipLoader");
     qmlRegisterType<rl::TalkSession>("ReolinkApp.Core", 1, 0, "TalkSession");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);

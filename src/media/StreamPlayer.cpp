@@ -3,6 +3,7 @@
 
 #include "AudioDecoder.h"
 #include "AudioPlayback.h"
+#include "media/VaapiVideoBuffer.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 
@@ -15,6 +16,7 @@
 #include <QVideoFrameFormat>
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 
 extern "C" {
@@ -41,6 +43,15 @@ using Session = StreamPlayer::Session;
 using State = StreamPlayer::State;
 
 bool isLiveUrl(const QString &source) { return isLiveStreamUrl(source); }
+
+template<typename T>
+void updateMaximum(std::atomic<T> &maximum, T value)
+{
+    T previous = maximum.load(std::memory_order_relaxed);
+    while (previous < value && !maximum.compare_exchange_weak(
+                                    previous, value, std::memory_order_relaxed)) {
+    }
+}
 
 // Never log credentials — they appear both as userinfo (rtsp://user:pass@host)
 // and as query params (the http-flv playback URL: ...&user=X&password=Y).
@@ -167,7 +178,9 @@ void postState(const std::shared_ptr<Session> &s, State st, const QString &err)
         return;
     StreamPlayer *p = s->player;
     QMetaObject::invokeMethod(
-        p, [p, st, err] { p->applyStateFromWorker(st, err); }, Qt::QueuedConnection);
+        p, [p, s, st, err] {
+            p->applyStateFromWorker(s, st, err);
+        }, Qt::QueuedConnection);
 }
 
 void postFramesTick(const std::shared_ptr<Session> &s)
@@ -176,7 +189,9 @@ void postFramesTick(const std::shared_ptr<Session> &s)
     if (!s->player)
         return;
     StreamPlayer *p = s->player;
-    QMetaObject::invokeMethod(p, [p] { emit p->framesDecodedChanged(); }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(p, [p, s] {
+        p->applyFramesTickFromWorker(s);
+    }, Qt::QueuedConnection);
 }
 
 // Hand a decoded frame to the player on the GUI thread, where the QML-owned sink lives
@@ -189,20 +204,29 @@ void deliverFrame(const std::shared_ptr<Session> &s, const QVideoFrame &frame, q
     if (!s->player)
         return;
     StreamPlayer *p = s->player;
-    QMetaObject::invokeMethod(
-        p, [p, s, frame, ptsUs, delayUs, bytes] { p->applyFrameFromWorker(s, frame, ptsUs, delayUs, bytes); },
-        Qt::QueuedConnection);
+    const bool needsWakeup = s->frameHandoff.publish({frame, ptsUs, delayUs, bytes});
+    if (!needsWakeup)
+        return;
+    const bool queued = QMetaObject::invokeMethod(p, [p, s] {
+        Session::PendingFrame newest;
+        if (s->frameHandoff.take(newest))
+            p->applyFrameFromWorker(s, newest.frame, newest.ptsUs, newest.delayUs, newest.bytes);
+    }, Qt::QueuedConnection);
+    if (!queued)
+        s->frameHandoff.clear();
 }
 
 // Decoded PCM to the GUI thread, where the audio sink lives. A stale session's
-// audio (after stop/replace) is dropped by the same back-pointer check as frames.
+// audio (after stop/replace) must also be checked when the queued call is delivered.
 void postAudio(const std::shared_ptr<Session> &s, const QByteArray &pcm)
 {
     QMutexLocker lock(&s->backMutex);
     if (!s->player)
         return;
     StreamPlayer *p = s->player;
-    QMetaObject::invokeMethod(p, [p, pcm] { p->applyAudioFromWorker(pcm); }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(p, [p, s, pcm] {
+        p->applyAudioFromWorker(s, pcm);
+    }, Qt::QueuedConnection);
 }
 
 void postAudioFlush(const std::shared_ptr<Session> &s)
@@ -211,7 +235,9 @@ void postAudioFlush(const std::shared_ptr<Session> &s)
     if (!s->player)
         return;
     StreamPlayer *p = s->player;
-    QMetaObject::invokeMethod(p, [p] { p->applyAudioFlush(); }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(p, [p, s] {
+        p->applyAudioFlush(s);
+    }, Qt::QueuedConnection);
 }
 
 void postHasAudio(const std::shared_ptr<Session> &s, bool has)
@@ -220,18 +246,25 @@ void postHasAudio(const std::shared_ptr<Session> &s, bool has)
     if (!s->player)
         return;
     StreamPlayer *p = s->player;
-    QMetaObject::invokeMethod(p, [p, has] { p->applyHasAudio(has); }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(p, [p, s, has] {
+        p->applyHasAudioFromWorker(s, has);
+    }, Qt::QueuedConnection);
 }
 
 void postRecording(const std::shared_ptr<Session> &s, bool recording, const QString &path,
                    const QString &error)
 {
-    QMutexLocker lock(&s->backMutex);
-    if (!s->player)
+    const auto target = s->recordingTarget.lock();
+    if (!target)
         return;
-    StreamPlayer *p = s->player;
+    QMutexLocker lock(&target->mutex);
+    if (!target->player)
+        return;
+    StreamPlayer *p = target->player;
     QMetaObject::invokeMethod(
-        p, [p, recording, path, error] { p->applyRecordingState(recording, path, error); },
+        p, [p, s, recording, path, error] {
+            p->applyRecordingState(s, recording, path, error);
+        },
         Qt::QueuedConnection);
 }
 
@@ -373,8 +406,26 @@ qint64 smoothDelayFor(int width, int height, double fps)
     return qBound(kMinSmoothDelayUs, qMin(kSmoothDelayUs, fits), kSmoothDelayUs);
 }
 
-// Convert one AVFrame to a QVideoFrame and hand it to the sink. Returns false on
-// an unrecoverable mapping failure (frame dropped).
+// Record and hand a prepared QVideoFrame to the sink. CPU-backed and imported
+// VAAPI frames share the same timestamp smoothing and latest-value handoff.
+bool publishVideoFrame(const std::shared_ptr<Session> &s, QVideoFrame videoFrame,
+                       QtVideo::Rotation rotation, qint64 ptsUs, qint64 delayUs,
+                       qint64 bytes)
+{
+    if (!videoFrame.isValid())
+        return false;
+    if (rotation != QtVideo::Rotation::None)
+        videoFrame.setRotation(rotation);
+    {
+        QMutexLocker lock(&s->lastFrameMutex);
+        s->lastFrame = videoFrame; // shared, not copied
+    }
+    deliverFrame(s, videoFrame, ptsUs, delayUs, bytes);
+    return true;
+}
+
+// Convert one software AVFrame to a QVideoFrame and hand it to the sink. Returns
+// false on an unrecoverable mapping failure (frame dropped).
 bool emitFrame(const std::shared_ptr<Session> &s, AVFrame *out,
                QVideoFrameFormat::PixelFormat outFormat, QtVideo::Rotation rotation,
                qint64 ptsUs, qint64 delayUs)
@@ -385,11 +436,6 @@ bool emitFrame(const std::shared_ptr<Session> &s, AVFrame *out,
         format.setColorRange(QVideoFrameFormat::ColorRange_Full);
 
     QVideoFrame videoFrame(format);
-    // Rotation is honored at the frame level by the sink/renderer (the format's
-    // rotation is not); set it here so cameras that transmit the main stream
-    // rotated (portrait) are presented upright.
-    if (rotation != QtVideo::Rotation::None)
-        videoFrame.setRotation(rotation);
     if (!videoFrame.map(QVideoFrame::WriteOnly))
         return false;
     for (int plane = 0; plane < videoFrame.planeCount(); ++plane) {
@@ -402,21 +448,18 @@ bool emitFrame(const std::shared_ptr<Session> &s, AVFrame *out,
                    out->data[plane] + y * out->linesize[plane], static_cast<size_t>(rowBytes));
     }
     videoFrame.unmap();
-    // Planar 4:2:0 is 1.5 bytes a pixel; close enough for the queue's memory budget.
-    {
-        QMutexLocker lock(&s->lastFrameMutex);
-        s->lastFrame = videoFrame; // shared, not copied
-    }
-    deliverFrame(s, videoFrame, ptsUs, delayUs, qint64(out->width) * out->height * 3 / 2);
-    return true;
+    // Rotation is honored at the frame level by the sink/renderer, including
+    // imported textures, so portrait camera streams remain upright.
+    // 4:2:0 is 1.5 bytes per pixel, which also budgets retained VAAPI surfaces.
+    return publishVideoFrame(s, std::move(videoFrame), rotation, ptsUs, delayUs,
+                             qint64(out->width) * out->height * 3 / 2);
 }
 
 // ---- Hardware decode ------------------------------------------------------
-// Offload H.264/H.265 decode to the GPU (VAAPI/CUDA/VDPAU), then transfer the
-// surface back to system memory for the sink-upload path. This is not yet the
-// zero-copy path (DMA-BUF→GL lands with the GPU render spike, DESIGN §5.2) but
-// it already moves decode off the CPU, which is what lets a 16-tile grid scale.
-// Any failure falls back to software decode, per-stream and silently.
+// Offload H.264/H.265 decode to the GPU (VAAPI/CUDA/VDPAU). Intel/AMD VAAPI
+// NV12 surfaces are handed to Qt Quick as DMA-BUF textures; other formats,
+// render backends, and import failures use the existing CPU upload path.
+// Any decoder setup failure falls back to software decode, per-stream.
 bool hwDecodeEnabled()
 {
     return qgetenv("RL_HWDECODE") != "0"; // default on
@@ -676,6 +719,13 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     double pacedSpeed = 1.0; // the speed the current pacing anchor was set at
     qint64 firstPtsUs = AV_NOPTS_VALUE;
     qint64 smoothDelayUs = 0; // chosen at the first smoothed frame
+    const bool perfDiagnosticsEnabled = lcMedia().isDebugEnabled();
+    auto perfWindowStart = std::chrono::steady_clock::now();
+    qint64 perfPipelineUs = 0;
+    qint64 perfFrames = 0;
+    qint64 perfVaapiFrames = 0;
+    qint64 perfHwTransferFrames = 0;
+    qint64 perfSoftwareFrames = 0;
 
     // Drain one decoded frame at a time; shared by the normal and flush paths.
     auto receiveFrames = [&]() {
@@ -687,18 +737,27 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                 av_frame_unref(frame);
                 continue;
             }
-            // Hardware frames live on the GPU; pull them into system memory.
+            // Keep compatible VAAPI NV12 surfaces on the GPU. If export is not
+            // available for this stream, use the existing transfer/upload path.
+            QVideoFrame vaapiVideoFrame;
             AVFrame *decoded = frame;
             if (hwPixFmt != AV_PIX_FMT_NONE && frame->format == hwPixFmt) {
-                if (av_hwframe_transfer_data(hwTransfer, frame, 0) < 0) {
-                    av_frame_unref(frame);
-                    continue;
+                if (hwPixFmt == AV_PIX_FMT_VAAPI
+                    && !s->vaapiInteropUnavailable->load(std::memory_order_relaxed)) {
+                    vaapiVideoFrame = makeVaapiVideoFrame(frame, s->vaapiInteropUnavailable);
                 }
-                hwTransfer->pts = frame->pts; // transfer drops timing metadata
-                decoded = hwTransfer;
+                if (!vaapiVideoFrame.isValid()) {
+                    if (av_hwframe_transfer_data(hwTransfer, frame, 0) < 0) {
+                        av_frame_unref(frame);
+                        continue;
+                    }
+                    hwTransfer->pts = frame->pts; // transfer drops timing metadata
+                    decoded = hwTransfer;
+                }
             }
 
-            const QVideoFrameFormat::PixelFormat qtFormat = mapPixelFormat(decoded->format);
+            const QVideoFrameFormat::PixelFormat qtFormat = vaapiVideoFrame.isValid()
+                ? QVideoFrameFormat::Format_NV12 : mapPixelFormat(decoded->format);
             AVFrame *out = decoded;
             QVideoFrameFormat::PixelFormat outFormat = qtFormat;
             if (qtFormat == QVideoFrameFormat::Format_Invalid) {
@@ -758,7 +817,21 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                                                    av_q2d(stream->avg_frame_rate));
                 frameDelayUs = smoothDelayUs;
             }
-            if (emitFrame(s, out, outFormat, rotation, framePtsUs, frameDelayUs)) {
+            const bool vaapiOutput = vaapiVideoFrame.isValid();
+            const bool emitted = vaapiOutput
+                ? publishVideoFrame(s, std::move(vaapiVideoFrame), rotation, framePtsUs,
+                                    frameDelayUs, qint64(decoded->width) * decoded->height * 3 / 2)
+                : emitFrame(s, out, outFormat, rotation, framePtsUs, frameDelayUs);
+            if (emitted) {
+                if (perfDiagnosticsEnabled) {
+                    ++perfFrames;
+                    if (vaapiOutput)
+                        ++perfVaapiFrames;
+                    else if (decoded == hwTransfer)
+                        ++perfHwTransferFrames;
+                    else
+                        ++perfSoftwareFrames;
+                }
                 const qint64 n = s->framesDecoded.fetch_add(1) + 1;
                 if (!streaming) {
                     streaming = true;
@@ -862,11 +935,46 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
         syncRecording();
         if (recorder.active())
             recorder.write(packet); // stream-copy before the packet is consumed
+        const auto pipelineStart = perfDiagnosticsEnabled
+            ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         rc = avcodec_send_packet(dec, packet);
         av_packet_unref(packet);
         if (rc < 0 && rc != AVERROR(EAGAIN))
             continue; // tolerate bitstream hiccups on live sources
         receiveFrames();
+        if (perfDiagnosticsEnabled) {
+            perfPipelineUs += std::chrono::duration_cast<std::chrono::microseconds>(
+                                  std::chrono::steady_clock::now() - pipelineStart)
+                                  .count();
+            const auto now = std::chrono::steady_clock::now();
+            const double seconds = std::chrono::duration<double>(now - perfWindowStart).count();
+            if (seconds >= 5.0) {
+                const auto pixFmtName = hwPixFmt == AV_PIX_FMT_NONE
+                    ? QByteArrayLiteral("software")
+                    : QByteArray(av_get_pix_fmt_name(hwPixFmt));
+                qCDebug(lcMedia).noquote()
+                    << redacted(source) << "perf: fps=" << QString::number(perfFrames / seconds, 'f', 1)
+                    << "pipeline_ms/s=" << QString::number(perfPipelineUs / 1000.0 / seconds, 'f', 1)
+                    << "decode=" << pixFmtName
+                    << "qt_hw_frames=" << perfVaapiFrames
+                    << "hw_download_frames=" << perfHwTransferFrames
+                    << "software_frames=" << perfSoftwareFrames
+                    << "interop_disabled=" << s->vaapiInteropUnavailable->load()
+                    << "playout_frames=" << s->playoutFrames.load()
+                    << "playout_peak_frames=" << s->playoutPeakFrames.load()
+                    << "surface_mib_est=" << QString::number(s->playoutBytes.load() / 1048576.0, 'f', 1)
+                    << "surface_peak_mib_est=" << QString::number(s->playoutPeakBytes.load() / 1048576.0, 'f', 1)
+                    << "late_drop_total=" << s->playoutLateDrops.load()
+                    << "overflow_drop_total=" << s->playoutOverflowDrops.load()
+                    << "mailbox_overwrite_total=" << s->frameHandoff.overwrittenCount();
+                perfWindowStart = now;
+                perfPipelineUs = 0;
+                perfFrames = 0;
+                perfVaapiFrames = 0;
+                perfHwTransferFrames = 0;
+                perfSoftwareFrames = 0;
+            }
+        }
     }
     finalizeRecording(); // clean stop
     return false;
@@ -969,8 +1077,9 @@ struct StreamPlayer::AudioTap {
 
 std::function<void(const QByteArray &)> StreamPlayer::audioFeed()
 {
-    if (!m_tap)
-        m_tap = std::make_shared<AudioTap>();
+    // Each packet source needs its own tap. Rebinding a shared tap on replacement
+    // would let the previous Baichuan client's late audio enter the new session.
+    m_tap = std::make_shared<AudioTap>();
     // Capture the tap, never `this`: the client keeps this callback for as long as it
     // runs, which can be past this player's destruction.
     return [tap = m_tap](const QByteArray &adts) { tap->push(adts); };
@@ -1039,15 +1148,33 @@ void StreamPlayer::servicePlayout()
     const qint64 now = nowUs();
     if (m_playout.poll(now, frame))
         presentFrame(frame);
+    updatePlayoutMetrics();
     const qint64 next = m_playout.nextDueUs();
     if (next >= 0)
         m_playoutTimer.start(int(qMax<qint64>(1, (next - now + 999) / 1000)));
+}
+
+void StreamPlayer::updatePlayoutMetrics()
+{
+    if (!m_session || !lcMedia().isDebugEnabled())
+        return;
+    const auto session = m_session;
+    const int queuedFrames = m_playout.size();
+    const qint64 queuedBytes = m_playout.queuedBytes();
+    session->playoutFrames.store(queuedFrames, std::memory_order_relaxed);
+    session->playoutBytes.store(queuedBytes, std::memory_order_relaxed);
+    updateMaximum(session->playoutPeakFrames, queuedFrames);
+    updateMaximum(session->playoutPeakBytes, queuedBytes);
+    const auto &stats = m_playout.stats();
+    session->playoutLateDrops.store(stats.droppedLate, std::memory_order_relaxed);
+    session->playoutOverflowDrops.store(stats.droppedOverflow, std::memory_order_relaxed);
 }
 
 void StreamPlayer::resetPlayout()
 {
     m_playoutTimer.stop();
     m_playout.clear();
+    updatePlayoutMetrics();
     if (m_liveDelayMs != 0) {
         m_liveDelayMs = 0;
         if (m_audioOut)
@@ -1105,10 +1232,16 @@ void StreamPlayer::setPlayback(bool on)
     emit playbackChanged();
 }
 
-void StreamPlayer::applyAudioFlush()
+void StreamPlayer::applyAudioFlush(const std::shared_ptr<Session> &s)
 {
-    if (m_audioOut)
+    if (s == m_session && m_audioOut)
         m_audioOut->flush();
+}
+
+void StreamPlayer::applyHasAudioFromWorker(const std::shared_ptr<Session> &s, bool hasAudio)
+{
+    if (s == m_session)
+        applyHasAudio(hasAudio);
 }
 
 void StreamPlayer::applyHasAudio(bool hasAudio)
@@ -1119,9 +1252,9 @@ void StreamPlayer::applyHasAudio(bool hasAudio)
     emit hasAudioChanged();
 }
 
-void StreamPlayer::applyAudioFromWorker(const QByteArray &pcm)
+void StreamPlayer::applyAudioFromWorker(const std::shared_ptr<Session> &s, const QByteArray &pcm)
 {
-    if (m_muted)
+    if (s != m_session || m_muted)
         return; // muted after this chunk was queued
     if (!m_audioOut) {
         m_audioOut = std::make_unique<AudioPlayback>();
@@ -1133,14 +1266,25 @@ void StreamPlayer::applyAudioFromWorker(const QByteArray &pcm)
 }
 
 // applyStateFromWorker runs on the GUI thread (posted via invokeMethod).
-void StreamPlayer::applyStateFromWorker(State state, const QString &error)
+void StreamPlayer::applyStateFromWorker(const std::shared_ptr<Session> &s, State state,
+                                       const QString &error)
 {
-    applyState(state, error);
+    if (s == m_session)
+        applyState(state, error);
 }
 
-void StreamPlayer::applyRecordingState(bool recording, const QString &path, const QString &error)
+void StreamPlayer::applyFramesTickFromWorker(const std::shared_ptr<Session> &s)
 {
-    if (m_recording != recording) {
+    if (s == m_session)
+        emit framesDecodedChanged();
+}
+
+void StreamPlayer::applyRecordingState(const std::shared_ptr<Session> &s, bool recording,
+                                      const QString &path, const QString &error)
+{
+    // A finalized old file still deserves its completion notification, but
+    // cannot clear or set the replacement session's recording status.
+    if (s == m_session && m_recording != recording) {
         m_recording = recording;
         emit recordingChanged();
     }
@@ -1184,6 +1328,8 @@ void StreamPlayer::stopRecording()
 
 StreamPlayer::StreamPlayer(QObject *parent) : QObject(parent)
 {
+    m_recordingTarget = std::make_shared<RecordingTarget>();
+    m_recordingTarget->player = this;
     gLivePlayers.fetch_add(1, std::memory_order_relaxed);
     m_clock.start();
     m_playoutTimer.setSingleShot(true);
@@ -1193,6 +1339,10 @@ StreamPlayer::StreamPlayer(QObject *parent) : QObject(parent)
 
 StreamPlayer::~StreamPlayer()
 {
+    {
+        QMutexLocker lock(&m_recordingTarget->mutex);
+        m_recordingTarget->player = nullptr;
+    }
     gLivePlayers.fetch_sub(1, std::memory_order_relaxed);
     if (m_activeStop)
         m_activeStop();
@@ -1206,6 +1356,7 @@ StreamPlayer::~StreamPlayer()
             QMutexLocker lock(&m_session->backMutex);
             m_session->player = nullptr;
         }
+        m_session->frameHandoff.clear();
         m_session->abort.store(true);
     }
 }
@@ -1296,6 +1447,7 @@ void StreamPlayer::start()
 
     auto s = std::make_shared<Session>();
     s->player = this;
+    s->recordingTarget = m_recordingTarget;
     s->source = m_source;
     s->readPacket = m_pendingReader;
     s->forcedFormat = m_pendingFormat;
@@ -1336,6 +1488,7 @@ void StreamPlayer::stop()
         QMutexLocker lock(&m_session->backMutex);
         m_session->player = nullptr; // stale callbacks become no-ops
     }
+    m_session->frameHandoff.clear();
     m_session->abort.store(true);
     m_session.reset();
     resetPlayout();

@@ -10,6 +10,7 @@ import ReolinkApp.Core
 Rectangle {
     id: root
     property int deviceRow: -1     // the doorbell's own camera row (its NVR channel)
+    property var cameraIdentity: ({})
     property string camera: ""
     property bool active: false
 
@@ -120,6 +121,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
             deviceRow: root.active ? root.deviceRow : -1
+            cameraIdentity: root.cameraIdentity
             label: root.camera
             selected: !root.talking
             forceMain: false

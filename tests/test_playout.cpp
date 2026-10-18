@@ -1,3 +1,4 @@
+#include "media/LatestValueMailbox.h"
 #include "media/VideoPlayoutQueue.h"
 
 #include <QtTest>
@@ -65,6 +66,36 @@ class TestPlayout : public QObject
 {
     Q_OBJECT
 private slots:
+    void frameHandoffCoalescesWakeupsAndKeepsTheNewestFrame()
+    {
+        rl::LatestValueMailbox<int> handoff;
+        int frame = 0;
+
+        QVERIFY(handoff.publish(1)); // post the first GUI wake-up
+        QVERIFY(!handoff.publish(2));
+        QVERIFY(!handoff.publish(3));
+        QVERIFY(handoff.overwrittenCount() == 2);
+        QVERIFY(handoff.take(frame));
+        QCOMPARE(frame, 3);
+        QVERIFY(!handoff.take(frame));
+
+        QVERIFY(handoff.publish(4)); // the previous wake-up was consumed
+        QVERIFY(handoff.take(frame));
+        QCOMPARE(frame, 4);
+    }
+
+    void clearingTheHandoffDropsPendingFrame()
+    {
+        rl::LatestValueMailbox<int> handoff;
+        int frame = 0;
+        QVERIFY(handoff.publish(1));
+        handoff.clear();
+        QVERIFY(!handoff.take(frame));
+        QVERIFY(handoff.publish(2));
+        QVERIFY(handoff.take(frame));
+        QCOMPARE(frame, 2);
+    }
+
     void firstFrameWaitsForTheDelay()
     {
         Queue q(cfg());

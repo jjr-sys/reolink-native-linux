@@ -14,6 +14,7 @@ QtObject {
     readonly property color textMuted: "#8b98a5"
     readonly property color paneBackground: "#05080b"
     readonly property color danger: "#e5484d"
+    readonly property color warning: "#e3ad45"
     readonly property color online: "#46a758"
 
     readonly property int radius: 6
@@ -22,5 +23,6 @@ QtObject {
     // a click, for dragging cameras between grid cells.
     readonly property int dragThreshold: 8
     readonly property int sidebarWidth: 240
+    readonly property int sidebarStripWidth: 44   // the collapsed sidebar
     readonly property int navHeight: 48
 }
