@@ -27,8 +27,16 @@ void MosaicLayout::setPanes(const QVariantList &panes)
                                  [](const mosaic::Pane &a, const mosaic::Pane &b) {
                                      return a.ratio == b.ratio && a.weight == b.weight;
                                  });
-    if (same && (m_engine || m_pending))
+    if (same && m_pending)
+        return; // the build under way has these shapes; it lands with these entries
+    if (same && m_engine) {
+        // Same shapes, other entries (cameras swapped places): same geometry.
+        if (m_layoutPanes != panes) {
+            m_layoutPanes = panes;
+            emit layoutPanesChanged();
+        }
         return;
+    }
     m_panes = std::move(parsed);
     startBuild();
 }
@@ -77,6 +85,8 @@ void MosaicLayout::startBuild()
         watcher->deleteLater();
         if (gen == m_generation) {
             m_engine = watcher->result();
+            m_layoutPanes = m_panesIn;
+            emit layoutPanesChanged();
             relayout(true);
         }
         if (--m_pending == 0)

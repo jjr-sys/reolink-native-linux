@@ -26,6 +26,9 @@ class MosaicLayout : public QObject
     Q_PROPERTY(qreal gap READ gap WRITE setGap NOTIFY gapChanged)
     // QRectF per pane of the last finished build; empty until the first one.
     Q_PROPERTY(QVariantList rects READ rects NOTIFY rectsChanged)
+    // The `panes` entries (with any extra fields the caller put in them) that `rects`
+    // describes, one for one. It changes, just before `rects`, when a build lands.
+    Q_PROPERTY(QVariantList layoutPanes READ layoutPanes NOTIFY layoutPanesChanged)
     Q_PROPERTY(bool building READ building NOTIFY buildingChanged)
     // Black share of the box in percent, gaps included.
     Q_PROPERTY(qreal black READ black NOTIFY rectsChanged)
@@ -42,6 +45,7 @@ public:
     qreal gap() const { return m_gap; }
     void setGap(qreal g);
     QVariantList rects() const { return m_rects; }
+    QVariantList layoutPanes() const { return m_layoutPanes; }
     bool building() const { return m_pending > 0; }
     qreal black() const { return m_black; }
 
@@ -54,6 +58,7 @@ signals:
     void heightChanged();
     void gapChanged();
     void rectsChanged();
+    void layoutPanesChanged();
     void buildingChanged();
 
 private:
@@ -69,6 +74,7 @@ private:
     quint64 m_generation = 0;
     int m_pending = 0;
     QVariantList m_rects;
+    QVariantList m_layoutPanes;
     qreal m_black = 0;
 };
 

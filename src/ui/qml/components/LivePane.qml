@@ -29,6 +29,27 @@ Rectangle {
     property string fisheyeMode: "fisheye"
     readonly property bool dewarp: fisheyeLens && fisheyeMode !== "fisheye"
     onDewarpChanged: { if (dewarp) { zoom = 1.0; panX = 0; panY = 0; } }
+    // The picture's shape (width/height) as decoded, before the rotation override; 0 until
+    // a frame is on screen. Read off the drawn picture, so the stream's own rotation is
+    // included. Not known while dewarping, which stretches the frame over the pane. The
+    // drawn size is rounded to pixels, so it moves only on a real change (> 3%): a re-pack
+    // resizing the pane must not read back as a new shape.
+    readonly property real frameRatio: measuredRatio
+    property real measuredRatio: 0
+    function measureRatio() {
+        var r = video.contentRect;
+        if (player.state !== StreamPlayer.Streaming || dewarp || r.width < 2 || r.height < 2)
+            return;
+        var m = (viewRotation % 180 !== 0) ? r.height / r.width : r.width / r.height;
+        if (!(measuredRatio > 0) || Math.abs(m - measuredRatio) / measuredRatio > 0.03)
+            measuredRatio = m;
+    }
+    Connections {
+        target: video
+        function onContentRectChanged() { root.measureRatio(); }
+    }
+    // The mosaic shows a camera that stopped answering greyed out, in its place.
+    property bool offline: false
     property bool pageActive: true // false when the Live View page isn't on screen
     property bool audioAllowed: true // false while something else (the doorbell pop-up) has the sound
 
@@ -397,11 +418,44 @@ Rectangle {
         }
     }
 
+    // ---- Offline (mosaic) ------------------------------------------------------
+    Rectangle {
+        visible: root.offline
+        anchors.fill: videoArea
+        z: 18
+        color: "#b0101418"
+        Rectangle {
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.margins: 6
+            radius: 3
+            color: Theme.surfaceAlt
+            border.color: Theme.border
+            width: offlineText.implicitWidth + 12
+            height: offlineText.implicitHeight + 6
+            Text {
+                id: offlineText
+                anchors.centerIn: parent
+                text: qsTr("Offline")
+                color: Theme.textMuted
+                font.pixelSize: 11
+            }
+        }
+        Text {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.margins: 9
+            text: root.label
+            color: Theme.textMuted
+            font.pixelSize: 11
+        }
+    }
+
     // ---- Connection-state overlay -----------------------------------------
     Column {
         anchors.centerIn: videoArea
         spacing: Theme.spacing
-        visible: player.state !== StreamPlayer.Streaming
+        visible: player.state !== StreamPlayer.Streaming && !root.offline
 
         BusyIndicator {
             anchors.horizontalCenter: parent.horizontalCenter

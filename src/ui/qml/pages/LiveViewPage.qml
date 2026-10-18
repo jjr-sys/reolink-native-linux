@@ -5,8 +5,8 @@ import QtQuick.Layouts
 import ReolinkApp
 import ReolinkApp.Core
 
-// The live grid: 1/4/6/9/16/20/25 presets, double-click a pane to maximize/restore,
-// fullscreen hides all chrome (handled by Main).
+// The live grid: 1/4/6/9/16/20/25 presets or the All Sites mosaic, double-click a pane to
+// maximize/restore, fullscreen hides all chrome (handled by Main).
 Item {
     id: page
 
@@ -23,7 +23,117 @@ Item {
 
     // A maximized pane is effectively the single ("1") view, so light that button
     // up in the layout toolbar rather than the underlying grid preset.
-    readonly property int activePreset: maximizedIndex >= 0 ? 1 : preset
+    readonly property int activePreset: maximizedIndex >= 0 ? 1 : mosaicMode ? 0 : preset
+
+    // ---- Mosaic ------------------------------------------------------------
+    // The built-in "All Sites" mosaic (wayfinder/mosaic-live-view): each camera at its own
+    // picture shape, packed by MosaicLayout to fill the area, nothing cropped. Grouped by
+    // Site (alphabetically), in the user's arrangement order within each; cameras listed
+    // in [mosaic] excluded are left out, and empty panes never show. No paging, and
+    // Activity mode is off while it is shown (its own setting is kept for the grid).
+    property bool mosaicMode: false
+    readonly property bool activityOn: activityMode && !mosaicMode
+    property bool mosaicAnimate: false   // a re-pack from new panes or shapes slides
+    property var mosaicRectByRow: ({})   // device row -> rect while the mosaic is shown
+    property var paneRatios: ({})        // "hostId:channel" -> drawn width/height
+
+    onMosaicModeChanged: {
+        layoutStore.mosaic = mosaicMode;
+        if (mosaicMode) {
+            mosaic.reset();
+            rebuildMosaic();
+        }
+    }
+
+    // A host named "<Site> <something>" (the Farm Hikvision's direct stream) belongs
+    // to that Site.
+    function siteOf(hostName, names) {
+        for (var i = 0; i < names.length; ++i)
+            if (names[i] !== hostName && hostName.indexOf(names[i] + " ") === 0)
+                return names[i];
+        return hostName;
+    }
+    function cameraKey(row) {
+        var c = Devices.cameraInfo(row);
+        return c && c.hostId !== undefined ? c.hostId + ":" + c.channel : "";
+    }
+    function mosaicRows() {
+        var names = Devices.propertyNames();
+        var excluded = mosaicStore.excluded.split(",");
+        var list = [];
+        for (var i = 0; i < paneSlots.length; ++i) {
+            var r = paneSlots[i];
+            if (r < 0 || r >= Devices.count)
+                continue;
+            var c = Devices.cameraInfo(r);
+            if (excluded.indexOf(c.hostId + ":" + c.channel) >= 0)
+                continue;
+            list.push({ row: r, site: siteOf(c.hostName, names), order: list.length });
+        }
+        list.sort((a, b) => a.site.localeCompare(b.site) || a.order - b.order);
+        return list.map(x => x.row);
+    }
+    // At launch the NVRs' cameras arrive a few seconds after the window opens. The first
+    // build waits for the saved arrangement's cameras (at most 8 s), so the mosaic opens
+    // in its final layout rather than re-packing as each NVR answers.
+    property bool mosaicWaitOver: false
+    Timer {
+        id: mosaicWait
+        interval: 8000
+        running: true
+        onTriggered: { page.mosaicWaitOver = true; page.rebuildMosaic(); }
+    }
+    function rebuildMosaic() {
+        if (!mosaicMode)
+            return;
+        if (!mosaicWaitOver && (!layoutRestored || hasPendingPanes()))
+            return;
+        mosaic.panes = mosaicRows().map(r => ({ row: r, large: false,
+                                                ratio: paneRatios[cameraKey(r)] || 16 / 9 }));
+    }
+    // Shape changes, new cameras and rearranging are gathered for half a second, then
+    // re-packed together in one move (cameras connecting at launch cause one, not 18).
+    function scheduleMosaic() {
+        if (mosaicMode && !mosaicSettle.running)
+            mosaicSettle.start();
+    }
+    Timer { id: mosaicSettle; interval: 500; onTriggered: page.rebuildMosaic() }
+    Timer { id: mosaicAnimateEnd; interval: 300; onTriggered: page.mosaicAnimate = false }
+
+    // The drawn shape from the decoded (or remembered) frame shape, the rotation override
+    // and the fisheye view, so a rotation or view change applies before any stream does.
+    function drawnRatio(frame, rotation, fisheye, mode) {
+        if (fisheye && mode !== "fisheye") {
+            if (mode === "dual") return 2.1 / 2;     // FisheyeView: two 2.1:1 strips stacked
+            if (mode === "panorama") return 3.3;
+            if (mode === "fisheye_ptz") return 2.5;
+            return 16 / 9;                           // ptz, quad: they fill any pane
+        }
+        var r = frame > 0 ? frame : 16 / 9;          // never seen: 16:9
+        return rotation % 180 !== 0 ? 1 / r : r;
+    }
+    function noteRatio(key, r) {
+        if (!key || !(r > 0))
+            return;
+        var old = paneRatios[key];
+        if (old && Math.abs(old - r) / old < 0.005)
+            return;
+        paneRatios[key] = r;
+        scheduleMosaic();
+    }
+    // Each camera's last decoded shape, kept between launches.
+    function rememberedFrame(key) {
+        var v = parseFloat(shapeStore.value(key, 0));
+        return v > 0 ? v : 0;
+    }
+    function rememberFrame(key, r) {
+        if (!key || !(r > 0))
+            return;
+        var old = rememberedFrame(key);
+        if (!old || Math.abs(old - r) / old >= 0.005)
+            shapeStore.setValue(key, r.toFixed(4));
+    }
+    function mosaicOrder() { return mosaic.layoutPanes.map(p => p.row); }
 
     // Sidebar click: show this camera alone, full-size (the maximized pane —
     // same as double-clicking it — which also defaults it to HD).
@@ -54,7 +164,7 @@ Item {
     // otherwise the grid moves a page. Both wrap around.
     function step(dir) {
         if (maximizedIndex >= 0) {
-            var order = paneSlots.filter(r => r >= 0);
+            var order = mosaicMode ? mosaicOrder() : paneSlots.filter(r => r >= 0);
             var i = order.indexOf(maximizedIndex);
             if (order.length < 2 || i < 0)
                 return;
@@ -65,7 +175,8 @@ Item {
             gridPage = (curPage + dir + pageCount) % pageCount;
         }
     }
-    readonly property bool canStep: maximizedIndex >= 0 ? Devices.count > 1 : pageCount > 1
+    readonly property bool canStep: maximizedIndex >= 0 ? Devices.count > 1
+                                                       : !mosaicMode && pageCount > 1
 
     // ---- Which camera sits in which pane -----------------------------------
     // paneSlots[pane] = device row (-1 = empty). Without this the grid is a
@@ -93,7 +204,7 @@ Item {
         return r;
     }
     function recomputeView() {
-        if (!activityMode) {
+        if (!activityOn) {
             viewSlots = paneSlots;
             return;
         }
@@ -117,7 +228,7 @@ Item {
             Activity.setPinned(t, tiles[t].row === selectedIndex || userPinnedTiles[t] === true);
     }
     function syncActivityBaseline() {
-        if (activityMode) {
+        if (activityOn) {
             Activity.setBaseline(baselineRows());
             recomputeView();
             applyPins();
@@ -127,7 +238,7 @@ Item {
     function activityOf(row) {
         var tiles = Activity.tiles;
         for (var t = 0; t < tiles.length; ++t)
-            if (activityMode && tiles[t].row === row && tiles[t].active)
+            if (activityOn && tiles[t].row === row && tiles[t].active)
                 return tiles[t];
         return null;
     }
@@ -138,15 +249,15 @@ Item {
         var when = a.trigger > 0 ? Qt.formatTime(new Date(a.trigger * 1000), "HH:mm") : "";
         return k + " · " + name + (when ? " · " + when : "");
     }
-    onActivityModeChanged: {
-        Activity.enabled = activityMode;
+    onActivityOnChanged: {
+        Activity.enabled = activityOn;
         userPinnedTiles = ({});
         syncActivityBaseline();
         recomputeView();
     }
     onGridPageChanged: syncActivityBaseline()
-    onPaneSlotsChanged: { syncActivityBaseline(); if (!activityMode) viewSlots = paneSlots; }
-    onSelectedIndexChanged: if (activityMode) applyPins()
+    onPaneSlotsChanged: { syncActivityBaseline(); if (!activityOn) viewSlots = paneSlots; scheduleMosaic(); }
+    onSelectedIndexChanged: if (activityOn) applyPins()
     Connections {
         target: Activity
         function onTilesChanged() {
@@ -209,6 +320,16 @@ Item {
         category: "liveGrid"
         property string arrangement: ""
         property int preset: 4   // last grid preset picked, reopened at next launch
+        property bool mosaic: false // the mosaic was the last view
+    }
+    Settings {
+        id: mosaicStore
+        category: "mosaic"
+        property string excluded: ""   // "hostId:channel,..." left out of All Sites
+    }
+    Settings {
+        id: shapeStore
+        category: "mosaicShapes"       // "hostId:channel" = decoded width/height
     }
     property bool layoutRestored: false
 
@@ -362,6 +483,7 @@ Item {
     Component.onCompleted: {
         if (presets.indexOf(layoutStore.preset) >= 0)
             preset = layoutStore.preset;
+        mosaicMode = layoutStore.mosaic;
         restoreLayout();
         Activity.trackedTypes = activityStore.types.length > 0 ? activityStore.types.split(",") : [];
         // RL_MOCK_ACTIVITY starts the page in Activity mode so a script can drive it.
@@ -402,6 +524,7 @@ Item {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             page.preset = parent.modelData;
+                            page.mosaicMode = false;
                             page.maximizedIndex = -1;
                         }
                     }
@@ -420,11 +543,49 @@ Item {
                 }
             }
 
+            Rectangle {
+                width: mosaicLabel.implicitWidth + 20
+                height: 26
+                radius: Theme.radius
+                color: page.activePreset === 0 ? Theme.accentDim
+                     : mosaicArea.containsMouse ? Theme.surfaceAlt : Theme.surface
+                border.color: Theme.border
+                Text {
+                    id: mosaicLabel
+                    anchors.centerIn: parent
+                    text: qsTr("Mosaic")
+                    color: page.activePreset === 0 ? Theme.text : Theme.textMuted
+                    font.pixelSize: 12
+                }
+                MouseArea {
+                    id: mosaicArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        page.mosaicMode = true;
+                        page.maximizedIndex = -1;
+                    }
+                }
+                ToolTip {
+                    visible: mosaicArea.containsMouse
+                    delay: 500
+                    x: (parent.width - width) / 2
+                    y: parent.height + 6
+                    contentItem: Text {
+                        text: qsTr("All Sites mosaic: every camera at its own shape, packed to fill the view")
+                        color: Theme.text; font.pixelSize: 11
+                    }
+                    background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                }
+            }
+
             Item { Layout.fillWidth: true }
 
             // Activity mode: cameras with detections take over idle tiles. Your saved
             // arrangement is left alone and comes back when this is turned off.
             Rectangle {
+                visible: !page.mosaicMode
                 width: activityLabel.implicitWidth + 20
                 height: 26
                 radius: Theme.radius
@@ -461,6 +622,7 @@ Item {
 
             // Which detections count in Activity mode.
             Rectangle {
+                visible: !page.mosaicMode
                 width: 26
                 height: 26
                 radius: Theme.radius
@@ -629,6 +791,32 @@ Item {
             function slotX(slot) { return ((slot - page.pageOffset) % page.cols) * (cellWidth + gap); }
             function slotY(slot) { return Math.floor((slot - page.pageOffset) / page.cols) * (cellHeight + gap); }
 
+            Text {
+                anchors.centerIn: parent
+                visible: page.mosaicMode && page.maximizedIndex < 0 && mosaic.layoutPanes.length === 0
+                text: qsTr("Loading cameras…")
+                color: Theme.textMuted
+                font.pixelSize: 12
+            }
+
+            MosaicLayout {
+                id: mosaic
+                width: gridArea.width
+                height: gridArea.height
+                gap: gridArea.gap
+                onLayoutPanesChanged: {
+                    page.mosaicAnimate = true;
+                    mosaicAnimateEnd.restart();
+                }
+                onRectsChanged: {
+                    var m = ({});
+                    var p = layoutPanes, r = rects;
+                    for (var i = 0; i < p.length && i < r.length; ++i)
+                        m[p[i].row] = r[i];
+                    page.mosaicRectByRow = m;
+                }
+            }
+
             // Empty slots: drawn under the camera panes so they are drop targets
             // for the cells no camera occupies.
             Repeater {
@@ -636,7 +824,7 @@ Item {
                 LivePane {
                     required property int index
                     readonly property int slot: page.pageOffset + index
-                    visible: page.maximizedIndex === -1 && page.rowAt(slot) < 0
+                    visible: page.maximizedIndex === -1 && !page.mosaicMode && page.rowAt(slot) < 0
                     width: gridArea.cellWidth
                     height: gridArea.cellHeight
                     x: gridArea.slotX(slot)
@@ -665,19 +853,32 @@ Item {
                     required property int rotationOverride
                     required property bool isFisheye
                     required property string viewMode
+                    required property bool online
 
                     readonly property int slot: page.paneOfRow(index)
                     readonly property bool isMaximized: page.maximizedIndex === index
+                    readonly property var mrect: page.mosaicMode ? page.mosaicRectByRow[index] : undefined
+                    readonly property bool inMosaic: mrect !== undefined
 
                     // A maximized pane shows even when its slot is beyond the grid
                     // preset (e.g. camera 5 clicked while in the 4-grid).
                     visible: isMaximized ||
-                             (page.maximizedIndex === -1 && slot >= page.pageOffset
-                              && slot < page.pageOffset + page.preset)
-                    width: isMaximized ? gridArea.width : gridArea.cellWidth
-                    height: isMaximized ? gridArea.height : gridArea.cellHeight
-                    x: isMaximized || slot < 0 ? 0 : gridArea.slotX(slot)
-                    y: isMaximized || slot < 0 ? 0 : gridArea.slotY(slot)
+                             (page.maximizedIndex === -1 && (page.mosaicMode ? inMosaic
+                              : slot >= page.pageOffset && slot < page.pageOffset + page.preset))
+                    width: isMaximized ? gridArea.width : inMosaic ? mrect.width : gridArea.cellWidth
+                    height: isMaximized ? gridArea.height : inMosaic ? mrect.height : gridArea.cellHeight
+                    x: isMaximized ? 0 : inMosaic ? mrect.x : slot < 0 ? 0 : gridArea.slotX(slot)
+                    y: isMaximized ? 0 : inMosaic ? mrect.y : slot < 0 ? 0 : gridArea.slotY(slot)
+                    offline: inMosaic && !online
+
+                    // The shape this camera takes in the mosaic.
+                    readonly property string cameraKey: hostId + ":" + channel
+                    readonly property real mosaicRatio: page.drawnRatio(
+                        frameRatio > 0 ? frameRatio : page.rememberedFrame(cameraKey),
+                        rotationOverride, isFisheye, viewMode)
+                    onFrameRatioChanged: page.rememberFrame(cameraKey, frameRatio)
+                    onMosaicRatioChanged: page.noteRatio(cameraKey, mosaicRatio)
+                    Component.onCompleted: page.noteRatio(cameraKey, mosaicRatio)
                     paneIndex: slot
                     deviceRow: index
                     cameraIdentity: ({ hostId: pane.hostId, channel: pane.channel })
@@ -710,8 +911,10 @@ Item {
                     onPopOut: (row, lbl) => page.popOut(row, lbl)
                     onOpenBoschTourRequested: page.openBoschTourRequested()
                     onCameraDropped: (targetPane, row) => {
+                        if (page.mosaicMode)
+                            return; // mosaic changes never move the grid
                         page.assignPane(targetPane, row);
-                        if (page.activityMode) {
+                        if (page.activityOn) {
                             var pinned = page.userPinnedTiles;
                             pinned[targetPane - page.pageOffset] = true;
                             page.userPinnedTiles = pinned;
@@ -723,14 +926,26 @@ Item {
                     activityText: page.activityLabel(activity, name)
 
                     // Slide to the new cell so a swap reads as movement rather
-                    // than two panes blinking into each other's places.
+                    // than two panes blinking into each other's places. In the mosaic
+                    // only a re-pack slides; a resize follows the window directly.
+                    readonly property bool slides: !pane.isMaximized
+                                                   && (!page.mosaicMode || page.mosaicAnimate)
+                    readonly property int slideMs: page.mosaicMode ? 250 : 130
                     Behavior on x {
-                        enabled: !pane.isMaximized
-                        NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
+                        enabled: pane.slides
+                        NumberAnimation { duration: pane.slideMs; easing.type: Easing.OutCubic }
                     }
                     Behavior on y {
-                        enabled: !pane.isMaximized
-                        NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
+                        enabled: pane.slides
+                        NumberAnimation { duration: pane.slideMs; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on width {
+                        enabled: pane.slides && page.mosaicMode
+                        NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on height {
+                        enabled: pane.slides && page.mosaicMode
+                        NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
                     }
                 }
             }
