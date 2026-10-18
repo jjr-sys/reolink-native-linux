@@ -7,7 +7,9 @@ import ReolinkApp.Core
 // switch in Live View and listed in Settings → Mosaics. One instance, so an edit in one
 // place shows in the other at once. Each entry:
 //   { id, name, cameras: ["hostId:channel", ...] in the mosaic's own order,
-//     grouping: "site" | "order" | "shape", siteOrder: ["Site", ...] }
+//     grouping: "site" | "order" | "shape", siteOrder: ["Site", ...],
+//     large: [keys of Large panes], hd: [keys of panes set to HD] }
+// The grid-page mosaic (id "") keeps one Large and one HD set, shared across grid sizes.
 QtObject {
     id: root
 
@@ -37,7 +39,7 @@ QtObject {
     function add(fields) {
         var m = { id: "m" + Date.now().toString(36), name: fields.name,
                   cameras: fields.cameras || [], grouping: fields.grouping || "site",
-                  siteOrder: fields.siteOrder || [] };
+                  siteOrder: fields.siteOrder || [], large: fields.large || [], hd: [] };
         var l = list.slice();
         l.push(m);
         save(l);
@@ -77,6 +79,25 @@ QtObject {
                 return name;
         }
     }
+
+    // ---- Large and HD, per camera per mosaic ("" = the grid-page mosaic) -----------
+    function keysOf(id, field) {
+        if (!id)
+            return gridSets[field] ? gridSets[field].split(",") : [];
+        var m = find(id);
+        return m && m[field] ? m[field] : [];
+    }
+    function has(id, field, key) { return keysOf(id, field).indexOf(key) >= 0; }
+    function setKey(id, field, key, on) {
+        var l = keysOf(id, field).filter(k => k !== key);
+        if (on)
+            l.push(key);
+        if (!id)
+            gridSets[field] = l.join(",");
+        else
+            update(id, { [field]: l });
+    }
+    function toggle(id, field, key) { setKey(id, field, key, !has(id, field, key)); }
 
     // ---- Sites --------------------------------------------------------------
     // A host named "<Site> <something>" (the Farm Hikvision's direct stream) belongs
@@ -130,4 +151,9 @@ QtObject {
         property string list: "[]"
     }
     property Settings gridStore: Settings { category: "liveGrid" }
+    property Settings gridSets: Settings {
+        category: "mosaicGrid"
+        property string large: ""   // "hostId:channel,..."
+        property string hd: ""
+    }
 }

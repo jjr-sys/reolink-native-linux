@@ -38,6 +38,7 @@ Item {
     readonly property var tabMosaic: mosaicTab ? Mosaics.find(mosaicTab) : null
     readonly property bool tabOpen: tabMosaic !== null
     readonly property bool mosaicShown: mosaicMode || tabOpen
+    readonly property string activeMosaic: tabOpen ? mosaicTab : "" // "" = the grid page
     readonly property bool activityOn: activityMode && !mosaicShown
     property bool mosaicAnimate: false   // a re-pack from new panes or shapes slides
     property var mosaicRectByRow: ({})   // device row -> rect while the mosaic is shown
@@ -56,7 +57,12 @@ Item {
     }
     Connections {
         target: Mosaics
-        function onListChanged() { if (page.tabOpen) page.repackMosaic(); }
+        function onListChanged() {
+            if (page.tabOpen) {
+                mosaicSettle.stop();
+                page.rebuildMosaic();
+            }
+        }
     }
     function openTab(id) {
         mosaicTab = id;
@@ -92,6 +98,33 @@ Item {
         }
         return Mosaics.arrange(list, "site", []).map(x => x.row);
     }
+    // Drops in a named mosaic: a camera not in it is added (before the pane it lands on);
+    // one already in it swaps places, within its Site when grouped by Site. The mosaic keeps
+    // its own order; the grid is never touched.
+    function tabDropAllowed(targetRow, sourceRow) {
+        if (!tabOpen || sourceRow < 0 || sourceRow >= Devices.count)
+            return false;
+        if (tabMosaic.cameras.indexOf(cameraKey(sourceRow)) < 0 || tabMosaic.grouping !== "site")
+            return true;
+        return Mosaics.siteOf(Devices.cameraInfo(sourceRow).hostName)
+               === Mosaics.siteOf(Devices.cameraInfo(targetRow).hostName);
+    }
+    function tabDrop(targetRow, sourceRow) {
+        if (!tabDropAllowed(targetRow, sourceRow) || targetRow === sourceRow)
+            return;
+        var cams = tabMosaic.cameras.slice();
+        var ti = cams.indexOf(cameraKey(targetRow)), si = cams.indexOf(cameraKey(sourceRow));
+        if (ti < 0)
+            return;
+        if (si < 0) {
+            cams.splice(ti, 0, cameraKey(sourceRow));
+        } else {
+            cams[si] = cams[ti];
+            cams[ti] = cameraKey(sourceRow);
+        }
+        Mosaics.update(mosaicTab, { cameras: cams });
+    }
+
     // The open tab has cameras whose host has not answered yet.
     function tabMissing() {
         if (!tabOpen)
@@ -114,7 +147,8 @@ Item {
             return;
         if (!mosaicWaitOver && (!layoutRestored || hasPendingPanes() || tabMissing()))
             return;
-        mosaic.panes = mosaicRows().map(r => ({ row: r, large: false,
+        mosaic.panes = mosaicRows().map(r => ({ row: r,
+                                                large: Mosaics.has(activeMosaic, "large", cameraKey(r)),
                                                 ratio: paneRatios[cameraKey(r)] || 16 / 9 }));
     }
     // Shape changes, new cameras and rearranging are gathered for half a second, then
@@ -975,6 +1009,11 @@ Item {
                     page.mapMosaicRects();
                 }
                 onRectsChanged: page.mapMosaicRects()
+                // A held layout re-packed once a resize settled slides there.
+                onSettled: {
+                    page.mosaicAnimate = true;
+                    mosaicAnimateEnd.restart();
+                }
             }
 
             // Empty slots: drawn under the camera panes so they are drop targets
@@ -1049,8 +1088,22 @@ Item {
                     selected: page.selectedIndex === index
                     audioAllowed: !page.audioSuppressed
                     pageActive: page.active && page.visible
-                    // Sub-stream in the grid, main stream when maximized (DESIGN §5.7).
+                    // Sub-stream in the grid, main stream when maximized (DESIGN §5.7). In a
+                    // mosaic a pane returns to the HD choice remembered for it there.
                     forceMain: isMaximized
+                    restMain: page.mosaicShown && Mosaics.has(page.activeMosaic, "hd", cameraKey)
+                    onQualityChosen: (main) => {
+                        if (page.mosaicShown && !isMaximized)
+                            Mosaics.setKey(page.activeMosaic, "hd", cameraKey, main);
+                    }
+                    showLarge: inMosaic && !isMaximized
+                    large: page.mosaicShown && Mosaics.has(page.activeMosaic, "large", cameraKey)
+                    onLargeToggled: {
+                        Mosaics.toggle(page.activeMosaic, "large", cameraKey);
+                        mosaicSettle.stop();
+                        page.rebuildMosaic();
+                    }
+                    dropFilter: page.tabOpen ? (src => page.tabDropAllowed(index, src)) : null
                     capPtz: hasPtz
                     capZoom: hasZoom
                     capAudio: hasAudio
@@ -1071,8 +1124,10 @@ Item {
                     onPopOut: (row, lbl) => page.popOut(row, lbl)
                     onOpenBoschTourRequested: page.openBoschTourRequested()
                     onCameraDropped: (targetPane, row) => {
-                        if (page.tabOpen)
-                            return; // drag-and-drop in a named mosaic comes later
+                        if (page.tabOpen) {
+                            page.tabDrop(index, row);
+                            return;
+                        }
                         page.assignPane(targetPane, row);
                         if (page.mosaicMode) {
                             mosaicSettle.stop();

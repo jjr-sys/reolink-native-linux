@@ -78,9 +78,19 @@ Rectangle {
     // every layout, including a maximized pane. Maximizing/restoring just seeds a
     // sensible default (main when big, sub in the grid) via onForceMainChanged; the
     // user can still override it with the toggle afterwards.
-    property bool qualityMain: false
+    // In a mosaic, restMain is the HD choice remembered for this camera there: the
+    // quality the pane returns to when it is not maximized.
+    property bool restMain: false
+    property bool qualityMain: restMain
     readonly property bool effectiveMain: qualityMain
-    onForceMainChanged: qualityMain = forceMain
+    onForceMainChanged: qualityMain = forceMain || restMain
+    onRestMainChanged: if (!forceMain) qualityMain = restMain
+    signal qualityChosen(bool main) // the SD/HD toggle was used
+
+    // Mosaic panes can be Normal or Large (about 1.5× the area, from the packer).
+    property bool showLarge: false
+    property bool large: false
+    signal largeToggled()
     readonly property bool hasSource: deviceRow >= 0
     // These carry the DEVICE ROW, not the pane index: the page tracks which
     // camera is maximized/selected, so both survive a rearrange.
@@ -93,6 +103,11 @@ Rectangle {
 
     // True while a drag hovers this pane, so it can show where it would land.
     property bool dropTarget: false
+    // Optional (deviceRow) => bool: whether a camera may be dropped here at all.
+    property var dropFilter: null
+    function dropAllowed(drag) {
+        return !root.dropFilter || !drag.source || root.dropFilter(drag.source.deviceRow);
+    }
 
     // A pane pointed at a different camera must let the old one go now — its
     // session is wanted elsewhere (a swap hands it straight to another pane).
@@ -163,13 +178,17 @@ Rectangle {
         anchors.fill: parent
         keys: ["reolink/camera"]
         onEntered: (drag) => {
+            if (!root.dropAllowed(drag)) {
+                drag.accepted = false;   // refused: no highlight, no drop
+                return;
+            }
             // Dragging a pane onto itself is a no-op; don't advertise a drop.
             root.dropTarget = !(drag.source && drag.source.sourcePane === root.paneIndex);
         }
         onExited: root.dropTarget = false
         onDropped: (drop) => {
             root.dropTarget = false;
-            if (drop.source && drop.source.deviceRow >= 0)
+            if (drop.source && drop.source.deviceRow >= 0 && root.dropAllowed(drop))
                 root.cameraDropped(root.paneIndex, drop.source.deviceRow);
         }
     }
@@ -705,7 +724,17 @@ Rectangle {
                     glyph: root.qualityMain ? "HD" : "SD"
                     tip: root.qualityMain ? qsTr("Switch to Fluent (SD)") : qsTr("Switch to Clear (HD)")
                     active: root.qualityMain
-                    onActivated: root.qualityMain = !root.qualityMain
+                    onActivated: {
+                        root.qualityMain = !root.qualityMain;
+                        root.qualityChosen(root.qualityMain);
+                    }
+                }
+                ToolButton {
+                    glyph: "⤢"
+                    enabledTool: root.showLarge
+                    active: root.large
+                    tip: root.large ? qsTr("Large pane: make it Normal") : qsTr("Make this pane Large")
+                    onActivated: root.largeToggled()
                 }
 
                 ToolPickerButton {

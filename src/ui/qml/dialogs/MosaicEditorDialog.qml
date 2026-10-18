@@ -16,6 +16,7 @@ Dialog {
 
     property string mosaicId: ""     // "" = a new mosaic
     property var ticked: ({})        // "hostId:channel" -> true
+    property var largeSet: ({})      // "hostId:channel" -> true for Large panes
     property var siteOrder: []
     property string grouping: "site"
 
@@ -29,6 +30,7 @@ Dialog {
         for (var i = 0; i < (seed || []).length; ++i)
             t[seed[i]] = true;
         ticked = t;
+        largeSet = ({});
         grouping = "site";
         siteOrder = Mosaics.sites([]);
         open();
@@ -45,6 +47,9 @@ Dialog {
         for (var i = 0; i < m.cameras.length; ++i)
             t[m.cameras[i]] = true;
         ticked = t;
+        var l = ({});
+        (m.large || []).forEach(k => l[k] = true);
+        largeSet = l;
         grouping = m.grouping;
         siteOrder = Mosaics.sites(m.siteOrder);
         open();
@@ -87,7 +92,7 @@ Dialog {
             return (ia < 0 ? 1e6 : ia) - (ib < 0 ? 1e6 : ib);
         });
         var fields = { name: name, cameras: cams.concat(added), grouping: grouping,
-                       siteOrder: siteOrder };
+                       siteOrder: siteOrder, large: Object.keys(largeSet).filter(k => ticked[k]) };
         var id = mosaicId;
         if (id)
             Mosaics.update(id, fields);
@@ -309,11 +314,39 @@ Dialog {
                                             text: parent.parent.modelData.name
                                             color: Theme.text; font.pixelSize: 12
                                         }
+                                        // On the tick and name only, so the Large chip doesn't tick too.
+                                        TapHandler {
+                                            onTapped: dialog.setTicked(parent.parent.modelData.key,
+                                                                       !dialog.ticked[parent.parent.modelData.key])
+                                        }
                                     }
                                     HoverHandler { id: camHover }
-                                    TapHandler {
-                                        onTapped: dialog.setTicked(parent.modelData.key,
-                                                                   !dialog.ticked[parent.modelData.key])
+                                    Rectangle {   // Normal / Large, for ticked cameras
+                                        id: largeChip
+                                        readonly property bool on: dialog.largeSet[parent.modelData.key] === true
+                                        visible: dialog.ticked[parent.modelData.key] === true
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.right: parent.right
+                                        anchors.rightMargin: 6
+                                        width: chipTxt.implicitWidth + 16; height: 20; radius: 4
+                                        color: on ? Theme.accentDim : chipHover.hovered ? Theme.surface : "transparent"
+                                        border.color: on ? Theme.accent : Theme.border
+                                        Text {
+                                            id: chipTxt
+                                            anchors.centerIn: parent
+                                            text: largeChip.on ? qsTr("Large") : qsTr("Normal")
+                                            color: largeChip.on ? Theme.text : Theme.textMuted
+                                            font.pixelSize: 11
+                                        }
+                                        HoverHandler { id: chipHover }
+                                        TapHandler {
+                                            onTapped: {
+                                                var l = Object.assign({}, dialog.largeSet);
+                                                var k = largeChip.parent.modelData.key;
+                                                if (largeChip.on) delete l[k]; else l[k] = true;
+                                                dialog.largeSet = l;
+                                            }
+                                        }
                                     }
                                 }
                             }
