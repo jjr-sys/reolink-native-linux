@@ -23,60 +23,81 @@ Item {
 
     // A maximized pane is effectively the single ("1") view, so light that button
     // up in the layout toolbar rather than the underlying grid preset.
-    readonly property int activePreset: maximizedIndex >= 0 ? 1 : preset
+    readonly property int activePreset: maximizedIndex >= 0 ? 1 : tabOpen ? 0 : preset
 
     // ---- Mosaic ------------------------------------------------------------
     // A switch on the grid size (wayfinder/mosaic-live-view): the current grid page's
     // cameras, each at its own picture shape, packed by MosaicLayout to fill the area,
     // nothing cropped. Grouped by Site (alphabetically), in arrangement order within each;
-    // empty cells are dropped. Paging and drags work as in the grid. Activity mode is off
-    // while it is shown (its own setting is kept for the grid).
+    // empty cells are dropped. Paging and drags work as in the grid.
+    // Named mosaics (Mosaics) are tabs after the switch: a tab shows all its cameras, in
+    // its own order and grouping, with no paging; a number or the switch leaves it.
+    // Activity mode is off while any mosaic is shown (its own setting is kept for the grid).
     property bool mosaicMode: false
-    readonly property bool activityOn: activityMode && !mosaicMode
+    property string mosaicTab: ""        // the open named mosaic's id, "" = the grid page
+    readonly property var tabMosaic: mosaicTab ? Mosaics.find(mosaicTab) : null
+    readonly property bool tabOpen: tabMosaic !== null
+    readonly property bool mosaicShown: mosaicMode || tabOpen
+    readonly property bool activityOn: activityMode && !mosaicShown
     property bool mosaicAnimate: false   // a re-pack from new panes or shapes slides
     property var mosaicRectByRow: ({})   // device row -> rect while the mosaic is shown
     property var paneRatios: ({})        // "hostId:channel" -> drawn width/height
 
-    onMosaicModeChanged: {
-        layoutStore.mosaic = mosaicMode;
-        if (mosaicMode) {
-            mosaic.reset();
-            rebuildMosaic();
-        }
-    }
-    // The page or grid size changed: a new set of cameras, packed at once.
+    onMosaicModeChanged: { layoutStore.mosaic = mosaicMode; repackMosaic(); }
+    onMosaicTabChanged: { layoutStore.tab = mosaicTab; repackMosaic(); }
+    onTabOpenChanged: if (!tabOpen) mosaicTab = ""   // its mosaic was deleted
+    // A new set of cameras (page, grid size, view or the tab's mosaic changed), packed at once.
     function repackMosaic() {
-        if (!mosaicMode)
+        if (!mosaicShown)
             return;
         mosaicSettle.stop();
         mosaic.reset();
         rebuildMosaic();
     }
+    Connections {
+        target: Mosaics
+        function onListChanged() { if (page.tabOpen) page.repackMosaic(); }
+    }
+    function openTab(id) {
+        mosaicTab = id;
+        maximizedIndex = -1;
+    }
 
-    // A host named "<Site> <something>" (the Farm Hikvision's direct stream) belongs
-    // to that Site.
-    function siteOf(hostName, names) {
-        for (var i = 0; i < names.length; ++i)
-            if (names[i] !== hostName && hostName.indexOf(names[i] + " ") === 0)
-                return names[i];
-        return hostName;
+    function cameraKey(row) { return Mosaics.cameraKey(row); }
+    function rowsByKey() {
+        var byKey = ({});
+        for (var r = 0; r < Devices.count; ++r)
+            byKey[cameraKey(r)] = r;
+        return byKey;
     }
-    function cameraKey(row) {
-        var c = Devices.cameraInfo(row);
-        return c && c.hostId !== undefined ? c.hostId + ":" + c.channel : "";
+    function mosaicItem(r, order) {
+        return { row: r, site: Mosaics.siteOf(Devices.cameraInfo(r).hostName), order: order,
+                 ratio: paneRatios[cameraKey(r)] || 16 / 9 };
     }
+    // The rows shown, in mosaic order: the open tab's cameras, or the grid page's.
     function mosaicRows() {
-        var names = Devices.propertyNames();
         var list = [];
+        if (tabOpen) {
+            var byKey = rowsByKey();
+            var cams = tabMosaic.cameras;
+            for (var k = 0; k < cams.length; ++k)
+                if (byKey[cams[k]] !== undefined)
+                    list.push(mosaicItem(byKey[cams[k]], list.length));
+            return Mosaics.arrange(list, tabMosaic.grouping, tabMosaic.siteOrder).map(x => x.row);
+        }
         for (var i = pageOffset; i < pageOffset + preset && i < paneSlots.length; ++i) {
             var r = paneSlots[i];
-            if (r < 0 || r >= Devices.count)
-                continue;
-            var c = Devices.cameraInfo(r);
-            list.push({ row: r, site: siteOf(c.hostName, names), order: list.length });
+            if (r >= 0 && r < Devices.count)
+                list.push(mosaicItem(r, list.length));
         }
-        list.sort((a, b) => a.site.localeCompare(b.site) || a.order - b.order);
-        return list.map(x => x.row);
+        return Mosaics.arrange(list, "site", []).map(x => x.row);
+    }
+    // The open tab has cameras whose host has not answered yet.
+    function tabMissing() {
+        if (!tabOpen)
+            return false;
+        var byKey = rowsByKey();
+        return tabMosaic.cameras.some(k => byKey[k] === undefined);
     }
     // At launch the NVRs' cameras arrive a few seconds after the window opens. The first
     // build waits for the saved arrangement's cameras (at most 8 s), so the mosaic opens
@@ -89,9 +110,9 @@ Item {
         onTriggered: { page.mosaicWaitOver = true; page.rebuildMosaic(); }
     }
     function rebuildMosaic() {
-        if (!mosaicMode)
+        if (!mosaicShown)
             return;
-        if (!mosaicWaitOver && (!layoutRestored || hasPendingPanes()))
+        if (!mosaicWaitOver && (!layoutRestored || hasPendingPanes() || tabMissing()))
             return;
         mosaic.panes = mosaicRows().map(r => ({ row: r, large: false,
                                                 ratio: paneRatios[cameraKey(r)] || 16 / 9 }));
@@ -99,7 +120,7 @@ Item {
     // Shape changes, new cameras and rearranging are gathered for half a second, then
     // re-packed together in one move (cameras connecting at launch cause one, not 18).
     function scheduleMosaic() {
-        if (mosaicMode && !mosaicSettle.running)
+        if (mosaicShown && !mosaicSettle.running)
             mosaicSettle.start();
     }
     Timer { id: mosaicSettle; interval: 500; onTriggered: page.rebuildMosaic() }
@@ -175,7 +196,7 @@ Item {
     // otherwise the grid moves a page. Both wrap around.
     function step(dir) {
         if (maximizedIndex >= 0) {
-            var order = paneSlots.filter(r => r >= 0);
+            var order = tabOpen ? mosaic.layoutPanes.map(p => p.row) : paneSlots.filter(r => r >= 0);
             var i = order.indexOf(maximizedIndex);
             if (order.length < 2 || i < 0)
                 return;
@@ -186,7 +207,7 @@ Item {
             gridPage = (curPage + dir + pageCount) % pageCount;
         }
     }
-    readonly property bool canStep: maximizedIndex >= 0 ? Devices.count > 1 : pageCount > 1
+    readonly property bool canStep: maximizedIndex >= 0 ? Devices.count > 1 : !tabOpen && pageCount > 1
 
     // ---- Which camera sits in which pane -----------------------------------
     // paneSlots[pane] = device row (-1 = empty). Without this the grid is a
@@ -330,7 +351,8 @@ Item {
         category: "liveGrid"
         property string arrangement: ""
         property int preset: 4   // last grid preset picked, reopened at next launch
-        property bool mosaic: false // the mosaic was the last view
+        property bool mosaic: false // the Mosaic switch was on
+        property string tab: ""     // the named mosaic last open ("" = the grid page)
     }
     Settings {
         id: shapeStore
@@ -489,6 +511,8 @@ Item {
         if (presets.indexOf(layoutStore.preset) >= 0)
             preset = layoutStore.preset;
         mosaicMode = layoutStore.mosaic;
+        if (Mosaics.find(layoutStore.tab))
+            mosaicTab = layoutStore.tab;
         restoreLayout();
         Activity.trackedTypes = activityStore.types.length > 0 ? activityStore.types.split(",") : [];
         // RL_MOCK_ACTIVITY starts the page in Activity mode so a script can drive it.
@@ -529,6 +553,7 @@ Item {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             page.preset = parent.modelData;
+                            page.mosaicTab = "";
                             page.maximizedIndex = -1;
                         }
                     }
@@ -551,14 +576,14 @@ Item {
                 width: mosaicLabel.implicitWidth + 20
                 height: 26
                 radius: Theme.radius
-                color: page.mosaicMode ? Theme.accentDim
+                color: page.mosaicMode && !page.tabOpen ? Theme.accentDim
                      : mosaicArea.containsMouse ? Theme.surfaceAlt : Theme.surface
                 border.color: Theme.border
                 Text {
                     id: mosaicLabel
                     anchors.centerIn: parent
                     text: qsTr("Mosaic")
-                    color: page.mosaicMode ? Theme.text : Theme.textMuted
+                    color: page.mosaicMode && !page.tabOpen ? Theme.text : Theme.textMuted
                     font.pixelSize: 12
                 }
                 MouseArea {
@@ -567,7 +592,9 @@ Item {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        page.mosaicMode = !page.mosaicMode;
+                        // From a tab, Mosaic goes back to the grid-page mosaic.
+                        page.mosaicMode = page.tabOpen || !page.mosaicMode;
+                        page.mosaicTab = "";
                         page.maximizedIndex = -1;
                     }
                 }
@@ -577,7 +604,7 @@ Item {
                     x: (parent.width - width) / 2
                     y: parent.height + 6
                     contentItem: Text {
-                        text: page.mosaicMode ? qsTr("Mosaic on: back to the plain grid")
+                        text: page.mosaicMode && !page.tabOpen ? qsTr("Mosaic on: back to the plain grid")
                                              : qsTr("Mosaic: this page's cameras at their own shapes, packed to fill the view")
                         color: Theme.text; font.pixelSize: 11
                     }
@@ -585,12 +612,141 @@ Item {
                 }
             }
 
-            Item { Layout.fillWidth: true }
+            // Named mosaics: one tab each, then +. Tabs that don't fit go into the » menu.
+            Item {
+                id: tabsArea
+                Layout.fillWidth: true
+                Layout.preferredHeight: 26
+                clip: true
+
+                readonly property int tabSpacing: Theme.spacing / 2
+                function tabWidth(name) { return Math.ceil(tabMetrics.advanceWidth(name)) + 20; }
+                // How many tabs fit, leaving room for + and, when needed, ».
+                readonly property int fit: {
+                    var l = Mosaics.list, w = width - 26 - tabSpacing, used = 0;
+                    for (var i = 0; i < l.length; ++i) {
+                        var tw = tabWidth(l[i].name) + tabSpacing;
+                        var more = i < l.length - 1 ? 26 + tabSpacing : 0;
+                        if (used + tw + more > w)
+                            return i;
+                        used += tw;
+                    }
+                    return l.length;
+                }
+                FontMetrics { id: tabMetrics; font.pixelSize: 12 }
+
+                Row {
+                    spacing: tabsArea.tabSpacing
+                    Repeater {
+                        model: Mosaics.list
+                        Rectangle {
+                            id: tab
+                            required property var modelData
+                            required property int index
+                            readonly property bool open: page.mosaicTab === modelData.id
+                            visible: index < tabsArea.fit
+                            width: tabsArea.tabWidth(modelData.name)
+                            height: 26
+                            radius: Theme.radius
+                            color: open ? Theme.accentDim : tabArea.containsMouse ? Theme.surfaceAlt : Theme.surface
+                            border.color: Theme.border
+                            Text {
+                                anchors.centerIn: parent
+                                text: tab.modelData.name
+                                color: tab.open ? Theme.text : Theme.textMuted
+                                font.pixelSize: 12
+                            }
+                            MouseArea {
+                                id: tabArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                onClicked: (mouse) => {
+                                    if (mouse.button === Qt.RightButton)
+                                        tabMenu.popupFor(tab.modelData.id);
+                                    else
+                                        page.openTab(tab.modelData.id);
+                                }
+                            }
+                            ToolTip {
+                                visible: tabArea.containsMouse
+                                delay: 500
+                                x: (parent.width - width) / 2
+                                y: parent.height + 6
+                                contentItem: Text {
+                                    text: qsTr("%1: right-click to edit, rename, move or delete")
+                                          .arg(tab.modelData.name)
+                                    color: Theme.text; font.pixelSize: 11
+                                }
+                                background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                            }
+                        }
+                    }
+                    Rectangle {   // » the tabs that don't fit
+                        visible: tabsArea.fit < Mosaics.list.length
+                        readonly property bool holdsOpen: page.tabOpen && Mosaics.indexOf(page.mosaicTab) >= tabsArea.fit
+                        width: 26
+                        height: 26
+                        radius: Theme.radius
+                        color: holdsOpen ? Theme.accentDim
+                             : moreArea.containsMouse || moreMenu.visible ? Theme.surfaceAlt : Theme.surface
+                        border.color: Theme.border
+                        Text { anchors.centerIn: parent; text: "»"; color: Theme.textMuted; font.pixelSize: 13 }
+                        MouseArea {
+                            id: moreArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: moreMenu.popup(0, parent.height + 4)
+                        }
+                        ThemedMenu {
+                            id: moreMenu
+                            Instantiator {
+                                model: Mosaics.list.slice(tabsArea.fit)
+                                delegate: ThemedMenuItem {
+                                    required property var modelData
+                                    text: modelData.name
+                                    checkable: true
+                                    checked: page.mosaicTab === modelData.id
+                                    onTriggered: page.openTab(modelData.id)
+                                }
+                                onObjectAdded: (i, item) => moreMenu.insertItem(i, item)
+                                onObjectRemoved: (i, item) => moreMenu.removeItem(item)
+                            }
+                        }
+                    }
+                    Rectangle {   // + a new mosaic, seeded with this grid page's cameras
+                        width: 26
+                        height: 26
+                        radius: Theme.radius
+                        color: addArea.containsMouse ? Theme.surfaceAlt : Theme.surface
+                        border.color: Theme.border
+                        Text { anchors.centerIn: parent; text: "+"; color: Theme.textMuted; font.pixelSize: 14 }
+                        MouseArea {
+                            id: addArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: mosaicEditor.openNew(page.tabOpen ? page.tabMosaic.cameras
+                                : page.mosaicRows().map(r => page.cameraKey(r)))
+                        }
+                        ToolTip {
+                            visible: addArea.containsMouse
+                            delay: 500
+                            x: (parent.width - width) / 2
+                            y: parent.height + 6
+                            contentItem: Text { text: qsTr("New mosaic"); color: Theme.text; font.pixelSize: 11 }
+                            background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                        }
+                    }
+                }
+            }
 
             // Activity mode: cameras with detections take over idle tiles. Your saved
             // arrangement is left alone and comes back when this is turned off.
             Rectangle {
-                visible: !page.mosaicMode
+                visible: !page.mosaicShown
                 width: activityLabel.implicitWidth + 20
                 height: 26
                 radius: Theme.radius
@@ -627,7 +783,7 @@ Item {
 
             // Which detections count in Activity mode.
             Rectangle {
-                visible: !page.mosaicMode
+                visible: !page.mosaicShown
                 width: 26
                 height: 26
                 radius: Theme.radius
@@ -798,9 +954,11 @@ Item {
 
             Text {
                 anchors.centerIn: parent
-                visible: page.mosaicMode && page.maximizedIndex < 0 && mosaic.layoutPanes.length === 0
+                visible: page.mosaicShown && page.maximizedIndex < 0 && mosaic.layoutPanes.length === 0
                 text: page.mosaicWaitOver && page.mosaicRows().length === 0
-                      ? qsTr("No cameras on this page") : qsTr("Loading cameras…")
+                      ? (page.tabOpen ? qsTr("None of this mosaic's cameras are here")
+                                      : qsTr("No cameras on this page"))
+                      : qsTr("Loading cameras…")
                 color: Theme.textMuted
                 font.pixelSize: 12
             }
@@ -826,7 +984,7 @@ Item {
                 LivePane {
                     required property int index
                     readonly property int slot: page.pageOffset + index
-                    visible: page.maximizedIndex === -1 && !page.mosaicMode && page.rowAt(slot) < 0
+                    visible: page.maximizedIndex === -1 && !page.mosaicShown && page.rowAt(slot) < 0
                     width: gridArea.cellWidth
                     height: gridArea.cellHeight
                     x: gridArea.slotX(slot)
@@ -859,13 +1017,13 @@ Item {
 
                     readonly property int slot: page.paneOfRow(index)
                     readonly property bool isMaximized: page.maximizedIndex === index
-                    readonly property var mrect: page.mosaicMode ? page.mosaicRectByRow[index] : undefined
+                    readonly property var mrect: page.mosaicShown ? page.mosaicRectByRow[index] : undefined
                     readonly property bool inMosaic: mrect !== undefined
 
                     // A maximized pane shows even when its slot is beyond the grid
                     // preset (e.g. camera 5 clicked while in the 4-grid).
                     visible: isMaximized ||
-                             (page.maximizedIndex === -1 && (page.mosaicMode ? inMosaic
+                             (page.maximizedIndex === -1 && (page.mosaicShown ? inMosaic
                               : slot >= page.pageOffset && slot < page.pageOffset + page.preset))
                     width: isMaximized ? gridArea.width : inMosaic ? mrect.width : gridArea.cellWidth
                     height: isMaximized ? gridArea.height : inMosaic ? mrect.height : gridArea.cellHeight
@@ -913,6 +1071,8 @@ Item {
                     onPopOut: (row, lbl) => page.popOut(row, lbl)
                     onOpenBoschTourRequested: page.openBoschTourRequested()
                     onCameraDropped: (targetPane, row) => {
+                        if (page.tabOpen)
+                            return; // drag-and-drop in a named mosaic comes later
                         page.assignPane(targetPane, row);
                         if (page.mosaicMode) {
                             mosaicSettle.stop();
@@ -933,8 +1093,8 @@ Item {
                     // than two panes blinking into each other's places. In the mosaic
                     // only a re-pack slides; a resize follows the window directly.
                     readonly property bool slides: !pane.isMaximized
-                                                   && (!page.mosaicMode || page.mosaicAnimate)
-                    readonly property int slideMs: page.mosaicMode ? 250 : 130
+                                                   && (!page.mosaicShown || page.mosaicAnimate)
+                    readonly property int slideMs: page.mosaicShown ? 250 : 130
                     Behavior on x {
                         enabled: pane.slides
                         NumberAnimation { duration: pane.slideMs; easing.type: Easing.OutCubic }
@@ -944,15 +1104,126 @@ Item {
                         NumberAnimation { duration: pane.slideMs; easing.type: Easing.OutCubic }
                     }
                     Behavior on width {
-                        enabled: pane.slides && page.mosaicMode
+                        enabled: pane.slides && page.mosaicShown
                         NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
                     }
                     Behavior on height {
-                        enabled: pane.slides && page.mosaicMode
+                        enabled: pane.slides && page.mosaicShown
                         NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
                     }
                 }
             }
+        }
+    }
+
+    // ---- Named mosaic menus and dialogs -----------------------------------------
+    ThemedMenu {
+        id: tabMenu
+        property string mosaicId: ""
+        readonly property int at: Mosaics.indexOf(mosaicId)
+        function popupFor(id) { mosaicId = id; popup(); }
+        ThemedMenuItem { text: qsTr("Edit…"); onTriggered: mosaicEditor.openEdit(tabMenu.mosaicId) }
+        ThemedMenuItem { text: qsTr("Rename…"); onTriggered: renameDialog.openFor(tabMenu.mosaicId) }
+        ThemedMenuItem {
+            text: qsTr("Move left")
+            enabled: tabMenu.at > 0
+            onTriggered: Mosaics.move(tabMenu.mosaicId, -1)
+        }
+        ThemedMenuItem {
+            text: qsTr("Move right")
+            enabled: tabMenu.at >= 0 && tabMenu.at < Mosaics.list.length - 1
+            onTriggered: Mosaics.move(tabMenu.mosaicId, 1)
+        }
+        ThemedMenuSeparator {}
+        ThemedMenuItem {
+            text: qsTr("Delete…")
+            onTriggered: {
+                var m = Mosaics.find(tabMenu.mosaicId);
+                if (!m)
+                    return;
+                deleteConfirm.message = qsTr("Delete the mosaic \"%1\"?").arg(m.name);
+                deleteConfirm.payload = m.id;
+                deleteConfirm.open();
+            }
+        }
+    }
+    MosaicEditorDialog {
+        id: mosaicEditor
+        onSaved: (id) => page.openTab(id)
+    }
+    ConfirmDialog {
+        id: deleteConfirm
+        confirmLabel: qsTr("Delete")
+        detail: qsTr("Your cameras and the grid are not affected.")
+        onConfirmed: (id) => Mosaics.remove(id)
+    }
+    Dialog {
+        id: renameDialog
+        modal: true
+        width: 360
+        anchors.centerIn: Overlay.overlay
+        title: qsTr("Rename mosaic")
+        background: Rectangle { color: Theme.surface; border.color: Theme.border; radius: Theme.radius }
+        header: Item {
+            implicitHeight: hdrText.implicitHeight + 22
+            Text {
+                id: hdrText
+                x: Theme.spacing; width: parent.width - Theme.spacing * 2
+                anchors.verticalCenter: parent.verticalCenter
+                text: renameDialog.title; color: Theme.text
+                font.pixelSize: 16; font.bold: true; elide: Text.ElideRight
+            }
+        }
+        property string mosaicId: ""
+        function openFor(id) {
+            var m = Mosaics.find(id);
+            if (!m)
+                return;
+            mosaicId = id;
+            renameField.text = m.name;
+            open();
+            renameField.selectAll();
+            renameField.forceActiveFocus();
+        }
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: Theme.spacing
+            TextField {
+                id: renameField
+                Layout.fillWidth: true
+                color: Theme.text
+                background: Rectangle {
+                    color: Theme.surfaceAlt
+                    border.color: renameField.activeFocus ? Theme.accent : Theme.border
+                    radius: 4
+                }
+                onAccepted: renameDialog.accept()
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Rectangle {
+                    implicitWidth: rnCancel.implicitWidth + 24; implicitHeight: 32; radius: Theme.radius
+                    color: rnCancelHover.hovered ? Theme.surfaceAlt : "transparent"
+                    border.color: Theme.border
+                    Text { id: rnCancel; anchors.centerIn: parent; text: qsTr("Cancel"); color: Theme.text; font.pixelSize: 12 }
+                    HoverHandler { id: rnCancelHover }
+                    TapHandler { onTapped: renameDialog.reject() }
+                }
+                Rectangle {
+                    implicitWidth: rnOk.implicitWidth + 24; implicitHeight: 32; radius: Theme.radius
+                    color: rnOkHover.hovered ? Theme.accent : Theme.accentDim
+                    border.color: Theme.accent
+                    Text { id: rnOk; anchors.centerIn: parent; text: qsTr("Rename"); color: Theme.text; font.pixelSize: 12 }
+                    HoverHandler { id: rnOkHover }
+                    TapHandler { onTapped: renameDialog.accept() }
+                }
+            }
+        }
+        onAccepted: {
+            var name = renameField.text.trim();
+            if (name)
+                Mosaics.update(mosaicId, { name: name });
         }
     }
 }

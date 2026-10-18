@@ -89,6 +89,7 @@ set(APP_QML_FILES
     src/ui/qml/Main.qml
     src/ui/qml/Theme.qml
     src/ui/qml/AudioPrefs.qml
+    src/ui/qml/Mosaics.qml
     src/ui/qml/components/SideBar.qml
     src/ui/qml/components/NavBar.qml
     src/ui/qml/components/ThemedMenu.qml
@@ -113,6 +114,7 @@ set(APP_QML_FILES
     src/ui/qml/dialogs/PropertiesDialog.qml
     src/ui/qml/dialogs/UserEditDialog.qml
     src/ui/qml/dialogs/ConfirmDialog.qml
+    src/ui/qml/dialogs/MosaicEditorDialog.qml
     src/ui/qml/dialogs/DetectionZoneDialog.qml
     src/ui/qml/dialogs/ScheduleDialog.qml
     src/ui/qml/dialogs/DownloadDialog.qml
@@ -126,6 +128,7 @@ foreach(qml_file IN LISTS APP_QML_FILES)
 endforeach()
 set_source_files_properties(src/ui/qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(src/ui/qml/AudioPrefs.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(src/ui/qml/Mosaics.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(reolink-client
     URI ReolinkApp

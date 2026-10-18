@@ -228,6 +228,26 @@ Item {
                 anchors.margins: Theme.spacing
                 spacing: 6
 
+                // App-level settings, above the devices.
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 34
+                    radius: 4
+                    color: page.category === "mosaics" ? Theme.accentDim
+                         : mosaicsHover.hovered ? Theme.surfaceAlt : "transparent"
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        anchors.leftMargin: 10
+                        text: qsTr("Mosaics")
+                        color: page.category === "mosaics" ? Theme.text : Theme.textMuted
+                        font.pixelSize: 13
+                    }
+                    HoverHandler { id: mosaicsHover }
+                    TapHandler { onTapped: page.category = "mosaics" }
+                }
+                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
                 Text { text: qsTr("Camera:"); color: Theme.textMuted; font.pixelSize: 11 }
                 CameraComboBox {
                     id: deviceCombo
@@ -264,7 +284,7 @@ Item {
                 }
                 Item { Layout.fillHeight: true }
                 Text {
-                    visible: !page.isAdmin && page.deviceRow >= 0
+                    visible: !page.isAdmin && page.deviceRow >= 0 && page.category !== "mosaics"
                     Layout.fillWidth: true
                     text: qsTr("Read-only (not an admin account)")
                     color: Theme.textMuted
@@ -291,6 +311,8 @@ Item {
                     Layout.fillWidth: true
                     Text {
                         text: {
+                            if (page.category === "mosaics")
+                                return qsTr("Mosaics");
                             for (var i = 0; i < page.categories.length; i++)
                                 if (page.categories[i].key === page.category)
                                     return page.categories[i].label;
@@ -301,7 +323,10 @@ Item {
                         font.bold: true
                     }
                     Item { Layout.fillWidth: true }
-                    Text { text: page.status; color: Theme.textMuted; font.pixelSize: 12 }
+                    Text {
+                        visible: page.category !== "mosaics"
+                        text: page.status; color: Theme.textMuted; font.pixelSize: 12
+                    }
                 }
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
@@ -310,6 +335,7 @@ Item {
                     Layout.fillHeight: true
                     sourceComponent: {
                         switch (page.category) {
+                        case "mosaics": return mosaicsPanel;
                         case "image": return imagePanel;
                         case "encoding": return encodingPanel;
                         case "display": return displayPanel;
@@ -348,6 +374,14 @@ Item {
         confirmDialog.payload = { action: "format", id: diskId };
         confirmDialog.open();
     }
+    MosaicEditorDialog { id: mosaicEditor }
+    ConfirmDialog {
+        id: mosaicDelete
+        confirmLabel: qsTr("Delete")
+        detail: qsTr("Your cameras and the grid are not affected.")
+        onConfirmed: (id) => Mosaics.remove(id)
+    }
+
     function openUserDialog(mode, name) {
         userDialog.mode = mode;
         userDialog.userName = name || "";
@@ -1059,6 +1093,85 @@ Item {
                 font.family: "monospace"
                 wrapMode: Text.WrapAnywhere
             }
+            Item { Layout.fillHeight: true }
+        }
+    }
+
+    // Named mosaics, shown as tabs after the Mosaic switch in Live View.
+    Component {
+        id: mosaicsPanel
+        ColumnLayout {
+            spacing: Theme.spacing
+
+            component MosaicBtn: Rectangle {
+                property string text
+                property bool danger: false
+                signal tapped()
+                implicitWidth: Math.max(28, miniTxt.implicitWidth + 16); implicitHeight: 26; radius: 4
+                color: miniHover.hovered && enabled ? (danger ? Theme.danger : Theme.surfaceAlt) : "transparent"
+                border.color: danger ? Theme.danger : Theme.border
+                opacity: enabled ? 1 : 0.35
+                Text { id: miniTxt; anchors.centerIn: parent; text: parent.text; color: Theme.text; font.pixelSize: 12 }
+                HoverHandler { id: miniHover }
+                TapHandler { onTapped: parent.tapped() }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Each mosaic is a tab after the Mosaic switch in Live View. It shows all its cameras, packed at their own shapes, whatever the grid size.")
+                color: Theme.textMuted; font.pixelSize: 12; wrapMode: Text.WordWrap
+            }
+            Text {
+                visible: Mosaics.list.length === 0
+                text: qsTr("No mosaics yet.")
+                color: Theme.textMuted; font.pixelSize: 13
+            }
+            Repeater {
+                model: Mosaics.list
+                Rectangle {
+                    id: mrow
+                    required property var modelData
+                    required property int index
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 44
+                    radius: Theme.radius
+                    color: Theme.surfaceAlt
+                    border.color: Theme.border
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 8
+                        spacing: 6
+                        Text { text: mrow.modelData.name; color: Theme.text; font.pixelSize: 13 }
+                        Text {
+                            Layout.fillWidth: true
+                            text: (mrow.modelData.cameras.length === 1 ? qsTr("1 camera")
+                                   : qsTr("%1 cameras").arg(mrow.modelData.cameras.length)) + " · "
+                                  + (mrow.modelData.grouping === "site" ? qsTr("by Site")
+                                     : mrow.modelData.grouping === "shape" ? qsTr("by shape") : qsTr("your order"))
+                            color: Theme.textMuted; font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
+                        MosaicBtn { text: "▲"; enabled: mrow.index > 0; onTapped: Mosaics.move(mrow.modelData.id, -1) }
+                        MosaicBtn {
+                            text: "▼"
+                            enabled: mrow.index < Mosaics.list.length - 1
+                            onTapped: Mosaics.move(mrow.modelData.id, 1)
+                        }
+                        MosaicBtn { text: qsTr("Edit…"); onTapped: mosaicEditor.openEdit(mrow.modelData.id) }
+                        MosaicBtn {
+                            text: qsTr("Delete")
+                            danger: true
+                            onTapped: {
+                                mosaicDelete.message = qsTr("Delete the mosaic \"%1\"?").arg(mrow.modelData.name);
+                                mosaicDelete.payload = mrow.modelData.id;
+                                mosaicDelete.open();
+                            }
+                        }
+                    }
+                }
+            }
+            MosaicBtn { text: qsTr("New mosaic…"); onTapped: mosaicEditor.openNew([]) }
             Item { Layout.fillHeight: true }
         }
     }
