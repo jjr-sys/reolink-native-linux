@@ -35,6 +35,7 @@ namespace rl {
 // registered metatype without its PointerToQObject flag.
 class BaichuanClient;
 class BaichuanEventListener;
+class FrigateLive;
 class ReolinkHttpClient;
 }
 
@@ -449,6 +450,14 @@ private:
                              const QString &camera);
     QHash<qint64, double> m_frigateWatermark;            // newest Frigate event start seen (server clock)
     QHash<QString, double> m_frigateLastRaised;          // host/camera/type -> start of last detection raised
+    // Frigate's /ws websocket per Frigate host (ticket 07): new events at once; the poll
+    // above still runs as catch-up and connectivity check.
+    QHash<qint64, FrigateLive *> m_frigateLive;
+    void ensureFrigateLive(qint64 hostId, const QString &host, int port);
+    void onFrigateLiveEvent(qint64 hostId, const QString &camera, const QString &label, double start);
+    // Raise one detection for a Frigate event unless it belongs to a burst already raised.
+    void raiseFrigateEvent(qint64 hostId, int channel, const QString &camera, const QString &type,
+                           double start);
     QHash<QString, bool> m_pollInFlight;                 // avoid overlapping polls
     QHash<int, int> m_pushEnabled;  // row -> push enable (1/0/-1) for notif gating
     QHash<qint64, int> m_hostFails; // consecutive poll transport failures per host

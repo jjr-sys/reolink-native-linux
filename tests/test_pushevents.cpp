@@ -1,5 +1,6 @@
 #include "protocol/BcAlarmEvents.h"
 #include "protocol/ReolinkApi.h"
+#include "protocol/WebSocketFrames.h"
 
 #include <QtTest>
 
@@ -127,6 +128,50 @@ private slots:
         // Motion that stays after the person has gone is the same activity, not new motion.
         QVERIFY(api::risingDetections(state(true, true, false, false),
                                       state(true, false, false, false)).isEmpty());
+    }
+
+    // RFC 6455 §1.3's worked example.
+    void websocketAcceptKey()
+    {
+        QCOMPARE(ws::acceptFor("dGhlIHNhbXBsZSBub25jZQ=="), QByteArray("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+    }
+
+    void websocketClientFramesRoundTrip()
+    {
+        for (int n : {0, 5, 125, 126, 300, 70000}) {
+            const QByteArray payload(n, 'x');
+            QByteArray buf = ws::clientFrame(ws::Text, payload, 0x37fa213d) + "tail";
+            QCOMPARE(quint8(buf[1]) & 0x80, 0x80); // clients mask
+            ws::Frame f;
+            QVERIFY(ws::takeFrame(buf, f));
+            QVERIFY(f.fin);
+            QCOMPARE(f.opcode, quint8(ws::Text));
+            QCOMPARE(f.payload, payload);
+            QCOMPARE(buf, QByteArray("tail"));
+        }
+    }
+
+    void websocketServerFramesAndPartialReads()
+    {
+        // RFC 6455 §5.7: an unmasked "Hello", then a ping, arriving in pieces.
+        const QByteArray wire = QByteArray::fromHex("810548656c6c6f") + QByteArray::fromHex("8900");
+        QByteArray buf;
+        ws::Frame f;
+        for (int i = 0; i < 6; ++i) {
+            buf += wire[i];
+            QVERIFY(!ws::takeFrame(buf, f));
+        }
+        buf += wire.mid(6);
+        QVERIFY(ws::takeFrame(buf, f));
+        QCOMPARE(f.payload, QByteArray("Hello"));
+        QVERIFY(ws::takeFrame(buf, f));
+        QCOMPARE(f.opcode, quint8(ws::Ping));
+        QVERIFY(buf.isEmpty());
+        // A first fragment, not final.
+        QByteArray frag = QByteArray::fromHex("01034865 6c");
+        QVERIFY(ws::takeFrame(frag, f));
+        QVERIFY(!f.fin);
+        QCOMPARE(f.payload, QByteArray("Hel"));
     }
 
     void aDoorbellPressRisesOnce()

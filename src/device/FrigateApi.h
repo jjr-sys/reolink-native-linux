@@ -28,6 +28,10 @@ QStringList parseCameraNames(const Json &config);
 QString displayCameraName(const QString &name);
 // /api/events reply. Entries without id, camera and start_time are dropped.
 QVector<Event> parseEvents(const Json &events);
+// A message from Frigate's /ws websocket, {"topic","payload"}: for topic "events" with
+// payload type "new" (an object stopped being a false positive), the event it opened.
+// The payload is itself a JSON string. False for anything else.
+bool parseLiveEvent(const QByteArray &message, Event *out);
 // The app's detection type for a Frigate object label ("person", "vehicle", "pet"),
 // or empty for labels the app does not model.
 QString typeForLabel(const QString &label);
@@ -85,5 +89,11 @@ void setCredentials(const QString &host, int port, const QString &username,
 
 // Blocking GET for worker threads. Empty result with `error` set on failure.
 QByteArray httpGet(const QString &url, int timeoutMs, QString *error = nullptr);
+// The session cookie ("frigate_token=…") for a host whose login was registered with
+// setCredentials, signing in if needed; empty when it has no login (port 5000) or on
+// failure. Blocking, for worker threads with an event loop (QThread).
+QByteArray sessionCookie(const QString &host, int port, int timeoutMs, QString *error = nullptr);
+// Forget a host's cached session cookie (the server refused it); the next call signs in again.
+void forgetSession(const QString &host, int port);
 
 } // namespace rl::frigate

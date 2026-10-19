@@ -366,6 +366,39 @@ void setCredentials(const QString &host, int port, const QString &username,
     }
 }
 
+bool parseLiveEvent(const QByteArray &message, Event *out)
+{
+    const QJsonObject m = QJsonDocument::fromJson(message).object();
+    if (m.value(QLatin1String("topic")).toString() != QLatin1String("events"))
+        return false;
+    const QJsonValue p = m.value(QLatin1String("payload"));
+    const QJsonObject payload = p.isString() ? QJsonDocument::fromJson(p.toString().toUtf8()).object()
+                                             : p.toObject();
+    if (payload.value(QLatin1String("type")).toString() != QLatin1String("new"))
+        return false;
+    const QJsonObject after = payload.value(QLatin1String("after")).toObject();
+    Event e;
+    e.id = after.value(QLatin1String("id")).toString();
+    e.camera = after.value(QLatin1String("camera")).toString();
+    e.label = after.value(QLatin1String("label")).toString();
+    e.start = after.value(QLatin1String("start_time")).toDouble();
+    if (e.camera.isEmpty() || e.label.isEmpty() || e.start <= 0)
+        return false;
+    *out = e;
+    return true;
+}
+
+QByteArray sessionCookie(const QString &host, int port, int timeoutMs, QString *error)
+{
+    QNetworkAccessManager nam;
+    return sessionCookie(QUrl(base(host, port)), nam, timeoutMs, error);
+}
+
+void forgetSession(const QString &host, int port)
+{
+    clearSession(QUrl(base(host, port)));
+}
+
 QByteArray httpGet(const QString &url, int timeoutMs, QString *error)
 {
     QNetworkAccessManager nam; // thread-local: safe on any worker thread

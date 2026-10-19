@@ -1,6 +1,8 @@
 #include "device/FrigateApi.h"
 #include "media/LiveUrl.h"
 
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QtTest>
 
 using namespace rl::frigate;
@@ -13,6 +15,36 @@ class TestFrigate : public QObject
 {
     Q_OBJECT
 private slots:
+    // /ws: {"topic":"events","payload":"<JSON string>"}; only "new" events count.
+    void parsesANewLiveEvent()
+    {
+        const QByteArray payload =
+            R"({"type":"new","before":{},"after":{"id":"1792379281.5-ab","camera":"bosch_camera","label":"person","start_time":1792379281.5,"false_positive":false}})";
+        const QByteArray msg = QJsonDocument(QJsonObject{{"topic", "events"},
+                                                         {"payload", QString::fromUtf8(payload)}})
+                                   .toJson(QJsonDocument::Compact);
+        Event e;
+        QVERIFY(parseLiveEvent(msg, &e));
+        QCOMPARE(e.camera, QStringLiteral("bosch_camera"));
+        QCOMPARE(e.label, QStringLiteral("person"));
+        QCOMPARE(e.start, 1792379281.5);
+        QCOMPARE(e.id, QStringLiteral("1792379281.5-ab"));
+    }
+
+    void ignoresOtherLiveMessages()
+    {
+        Event e;
+        auto wrap = [](const char *topic, const QByteArray &payload) {
+            return QJsonDocument(QJsonObject{{"topic", topic}, {"payload", QString::fromUtf8(payload)}})
+                .toJson(QJsonDocument::Compact);
+        };
+        QVERIFY(!parseLiveEvent(wrap("events", R"({"type":"update","after":{"camera":"a","label":"person","start_time":5}})"), &e));
+        QVERIFY(!parseLiveEvent(wrap("events", R"({"type":"end","after":{"camera":"a","label":"person","start_time":5}})"), &e));
+        QVERIFY(!parseLiveEvent(wrap("reviews", R"({"type":"new"})"), &e));
+        QVERIFY(!parseLiveEvent(wrap("events", R"({"type":"new","after":{"label":"person","start_time":5}})"), &e));
+        QVERIFY(!parseLiveEvent("not json", &e));
+    }
+
     void cameras_onlyEnabledOnesInConfigOrder()
     {
         const Json cfg = J("{ 'cameras': {'bosch_camera': {'enabled': true}, 'garage': {}, 'old': {'enabled': false}}, 'go2rtc': {'streams': {'mulga-nvr_0': ['rtsp://x'], 'bosch_camera': ['rtsp://y']}} }");

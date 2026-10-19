@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "device/FrigateApi.h"
+#include "device/FrigateLive.h"
 #include "device/QuickReply.h"
 #include "media/StreamPlayer.h"
 #include "protocol/BaichuanChannels.h"
@@ -195,8 +196,11 @@ DeviceManager::~DeviceManager()
 {
     for (qint64 hostId : m_pushListeners.keys())
         stopPushListener(hostId);
+    qDeleteAll(m_frigateLive);
+    m_frigateLive.clear();
     // A worker mid-read notices within 0.3 s; one stuck in a login is left to the OS.
     BaichuanEventListener::waitForWorkers(1500);
+    FrigateLive::waitForWorkers(500);
     m_pending.waitForFinished();
 }
 
@@ -836,6 +840,7 @@ void DeviceManager::removeDevice(int row)
         }
     }
     stopPushListener(id);
+    delete m_frigateLive.take(id);
     m_db->removeHost(id);
     m_credentials->remove(id);
     emit countChanged();
@@ -1095,6 +1100,7 @@ void DeviceManager::pollFrigate()
         m_pollInFlight[key] = true;
         const QString host = e.rec.addr;
         const int port = e.rec.port;
+        ensureFrigateLive(hostId, host, port);
         QHash<QString, int> channelOf;
         QHash<int, bool> online;
         for (const Entry &c : m_entries)
@@ -1137,18 +1143,58 @@ void DeviceManager::pollFrigate()
                         const QString type = frigate::typeForLabel(ev.label);
                         if (ev.start <= after || type.isEmpty() || !channelOf.contains(ev.camera))
                             continue;
-                        double &last = m_frigateLastRaised[QString::number(hostId) + u'/' + ev.camera + u'/' + type];
-                        if (!frigate::startsNewBurst(last, ev.start))
-                            continue;
-                        last = ev.start;
-                        emit detectionEvent(hostId, channelOf.value(ev.camera), type,
-                                           displayName(ev.camera, QStringLiteral("frigate")));
+                        // Already raised from the websocket if it was up: the burst rule skips it.
+                        raiseFrigateEvent(hostId, channelOf.value(ev.camera), ev.camera, type, ev.start);
                     }
                     m_frigateWatermark[hostId] = frigate::newWatermark(after, events);
                 },
                 Qt::QueuedConnection);
         }));
     }
+}
+
+void DeviceManager::raiseFrigateEvent(qint64 hostId, int channel, const QString &camera,
+                                      const QString &type, double start)
+{
+    double &last = m_frigateLastRaised[QString::number(hostId) + u'/' + camera + u'/' + type];
+    if (!frigate::startsNewBurst(last, start))
+        return;
+    last = start;
+    emit detectionEvent(hostId, channel, type, displayName(camera, QStringLiteral("frigate")));
+}
+
+void DeviceManager::ensureFrigateLive(qint64 hostId, const QString &host, int port)
+{
+    static const bool disabled = qEnvironmentVariableIsSet("RL_NO_PUSH");
+    if (disabled)
+        return;
+    if (FrigateLive *l = m_frigateLive.value(hostId)) {
+        if (l->host() == host && l->port() == port)
+            return;
+        delete m_frigateLive.take(hostId);
+    }
+    auto *l = new FrigateLive(host, port, this);
+    connect(l, &FrigateLive::connectedChanged, this, [hostId](bool on) {
+        qCInfo(lcProto) << "Frigate live events" << (on ? "on" : "off") << "for host" << hostId;
+    });
+    connect(l, &FrigateLive::liveEvent, this,
+            [this, hostId](const QString &camera, const QString &label, double start) {
+                onFrigateLiveEvent(hostId, camera, label, start);
+            });
+    m_frigateLive.insert(hostId, l);
+}
+
+void DeviceManager::onFrigateLiveEvent(qint64 hostId, const QString &camera, const QString &label,
+                                       double start)
+{
+    const QString type = frigate::typeForLabel(label);
+    if (type.isEmpty())
+        return;
+    for (const Entry &e : std::as_const(m_entries))
+        if (e.rec.id == hostId && e.chanName == camera) {
+            raiseFrigateEvent(hostId, e.channel, camera, type, start);
+            return;
+        }
 }
 
 void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, bool storeNew)

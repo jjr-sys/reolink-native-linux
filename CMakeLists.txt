@@ -41,6 +41,8 @@ add_library(reolink_core STATIC
     src/protocol/BcAlarmEvents.h
     src/device/HighlightPolicy.h src/device/HighlightPolicy.cpp
     src/device/FrigateApi.h src/device/FrigateApi.cpp
+    src/device/FrigateLive.h src/device/FrigateLive.cpp
+    src/protocol/WebSocketFrames.h
     src/device/BoschTourController.h src/device/BoschTourController.cpp
     src/device/Highlights.h src/device/Highlights.cpp
     src/ui/MosaicPacker.h src/ui/MosaicPacker.cpp
