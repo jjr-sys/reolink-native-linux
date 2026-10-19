@@ -10,6 +10,7 @@
 #include "device/DeviceManager.h"
 #include "device/DownloadQueue.h"
 #include "device/Highlights.h"
+#include "media/AlertSounds.h"
 #include "device/EventManager.h"
 #include "media/StreamPlayer.h"
 #include "media/LiveStream.h"
@@ -167,6 +168,11 @@ int main(int argc, char *argv[])
     rl::DeviceManager devices(&database, &credentials);
     rl::EventManager events(&database, &devices);
     rl::Highlights highlights(&devices);
+    rl::AlertSounds alertSounds;
+    QObject::connect(&highlights, &rl::Highlights::soundRequested, &alertSounds,
+                     [&alertSounds](const QString &sound) {
+                         alertSounds.play(sound, rl::AlertSounds::Detection);
+                     });
     rl::DeviceDiscovery discovery;
     rl::BoschTourController boschTour(&credentials);
     rl::Updater updater;
@@ -182,6 +188,7 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Events", &events);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Highlights", &highlights);
+    qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "AlertSounds", &alertSounds);
     // RL_MOCK_DETECTIONS="person:1:3@2;motion:1:4@4" plays scripted detections into Highlights.
     if (qEnvironmentVariableIsSet("RL_MOCK_DETECTIONS"))
         highlights.runScript(qEnvironmentVariable("RL_MOCK_DETECTIONS"));

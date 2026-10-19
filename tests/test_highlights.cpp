@@ -1,4 +1,7 @@
 #include "device/HighlightPolicy.h"
+#include "media/AlertSounds.h"
+
+#include <QJsonArray>
 
 #include <QtTest>
 
@@ -162,6 +165,55 @@ private slots:
         p.reset();
         QCOMPARE(p.look(A, T0).kind, Kind::None);
         QCOMPARE(p.detect(A, Kind::Person, T0 + s(1)), Chirp);
+    }
+
+    void rulesSurviveAJsonRoundTrip()
+    {
+        Rules r = defaultRules();
+        r[Kind::Vehicle].sound = Horn;
+        r[Kind::Vehicle].allCameras = false;
+        r[Kind::Vehicle].cameras = {A, B};
+        r[Kind::Vehicle].style = Style::Steady;
+        r[Kind::Vehicle].overrides[B] = Override{false, QString(), QStringLiteral("none")};
+        r[Kind::Motion].overrides[A].off = true;
+        const Rules back = rulesFromJson(rulesToJson(r));
+        QCOMPARE(rulesToJson(back), rulesToJson(r));
+        QCOMPARE(back[Kind::Vehicle].cameras, (QList<QString>{A, B}));
+        QVERIFY(back[Kind::Motion].overrides[A].off);
+    }
+
+    // A hand-written rule names only what it changes; the rest keeps its default.
+    void partialJsonKeepsDefaults()
+    {
+        const QJsonObject json{{QStringLiteral("person"),
+                                QJsonObject{{QStringLiteral("sound"), Chirp},
+                                            {QStringLiteral("cameras"), QJsonArray{A}}}}};
+        const Rules r = rulesFromJson(json);
+        QCOMPARE(r[Kind::Person].sound, Chirp);
+        QVERIFY(r[Kind::Person].on);
+        QVERIFY(!r[Kind::Person].allCameras);
+        QCOMPARE(r[Kind::Person].seconds, 15);
+        QCOMPARE(r[Kind::Vehicle].colour, defaultRules()[Kind::Vehicle].colour);
+        QVERIFY(!r[Kind::Motion].on);
+        QCOMPARE(rulesToJson(rulesFromJson(QJsonObject())), rulesToJson(defaultRules()));
+    }
+
+    // Alert sounds: one at a time; only a higher priority interrupts; mute and the doorbell
+    // pop-up silence detection sounds only.
+    void alertSoundPriority()
+    {
+        using P = rl::AlertSounds;
+        QVERIFY(P::allowed(P::Detection, P::None, false, false));
+        QVERIFY(!P::allowed(P::Detection, P::Detection, false, false));
+        QVERIFY(!P::allowed(P::Detection, P::Offline, false, false));
+        QVERIFY(P::allowed(P::Offline, P::Detection, false, false));
+        QVERIFY(P::allowed(P::Doorbell, P::Offline, false, false));
+        QVERIFY(!P::allowed(P::Offline, P::Doorbell, false, false));
+        QVERIFY(!P::allowed(P::Detection, P::None, true, false));
+        QVERIFY(!P::allowed(P::Detection, P::None, false, true));
+        QVERIFY(P::allowed(P::Offline, P::None, true, true));
+        QVERIFY(!P::allowed(P::None, P::None, false, false));
+        QCOMPARE(P::builtIn().size(), 14);
     }
 
     void namesRoundTrip()

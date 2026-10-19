@@ -1,5 +1,7 @@
 #include "HighlightPolicy.h"
 
+#include <QJsonArray>
+
 namespace rl::highlight {
 
 Kind kindOf(const QString &type)
@@ -52,6 +54,67 @@ Rules defaultRules()
         {Kind::Pet, rule(true, "#3cc46a")},
         {Kind::Motion, rule(false, "#9aa0a6")},
     };
+}
+
+Rules rulesFromJson(const QJsonObject &json)
+{
+    Rules rules = defaultRules();
+    for (auto it = rules.begin(); it != rules.end(); ++it) {
+        const QJsonObject o = json.value(nameOf(it.key())).toObject();
+        if (o.isEmpty())
+            continue;
+        Rule &r = *it;
+        r.on = o.value(QLatin1String("on")).toBool(r.on);
+        const QJsonValue cams = o.value(QLatin1String("cameras"));
+        if (cams.isArray()) {
+            r.allCameras = false;
+            r.cameras.clear();
+            for (const QJsonValue &c : cams.toArray())
+                r.cameras.append(c.toString());
+        }
+        r.colour = o.value(QLatin1String("colour")).toString(r.colour);
+        if (o.contains(QLatin1String("style")))
+            r.style = styleOf(o.value(QLatin1String("style")).toString());
+        r.seconds = qBound(1, o.value(QLatin1String("seconds")).toInt(r.seconds), 600);
+        r.sound = o.value(QLatin1String("sound")).toString(r.sound);
+        r.cooldownSeconds = qBound(0, o.value(QLatin1String("cooldown")).toInt(r.cooldownSeconds), 3600);
+        const QJsonObject ov = o.value(QLatin1String("overrides")).toObject();
+        for (auto c = ov.begin(); c != ov.end(); ++c) {
+            const QJsonObject x = c.value().toObject();
+            r.overrides.insert(c.key(), Override{x.value(QLatin1String("off")).toBool(),
+                                                 x.value(QLatin1String("colour")).toString(),
+                                                 x.value(QLatin1String("sound")).toString()});
+        }
+    }
+    return rules;
+}
+
+QJsonObject rulesToJson(const Rules &rules)
+{
+    QJsonObject json;
+    for (auto it = rules.begin(); it != rules.end(); ++it) {
+        const Rule &r = *it;
+        QJsonObject ov;
+        for (auto c = r.overrides.begin(); c != r.overrides.end(); ++c) {
+            QJsonObject x;
+            if (c->off) x.insert(QLatin1String("off"), true);
+            if (!c->colour.isEmpty()) x.insert(QLatin1String("colour"), c->colour);
+            if (!c->sound.isEmpty()) x.insert(QLatin1String("sound"), c->sound);
+            ov.insert(c.key(), x);
+        }
+        json.insert(nameOf(it.key()), QJsonObject{
+            {QLatin1String("on"), r.on},
+            {QLatin1String("cameras"), r.allCameras ? QJsonValue(QLatin1String("all"))
+                                                    : QJsonValue(QJsonArray::fromStringList(r.cameras))},
+            {QLatin1String("colour"), r.colour},
+            {QLatin1String("style"), nameOf(r.style)},
+            {QLatin1String("seconds"), r.seconds},
+            {QLatin1String("sound"), r.sound},
+            {QLatin1String("cooldown"), r.cooldownSeconds},
+            {QLatin1String("overrides"), ov},
+        });
+    }
+    return json;
 }
 
 QString HighlightPolicy::detect(const QString &camera, Kind kind, qint64 now)

@@ -19,6 +19,8 @@ class Highlights : public QObject
     Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY enabledChanged)
     // "hostId:channel" -> { kind, colour, style, since, flashUntil, last } (times in epoch ms).
     Q_PROPERTY(QVariantMap looks READ looks NOTIFY looksChanged)
+    // The Highlight rules as JSON (see rulesFromJson), saved in [highlights] rules.
+    Q_PROPERTY(QString rules READ rules WRITE setRules NOTIFY rulesChanged)
 
 public:
     explicit Highlights(DeviceManager *devices, QObject *parent = nullptr);
@@ -26,6 +28,8 @@ public:
     bool enabled() const { return m_enabled; }
     void setEnabled(bool on);
     QVariantMap looks() const { return m_looks; }
+    QString rules() const;
+    void setRules(const QString &json);
 
     // Feed a detection directly (mock scripts, tests). `type` as DeviceManager emits it.
     Q_INVOKABLE void ingest(const QString &camera, const QString &type);
@@ -35,6 +39,7 @@ public:
 signals:
     void enabledChanged();
     void looksChanged();
+    void rulesChanged();
     // A Highlight rule asks for an Alert sound (played by the alert-sound player).
     void soundRequested(const QString &sound, const QString &camera, const QString &kind);
 

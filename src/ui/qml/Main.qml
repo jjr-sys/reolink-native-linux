@@ -237,6 +237,9 @@ ApplicationWindow {
         }
     }
 
+    // Detection sounds stay quiet while the doorbell pop-up is up.
+    Binding { target: AlertSounds; property: "suppressed"; value: doorbell.active }
+
     Connections {
         target: Devices
         function onDetectionEvent(hostId, channel, type, camera) {

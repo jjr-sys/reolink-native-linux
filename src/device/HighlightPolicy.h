@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QJsonObject>
 #include <QList>
 #include <QString>
 #include <QtGlobal>
@@ -54,6 +55,11 @@ struct Rule {
 
 using Rules = QHash<Kind, Rule>;
 Rules defaultRules();
+// Stored as { "person": { on, cameras: "all" | [keys], colour, style, seconds, sound,
+// cooldown, overrides: { key: { off, colour, sound } } }, ... }. A missing type or field
+// keeps its default.
+Rules rulesFromJson(const QJsonObject &json);
+QJsonObject rulesToJson(const Rules &rules);
 
 // What a camera's panes show now.
 struct Look {

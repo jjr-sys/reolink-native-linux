@@ -703,7 +703,8 @@ Item {
                 Text {
                     id: highlightLabel
                     anchors.centerIn: parent
-                    text: qsTr("Highlights")
+                    text: Highlights.enabled && AlertSounds.muted ? qsTr("Highlights \u00b7 muted")
+                                                                  : qsTr("Highlights")
                     color: Highlights.enabled ? Theme.text : Theme.textMuted
                     font.pixelSize: 12
                 }
@@ -748,6 +749,30 @@ Item {
                 }
                 ThemedMenu {
                     id: highlightMenu
+                    ThemedMenuItem {
+                        visible: AlertSounds.muted
+                        height: visible ? implicitHeight : 0
+                        text: AlertSounds.mutedUntil > 0
+                              ? qsTr("Unmute sounds (muted until %1)")
+                                    .arg(Qt.formatTime(new Date(AlertSounds.mutedUntil), "HH:mm"))
+                              : qsTr("Unmute sounds")
+                        onTriggered: AlertSounds.unmute()
+                    }
+                    ThemedMenuItem {
+                        text: qsTr("Mute sounds for 15 minutes")
+                        onTriggered: AlertSounds.muteFor(15)
+                    }
+                    ThemedMenuItem {
+                        text: qsTr("Mute sounds for 1 hour")
+                        onTriggered: AlertSounds.muteFor(60)
+                    }
+                    ThemedMenuItem {
+                        visible: AlertSounds.mutedUntil !== -1
+                        height: visible ? implicitHeight : 0
+                        text: qsTr("Mute sounds until I unmute")
+                        onTriggered: AlertSounds.muteFor(0)
+                    }
+                    ThemedMenuSeparator {}
                     ThemedMenuItem {
                         text: qsTr("Edit rules…")
                         onTriggered: page.editHighlightRulesRequested()

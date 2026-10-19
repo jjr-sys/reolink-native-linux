@@ -1,0 +1,7 @@
+Alert sounds
+============
+
+Every .wav file in this directory is synthesised by tools/gen-alert-sounds.py from
+sine waves and seeded noise. None is a recording or derived from third-party audio;
+they are this project's own work under its licence (see LICENSE). To change a sound,
+edit its recipe in the script and re-run it.

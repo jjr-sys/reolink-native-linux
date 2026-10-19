@@ -3,15 +3,24 @@
 #include "device/DeviceManager.h"
 
 #include <QDateTime>
+#include <QJsonDocument>
+#include <QSettings>
 
 namespace rl {
 
 using highlight::Kind;
 
+namespace {
+const char *kRulesKey = "highlights/rules";
+QJsonObject parse(const QString &json) { return QJsonDocument::fromJson(json.toUtf8()).object(); }
+} // namespace
+
 qint64 Highlights::nowMs() { return QDateTime::currentMSecsSinceEpoch(); }
 
 Highlights::Highlights(DeviceManager *devices, QObject *parent) : QObject(parent)
 {
+    m_policy.setRules(highlight::rulesFromJson(
+        parse(QSettings().value(QLatin1String(kRulesKey)).toString())));
     m_timer.setInterval(1000);
     connect(&m_timer, &QTimer::timeout, this, [this] {
         if (m_policy.expire(nowMs()))
@@ -31,6 +40,24 @@ void Highlights::setEnabled(bool on)
     m_policy.reset();
     publish();
     emit enabledChanged();
+}
+
+QString Highlights::rules() const
+{
+    return QString::fromUtf8(
+        QJsonDocument(highlight::rulesToJson(m_policy.rules())).toJson(QJsonDocument::Compact));
+}
+
+void Highlights::setRules(const QString &json)
+{
+    const QString before = rules();
+    m_policy.setRules(highlight::rulesFromJson(parse(json)));
+    const QString after = rules();
+    if (after == before)
+        return;
+    QSettings().setValue(QLatin1String(kRulesKey), after);
+    publish();
+    emit rulesChanged();
 }
 
 void Highlights::ingest(const QString &camera, const QString &type)
