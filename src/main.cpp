@@ -201,6 +201,9 @@ int main(int argc, char *argv[])
     // Lets tests/screenshots open a specific page (0=Live,1=Playback,2=Events,3=Settings).
     engine.rootContext()->setContextProperty(
         QStringLiteral("initialPage"), qEnvironmentVariableIntValue("RL_INITIAL_PAGE"));
+    // RL_SETTINGS_CATEGORY=<key> opens Settings on a section (e.g. "highlights", "mosaics").
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("initialSettingsCategory"), qEnvironmentVariable("RL_SETTINGS_CATEGORY"));
     engine.rootContext()->setContextProperty(
         QStringLiteral("mockRecordings"), qEnvironmentVariableIsSet("RL_MOCK_RECORDINGS"));
     engine.rootContext()->setContextProperty(

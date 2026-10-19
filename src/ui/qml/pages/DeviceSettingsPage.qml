@@ -13,6 +13,12 @@ Item {
 
     property int deviceRow: -1
     property string category: "system"
+    // App-level sections, above the camera picker; they ignore the chosen camera.
+    readonly property bool appCategory: category === "mosaics" || category === "highlights"
+    Component.onCompleted: {
+        if (typeof initialSettingsCategory !== "undefined" && initialSettingsCategory)
+            category = initialSettingsCategory;
+    }
     property var settings: ({})      // cmd -> value map from the last fetch
     property bool isAdmin: false
     property string status: ""
@@ -246,6 +252,23 @@ Item {
                     HoverHandler { id: mosaicsHover }
                     TapHandler { onTapped: page.category = "mosaics" }
                 }
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 34
+                    radius: 4
+                    color: page.category === "highlights" ? Theme.accentDim
+                         : highlightsHover.hovered ? Theme.surfaceAlt : "transparent"
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        anchors.leftMargin: 10
+                        text: qsTr("Detection highlights")
+                        color: page.category === "highlights" ? Theme.text : Theme.textMuted
+                        font.pixelSize: 13
+                    }
+                    HoverHandler { id: highlightsHover }
+                    TapHandler { onTapped: page.category = "highlights" }
+                }
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
                 Text { text: qsTr("Camera:"); color: Theme.textMuted; font.pixelSize: 11 }
@@ -284,7 +307,7 @@ Item {
                 }
                 Item { Layout.fillHeight: true }
                 Text {
-                    visible: !page.isAdmin && page.deviceRow >= 0 && page.category !== "mosaics"
+                    visible: !page.isAdmin && page.deviceRow >= 0 && !page.appCategory
                     Layout.fillWidth: true
                     text: qsTr("Read-only (not an admin account)")
                     color: Theme.textMuted
@@ -313,6 +336,8 @@ Item {
                         text: {
                             if (page.category === "mosaics")
                                 return qsTr("Mosaics");
+                            if (page.category === "highlights")
+                                return qsTr("Detection highlights");
                             for (var i = 0; i < page.categories.length; i++)
                                 if (page.categories[i].key === page.category)
                                     return page.categories[i].label;
@@ -324,7 +349,7 @@ Item {
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                        visible: page.category !== "mosaics"
+                        visible: !page.appCategory
                         text: page.status; color: Theme.textMuted; font.pixelSize: 12
                     }
                 }
@@ -336,6 +361,7 @@ Item {
                     sourceComponent: {
                         switch (page.category) {
                         case "mosaics": return mosaicsPanel;
+                        case "highlights": return highlightsPanel;
                         case "image": return imagePanel;
                         case "encoding": return encodingPanel;
                         case "display": return displayPanel;
@@ -1095,6 +1121,11 @@ Item {
             }
             Item { Layout.fillHeight: true }
         }
+    }
+
+    Component {
+        id: highlightsPanel
+        HighlightRulesPanel {}
     }
 
     // Named mosaics, shown as tabs after the Mosaic switch in Live View.
