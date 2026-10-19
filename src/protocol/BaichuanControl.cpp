@@ -155,6 +155,7 @@ static bool recvMatch(QTcpSocket *sock, QByteArray &netBuf, quint32 wantCmd, Msg
 
 bool BaichuanControl::open()
 {
+    m_refused = false;
     m_sock = std::make_unique<QTcpSocket>();
     m_sock->connectToHost(m_p.host, static_cast<quint16>(m_p.port));
     if (!m_sock->waitForConnected(5000)) {
@@ -199,6 +200,7 @@ bool BaichuanControl::open()
     }
     if (loginReply.status != 200) {
         close();
+        m_refused = true;
         return false;
     }
     return true;
@@ -244,6 +246,35 @@ QByteArray BaichuanControl::transact(quint32 cmdId, int channel, const QByteArra
     if (statusOut)
         *statusOut = reply.status;
     return decryptReply(reply, m_aesKey);
+}
+
+bool BaichuanControl::post(quint32 cmdId)
+{
+    if (!isOpen())
+        return false;
+    m_sock->write(modernMessage(cmdId, 250, (++m_messId) & 0xFFFFFF, QByteArray(), QByteArray()));
+    m_sock->flush();
+    return isOpen();
+}
+
+std::optional<BaichuanControl::Pushed> BaichuanControl::readPushed(int waitMs, bool *lost)
+{
+    *lost = false;
+    if (!isOpen()) {
+        *lost = true;
+        return std::nullopt;
+    }
+    Msg m;
+    if (!parseMessage(m_netBuf, m)) {
+        if (m_sock->bytesAvailable() == 0 && !m_sock->waitForReadyRead(waitMs)) {
+            *lost = m_sock->state() != QAbstractSocket::ConnectedState;
+            return std::nullopt;
+        }
+        m_netBuf.append(m_sock->readAll());
+        if (!parseMessage(m_netBuf, m))
+            return std::nullopt;
+    }
+    return Pushed{m.cmdId, m.status, decryptReply(m, m_aesKey)};
 }
 
 bool BaichuanControl::sendBinary(quint32 cmdId, int channel, quint32 messId,

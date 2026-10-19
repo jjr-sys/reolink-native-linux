@@ -10,6 +10,8 @@
 #include "protocol/BaichuanClient.h"
 #include "protocol/BcLiveFramePacer.h"
 #include "protocol/BaichuanControl.h"
+#include "protocol/BaichuanEventListener.h"
+#include "protocol/BcAlarmEvents.h"
 #include "protocol/ReolinkHttpClient.h"
 
 #include <QDateTime>
@@ -191,6 +193,10 @@ DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject
 
 DeviceManager::~DeviceManager()
 {
+    for (qint64 hostId : m_pushListeners.keys())
+        stopPushListener(hostId);
+    // A worker mid-read notices within 0.3 s; one stuck in a login is left to the OS.
+    BaichuanEventListener::waitForWorkers(1500);
     m_pending.waitForFinished();
 }
 
@@ -352,6 +358,7 @@ void DeviceManager::pollDetections()
         QVector<int> channels;
         QVector<bool> wantAi;
         QVector<QString> names;
+        bool pushLive = false; // detections come by push; poll only channel status
     };
     QHash<qint64, HostPoll> byHost;
     QVector<qint64> order;
@@ -369,11 +376,16 @@ void DeviceManager::pollDetections()
         hp.names.append(e.chanName);
     }
 
+    for (const Entry &e : m_entries)
+        if (byHost.contains(e.rec.id))
+            ensurePushListener(e);
+
     for (qint64 hostId : order) {
         const QString key = QString::number(hostId);
         if (m_pollInFlight.value(key, false))
             continue;
         m_pollInFlight[key] = true;
+        byHost[hostId].pushLive = m_pushLive.contains(hostId);
         const HostPoll hp = byHost.value(hostId);
 
         m_pending.addFuture(QtConcurrent::run([this, hostId, key, hp] {
@@ -381,7 +393,10 @@ void DeviceManager::pollDetections()
             struct Item { int channel; bool isAi; };
             QVector<Item> items;
             Json cmds = Json::array();
-            for (int i = 0; i < hp.channels.size(); ++i) {
+            // Pushed detections replace the state queries; a multi-channel host still
+            // answers GetChannelstatus below, which keeps connectivity current.
+            const bool statesByPush = hp.pushLive && hp.channels.size() > 1;
+            for (int i = 0; i < hp.channels.size() && !statesByPush; ++i) {
                 const int ch = hp.channels[i];
                 items.append({ch, false});
                 cmds.push_back(api::command(QStringLiteral("GetMdState"), Json{{"channel", ch}}));
@@ -436,30 +451,79 @@ void DeviceManager::pollDetections()
                     applyConnectivity(hostId, transportOk, chanOnline);
                     if (!transportOk)
                         return;
+                    // Push took over (or still holds) this host's detections.
+                    if (hp.pushLive || m_pushLive.contains(hostId))
+                        return;
                     for (int i = 0; i < hp.channels.size(); ++i) {
-                        const int channel = hp.channels[i];
-                        const QString ckey = detKey(hostId, channel);
-                        const api::DetectionState st = states.value(channel);
-                        const api::DetectionState prev = m_lastDetection.value(ckey);
-                        const QString camera = hp.names[i];
-                        auto edge = [&](bool now, bool was, const char *type) {
-                            if (now && !was)
-                                emit detectionEvent(hostId, channel, QString::fromUtf8(type),
-                                                    camera);
-                        };
-                        edge(st.person, prev.person, "person");
-                        edge(st.vehicle, prev.vehicle, "vehicle");
-                        edge(st.pet, prev.pet, "pet");
-                        const bool aiActive = st.person || st.vehicle || st.pet;
-                        const bool prevAi = prev.person || prev.vehicle || prev.pet;
-                        if (!aiActive)
-                            edge(st.motion, prev.motion || prevAi, "motion");
-                        m_lastDetection[ckey] = st;
+                        api::DetectionState st = states.value(hp.channels[i]);
+                        // The poll can't see a doorbell press; keep what push last said.
+                        st.visitor = m_lastDetection.value(detKey(hostId, hp.channels[i])).visitor;
+                        applyDetectionState(hostId, hp.channels[i], st, hp.names[i]);
                     }
                 },
                 Qt::QueuedConnection);
         }));
     }
+}
+
+void DeviceManager::applyDetectionState(qint64 hostId, int channel, const api::DetectionState &st,
+                                        const QString &camera)
+{
+    const QString ckey = detKey(hostId, channel);
+    for (const QString &type : api::risingDetections(m_lastDetection.value(ckey), st))
+        emit detectionEvent(hostId, channel, type, camera);
+    m_lastDetection[ckey] = st;
+}
+
+void DeviceManager::ensurePushListener(const Entry &e)
+{
+    // RL_NO_PUSH=1 keeps to the poll (scratch runs that shouldn't hold NVR sessions).
+    static const bool disabled = qEnvironmentVariableIsSet("RL_NO_PUSH");
+    if (disabled || isDirectKind(e.rec.kind) || !e.primed || e.password.isEmpty())
+        return;
+    if (BaichuanEventListener *l = m_pushListeners.value(e.rec.id)) {
+        const BaichuanControl::Params &p = l->params();
+        if (p.host == e.rec.addr && p.username == e.rec.username && p.password == e.password)
+            return;
+        stopPushListener(e.rec.id); // the host's address or credentials changed
+    }
+    BaichuanControl::Params p;
+    p.host = e.rec.addr;
+    p.port = 9000;
+    p.username = e.rec.username;
+    p.password = e.password;
+    const qint64 hostId = e.rec.id;
+    auto *l = new BaichuanEventListener(p, this);
+    connect(l, &BaichuanEventListener::subscribedChanged, this, [this, hostId](bool on) {
+        qCInfo(lcProto) << "push detections" << (on ? "on" : "off") << "for host" << hostId;
+        if (on)
+            m_pushLive.insert(hostId);
+        else
+            m_pushLive.remove(hostId);
+    });
+    connect(l, &BaichuanEventListener::alarmEvents, this,
+            [this, hostId](const QByteArray &xml) { onAlarmEvents(hostId, xml); });
+    connect(l, &BaichuanEventListener::refused, this, [hostId] {
+        qCWarning(lcProto) << "push listener login refused for host" << hostId
+                            << "- retrying in 10 minutes";
+    });
+    m_pushListeners.insert(hostId, l);
+}
+
+void DeviceManager::stopPushListener(qint64 hostId)
+{
+    delete m_pushListeners.take(hostId);
+    m_pushLive.remove(hostId);
+}
+
+void DeviceManager::onAlarmEvents(qint64 hostId, const QByteArray &xml)
+{
+    for (const bc::ChannelAlarm &a : bc::parseAlarmEvents(xml))
+        for (const Entry &e : std::as_const(m_entries))
+            if (e.rec.id == hostId && e.channel == a.channel) {
+                applyDetectionState(hostId, a.channel, a.state, e.chanName);
+                break;
+            }
 }
 
 int DeviceManager::rowCount(const QModelIndex &parent) const
@@ -771,6 +835,7 @@ void DeviceManager::removeDevice(int row)
             endRemoveRows();
         }
     }
+    stopPushListener(id);
     m_db->removeHost(id);
     m_credentials->remove(id);
     emit countChanged();

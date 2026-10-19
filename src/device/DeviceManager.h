@@ -34,6 +34,7 @@ namespace rl {
 // violation (GCC 16 reports it as -Wsfinae-incomplete) and it left the
 // registered metatype without its PointerToQObject flag.
 class BaichuanClient;
+class BaichuanEventListener;
 class ReolinkHttpClient;
 }
 
@@ -436,6 +437,16 @@ private:
     QTimer m_pollTimer;
     // Keyed by "hostId:channel" so each NVR camera is tracked independently.
     QHash<QString, api::DetectionState> m_lastDetection; // for 0->1 edge detection
+    // Baichuan push (wayfinder/detection-highlights ticket 06): one listener per Reolink
+    // host. While a host's is subscribed, the poll stops asking it for motion/AI state.
+    QHash<qint64, BaichuanEventListener *> m_pushListeners;
+    QSet<qint64> m_pushLive;
+    void ensurePushListener(const Entry &e);
+    void stopPushListener(qint64 hostId);
+    void onAlarmEvents(qint64 hostId, const QByteArray &xml);
+    // Raise detectionEvent for each detection that began on a channel, from either source.
+    void applyDetectionState(qint64 hostId, int channel, const api::DetectionState &st,
+                             const QString &camera);
     QHash<qint64, double> m_frigateWatermark;            // newest Frigate event start seen (server clock)
     QHash<QString, double> m_frigateLastRaised;          // host/camera/type -> start of last detection raised
     QHash<QString, bool> m_pollInFlight;                 // avoid overlapping polls

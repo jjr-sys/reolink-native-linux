@@ -289,6 +289,24 @@ Json getOsd(int channel)
     return command(QStringLiteral("GetOsd"), Json{{"channel", channel}}, /*action=*/1);
 }
 
+QStringList risingDetections(const DetectionState &prev, const DetectionState &now)
+{
+    QStringList out;
+    if (now.visitor && !prev.visitor)
+        out.append(QStringLiteral("visitor"));
+    if (now.person && !prev.person)
+        out.append(QStringLiteral("person"));
+    if (now.vehicle && !prev.vehicle)
+        out.append(QStringLiteral("vehicle"));
+    if (now.pet && !prev.pet)
+        out.append(QStringLiteral("pet"));
+    const bool ai = now.person || now.vehicle || now.pet;
+    const bool prevAi = prev.person || prev.vehicle || prev.pet;
+    if (!ai && now.motion && !(prev.motion || prevAi))
+        out.append(QStringLiteral("motion"));
+    return out;
+}
+
 bool parseMdState(const Json &value)
 {
     return jsonInt(value, "state", 0) != 0;

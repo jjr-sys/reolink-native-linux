@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 class QTcpSocket;
 
@@ -72,6 +73,23 @@ public:
                         quint16 *statusOut = nullptr);
 
     bool isOpen() const;
+    // The last open() failed because the device turned the login down (not because it
+    // was unreachable). Never retry such a host quickly: each refusal counts toward the
+    // firmware's account lockout.
+    bool refused() const { return m_refused; }
+
+    // ---- Listening for what the device pushes (detections, see BcAlarmEvents.h) ------
+    // Send a header-only request to the host (ch_id 250) without waiting; its reply and
+    // anything sent unasked come out of readPushed(). False if the socket is gone.
+    bool post(quint32 cmdId);
+    struct Pushed {
+        quint32 cmdId = 0;
+        quint16 status = 0;
+        QByteArray xml; // decrypted body (empty for header-only messages)
+    };
+    // The next message from the device, waiting up to `waitMs`. Empty on timeout; sets
+    // *lost when the connection has gone.
+    std::optional<Pushed> readPushed(int waitMs, bool *lost);
 
     // ---- Streaming a binary payload to the device (two-way talk) ---------------
     // A fresh message id for a run of related sends (all binary chunks of one talk
@@ -92,6 +110,7 @@ private:
     QByteArray m_aesKey;
     QByteArray m_netBuf;      // socket bytes buffered past the last parsed reply
     quint32 m_messId = 0;     // per-connection RPC counter
+    bool m_refused = false;
 };
 
 } // namespace rl

@@ -4,6 +4,7 @@
 
 #include <QDateTime>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 #include <QVector>
 
@@ -154,7 +155,11 @@ struct DetectionState {
     bool person = false;
     bool vehicle = false;
     bool pet = false;
+    bool visitor = false; // a doorbell press; only Baichuan push reports it
 };
+// The detections that began between two states, as detectionEvent types: "person",
+// "vehicle", "pet", "visitor", and "motion" only while no AI type is (or was) active.
+QStringList risingDetections(const DetectionState &prev, const DetectionState &now);
 bool parseMdState(const Json &value);              // GetMdState -> motion bool
 DetectionState parseAiState(const Json &value);    // GetAiState -> per-type flags
 
