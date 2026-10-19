@@ -12,7 +12,7 @@ Rectangle {
     id: root
     color: Theme.paneBackground
     border.color: selected ? Theme.accent : Theme.border
-    border.width: selected && activityKind !== "" ? 3 : 1
+    border.width: selected && highlighted ? 3 : 1
     clip: true
 
     property int paneIndex: -1     // grid slot
@@ -53,9 +53,29 @@ Rectangle {
     property bool pageActive: true // false when the Live View page isn't on screen
     property bool audioAllowed: true // false while something else (the doorbell pop-up) has the sound
 
-    // Activity mode: this camera holds a tile because of a detection (badge text).
-    property string activityKind: ""
-    property string activityText: ""
+    // Highlight (Highlights.looks entry): { kind, colour, style, since, flashUntil, last },
+    // times in epoch ms; null when not highlighted. kind "doorbell" is the pop-up's fixed one.
+    property var highlight: null
+    readonly property bool highlighted: highlight !== null
+    property real clock: Date.now()  // ticks while highlighted: flash phase and "N s ago"
+    Timer {
+        running: root.highlighted
+        interval: 250
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: root.clock = Date.now()
+    }
+    readonly property bool highlightLit: highlighted
+        && (clock >= highlight.flashUntil || Math.floor((clock - highlight.since) / 400) % 2 === 0)
+    function highlightLabel() {
+        if (!highlighted)
+            return "";
+        if (highlight.kind === "doorbell")
+            return qsTr("Doorbell");
+        var k = highlight.kind.charAt(0).toUpperCase() + highlight.kind.slice(1);
+        var ago = Math.floor((clock - highlight.last) / 1000);
+        return ago < 2 ? k : qsTr("%1 · %2 s ago").arg(k).arg(ago);
+    }
 
     // Capabilities (from the Devices model; false for empty slots). Named cap*
     // to avoid colliding with the identically-named model roles in the delegate.
@@ -366,33 +386,33 @@ Rectangle {
 
     // ---- Name + zoom badge -------------------------------------------------
 
-    // Activity marker: amber inside the selection's blue border, so both stay visible.
+    // Highlight border: inside the selection's blue border, so both stay visible.
     Rectangle {
-        visible: root.activityKind !== ""
+        visible: root.highlightLit
         z: 19
         anchors.fill: parent
         anchors.margins: root.selected ? 3 : 0
         color: "transparent"
-        border.color: "#f0a030"
-        border.width: 3
+        border.color: root.highlighted ? root.highlight.colour : "transparent"
+        border.width: 4
     }
 
-    // Why this camera is here (Activity mode): "Person · 14:02".
+    // What was detected, and how long ago the app heard of it: "Person · 8 s ago".
     Rectangle {
-        visible: root.activityKind !== ""
+        visible: root.highlighted
         z: 20
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.margins: 6
         radius: 3
-        color: "#e6f0a030"
+        color: root.highlighted ? root.highlight.colour : "transparent"
         width: badgeRow.implicitWidth + 12
         height: badgeRow.implicitHeight + 6
         Row {
             id: badgeRow
             anchors.centerIn: parent
             spacing: 8
-            Text { text: root.activityText; color: "#101010"; font.pixelSize: 11; font.bold: true }
+            Text { text: root.highlightLabel(); color: "#101010"; font.pixelSize: 11; font.bold: true }
         }
     }
 

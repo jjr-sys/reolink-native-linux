@@ -174,6 +174,9 @@ ApplicationWindow {
                     id: liveViewPage
                     active: nav.currentIndex === 0
                     audioSuppressed: doorbell.active
+                    doorbellCamera: doorbell.active && doorbell.cameraIdentity.hostId !== undefined
+                                    ? doorbell.cameraIdentity.hostId + ":" + doorbell.cameraIdentity.channel : ""
+                    onEditHighlightRulesRequested: nav.currentIndex = 3
                     fullscreen: window.videoFullscreen
                     onFullscreenToggled: window.videoFullscreen = !window.videoFullscreen
                     onPopOut: (row, lbl) => window.openPopout(row, lbl)

@@ -9,7 +9,7 @@
 #include "device/BoschTourController.h"
 #include "device/DeviceManager.h"
 #include "device/DownloadQueue.h"
-#include "device/ActivityGrid.h"
+#include "device/Highlights.h"
 #include "device/EventManager.h"
 #include "media/StreamPlayer.h"
 #include "media/LiveStream.h"
@@ -166,7 +166,7 @@ int main(int argc, char *argv[])
     rl::CredentialStore credentials;
     rl::DeviceManager devices(&database, &credentials);
     rl::EventManager events(&database, &devices);
-    rl::ActivityGrid activityGrid(&devices);
+    rl::Highlights highlights(&devices);
     rl::DeviceDiscovery discovery;
     rl::BoschTourController boschTour(&credentials);
     rl::Updater updater;
@@ -181,10 +181,10 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Events", &events);
-    qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Activity", &activityGrid);
-    // RL_MOCK_ACTIVITY="person:1:3@2;motion:1:4@4" plays scripted detections (Activity mode only).
-    if (qEnvironmentVariableIsSet("RL_MOCK_ACTIVITY"))
-        activityGrid.runScript(qEnvironmentVariable("RL_MOCK_ACTIVITY"));
+    qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Highlights", &highlights);
+    // RL_MOCK_DETECTIONS="person:1:3@2;motion:1:4@4" plays scripted detections into Highlights.
+    if (qEnvironmentVariableIsSet("RL_MOCK_DETECTIONS"))
+        highlights.runScript(qEnvironmentVariable("RL_MOCK_DETECTIONS"));
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Discovery", &discovery);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Updater", &updater);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Downloads", &downloads);
@@ -204,8 +204,6 @@ int main(int argc, char *argv[])
     // RL_OPEN_CLIP=<hostId>:<channel> opens the detection clip for "30 s ago" at startup.
     engine.rootContext()->setContextProperty(
         QStringLiteral("openClipTarget"), qEnvironmentVariable("RL_OPEN_CLIP"));
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("mockActivity"), qEnvironmentVariableIsSet("RL_MOCK_ACTIVITY"));
     engine.rootContext()->setContextProperty(
         QStringLiteral("playbackAutoplay"), qEnvironmentVariableIsSet("RL_PLAYBACK_AUTOPLAY"));
     engine.rootContext()->setContextProperty(

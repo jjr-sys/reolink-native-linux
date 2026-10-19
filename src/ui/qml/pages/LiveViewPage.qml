@@ -13,7 +13,9 @@ Item {
     property bool fullscreen: false
     property bool active: true      // true only while Live View is the shown page
     property bool audioSuppressed: false // the doorbell pop-up is up: grid stays silent
+    property string doorbellCamera: "" // "hostId:channel" while the doorbell pop-up is up: fixed highlight
     signal fullscreenToggled()
+    signal editHighlightRulesRequested()
     signal popOut(int deviceRow, string label)
     signal openBoschTourRequested()
 
@@ -32,14 +34,12 @@ Item {
     // empty cells are dropped. Paging and drags work as in the grid.
     // Named mosaics (Mosaics) are tabs after the switch: a tab shows all its cameras, in
     // its own order and grouping, with no paging; a number or the switch leaves it.
-    // Activity mode is off while any mosaic is shown (its own setting is kept for the grid).
     property bool mosaicMode: false
     property string mosaicTab: ""        // the open named mosaic's id, "" = the grid page
     readonly property var tabMosaic: mosaicTab ? Mosaics.find(mosaicTab) : null
     readonly property bool tabOpen: tabMosaic !== null
     readonly property bool mosaicShown: mosaicMode || tabOpen
     readonly property string activeMosaic: tabOpen ? mosaicTab : "" // "" = the grid page
-    readonly property bool activityOn: activityMode && !mosaicShown
     property bool mosaicAnimate: false   // a re-pack from new panes or shapes slides
     property var mosaicRectByRow: ({})   // device row -> rect while the mosaic is shown
     property var paneRatios: ({})        // "hostId:channel" -> drawn width/height
@@ -224,7 +224,7 @@ Item {
     readonly property int pageCount: Math.max(1, Math.ceil(Devices.count / preset))
     readonly property int curPage: Math.min(gridPage, pageCount - 1)
     readonly property int pageOffset: curPage * preset
-    onPresetChanged: { gridPage = 0; syncActivityBaseline(); layoutStore.preset = preset; repackMosaic(); }
+    onPresetChanged: { gridPage = 0; layoutStore.preset = preset; repackMosaic(); }
 
     // Previous/next: a maximized camera steps to its neighbour in pane order;
     // otherwise the grid moves a page. Both wrap around.
@@ -252,89 +252,13 @@ Item {
     readonly property int maxPanes: 32
     property var paneSlots: []
 
-    // ---- Activity mode -----------------------------------------------------
-    // The user's arrangement (paneSlots) is the baseline and is never modified by
-    // Activity mode: viewSlots is what is drawn, paneSlots with the activity cameras
-    // laid over their tiles. Persistence and drag-and-drop only ever see paneSlots.
-    property bool activityMode: false
-    property var viewSlots: paneSlots
-    property var userPinnedTiles: ({})
-
-    function baselineRows() {
-        var r = [];
-        for (var i = 0; i < preset; ++i) {
-            var row = pageOffset + i < paneSlots.length ? paneSlots[pageOffset + i] : -1;
-            r.push(row);
-        }
-        return r;
-    }
-    function recomputeView() {
-        if (!activityOn) {
-            viewSlots = paneSlots;
-            return;
-        }
-        var v = paneSlots.slice();
-        var tiles = Activity.tiles;
-        for (var t = 0; t < tiles.length; ++t) {
-            var row = tiles[t].row;
-            var idx = pageOffset + t;
-            if (row < 0 || v[idx] === row)
-                continue;
-            var elsewhere = v.indexOf(row);
-            if (elsewhere >= 0)
-                v[elsewhere] = -1;
-            v[idx] = row;
-        }
-        viewSlots = v;
-    }
-    function applyPins() {
-        var tiles = Activity.tiles;
-        for (var t = 0; t < tiles.length; ++t)
-            Activity.setPinned(t, tiles[t].row === selectedIndex || userPinnedTiles[t] === true);
-    }
-    function syncActivityBaseline() {
-        if (activityOn) {
-            Activity.setBaseline(baselineRows());
-            recomputeView();
-            applyPins();
-        }
-    }
-    // The activity detail for a camera row (null when it holds no tile for activity).
-    function activityOf(row) {
-        var tiles = Activity.tiles;
-        for (var t = 0; t < tiles.length; ++t)
-            if (activityOn && tiles[t].row === row && tiles[t].active)
-                return tiles[t];
-        return null;
-    }
-    function activityLabel(a, name) {
-        if (!a)
-            return "";
-        var k = a.kind.charAt(0).toUpperCase() + a.kind.slice(1);
-        var when = a.trigger > 0 ? Qt.formatTime(new Date(a.trigger * 1000), "HH:mm") : "";
-        return k + " · " + name + (when ? " · " + when : "");
-    }
-    onActivityOnChanged: {
-        Activity.enabled = activityOn;
-        userPinnedTiles = ({});
-        syncActivityBaseline();
-        recomputeView();
-    }
-    onGridPageChanged: { syncActivityBaseline(); repackMosaic(); }
-    onPaneSlotsChanged: { syncActivityBaseline(); if (!activityOn) viewSlots = paneSlots; scheduleMosaic(); }
-    onSelectedIndexChanged: if (activityOn) applyPins()
-    Connections {
-        target: Activity
-        function onTilesChanged() {
-            page.recomputeView();
-            page.applyPins();
-        }
-    }
+    onGridPageChanged: repackMosaic()
+    onPaneSlotsChanged: scheduleMosaic()
 
     function rowAt(pane) {
-        return pane >= 0 && pane < viewSlots.length ? viewSlots[pane] : -1;
+        return pane >= 0 && pane < paneSlots.length ? paneSlots[pane] : -1;
     }
-    function paneOfRow(row) { return row < 0 ? -1 : viewSlots.indexOf(row); }
+    function paneOfRow(row) { return row < 0 ? -1 : paneSlots.indexOf(row); }
 
     // Put `row` in `pane`. If it is already on the grid the two panes trade
     // places, so a drag can never quietly drop a camera off the layout.
@@ -394,18 +318,11 @@ Item {
     }
     property bool layoutRestored: false
 
-    // Which detections take tiles in Activity mode (comma-separated), remembered.
+    // The Highlights switch (wayfinder/detection-highlights), remembered.
     Settings {
-        id: activityStore
-        category: "activityMode"
-        property string types: "person,vehicle,pet,visitor"
-    }
-    function setActivityType(type, on) {
-        var cur = Activity.trackedTypes.filter(function (t) { return t !== type; });
-        if (on)
-            cur.push(type);
-        Activity.trackedTypes = cur;
-        activityStore.types = cur.join(",");
+        id: highlightStore
+        category: "highlights"
+        property bool on: true
     }
 
     // Saved cameras that had no row when the layout was restored ("pane index" -> "hostId:channel").
@@ -548,10 +465,7 @@ Item {
         if (Mosaics.find(layoutStore.tab))
             mosaicTab = layoutStore.tab;
         restoreLayout();
-        Activity.trackedTypes = activityStore.types.length > 0 ? activityStore.types.split(",") : [];
-        // RL_MOCK_ACTIVITY starts the page in Activity mode so a script can drive it.
-        if (typeof mockActivity !== "undefined" && mockActivity)
-            activityMode = true;
+        Highlights.enabled = highlightStore.on;
     }
 
     ColumnLayout {
@@ -777,116 +691,66 @@ Item {
                 }
             }
 
-            // Activity mode: cameras with detections take over idle tiles. Your saved
-            // arrangement is left alone and comes back when this is turned off.
+            // Highlights: a camera's panes get a coloured border when it detects a person,
+            // vehicle, pet or motion, by the Highlight rules. One switch for borders and sounds.
             Rectangle {
-                visible: !page.mosaicShown
-                width: activityLabel.implicitWidth + 20
+                width: highlightLabel.implicitWidth + 20
                 height: 26
                 radius: Theme.radius
-                color: page.activityMode ? Theme.accentDim
-                     : activityArea.containsMouse ? Theme.surfaceAlt : Theme.surface
+                color: Highlights.enabled ? Theme.accentDim
+                     : highlightArea.containsMouse ? Theme.surfaceAlt : Theme.surface
                 border.color: Theme.border
                 Text {
-                    id: activityLabel
+                    id: highlightLabel
                     anchors.centerIn: parent
-                    text: page.activityMode && Activity.queued > 0
-                          ? qsTr("Activity +%1").arg(Activity.queued) : qsTr("Activity")
-                    color: page.activityMode ? Theme.text : Theme.textMuted
+                    text: qsTr("Highlights")
+                    color: Highlights.enabled ? Theme.text : Theme.textMuted
                     font.pixelSize: 12
                 }
                 MouseArea {
-                    id: activityArea
+                    id: highlightArea
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: page.activityMode = !page.activityMode
+                    onClicked: {
+                        Highlights.enabled = !Highlights.enabled;
+                        highlightStore.on = Highlights.enabled;
+                    }
                 }
                 ToolTip {
-                    visible: activityArea.containsMouse
+                    visible: highlightArea.containsMouse
                     delay: 500
                     x: (parent.width - width) / 2
                     y: parent.height + 6
                     contentItem: Text {
-                        text: qsTr("Activity mode: cameras with people, vehicles, pets or motion take over idle tiles")
+                        text: qsTr("Highlights: outline cameras that detect people, vehicles, pets or motion, and play their sounds")
                         color: Theme.text; font.pixelSize: 11
                     }
                     background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
                 }
             }
 
-            // Which detections count in Activity mode.
+            // Highlights menu: the rules live in Settings.
             Rectangle {
-                visible: !page.mosaicShown
                 width: 26
                 height: 26
                 radius: Theme.radius
-                color: typesArea.containsMouse || typesPopup.visible ? Theme.surfaceAlt : Theme.surface
+                color: highlightMenuArea.containsMouse || highlightMenu.visible ? Theme.surfaceAlt : Theme.surface
                 border.color: Theme.border
                 Text { anchors.centerIn: parent; text: "▾"; color: Theme.textMuted; font.pixelSize: 11 }
                 MouseArea {
-                    id: typesArea
+                    id: highlightMenuArea
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: typesPopup.visible ? typesPopup.close() : typesPopup.open()
+                    onClicked: highlightMenu.visible ? highlightMenu.close()
+                                                     : highlightMenu.popup(0, parent.height + 4)
                 }
-                Popup {
-                    id: typesPopup
-                    y: parent.height + 4
-                    x: parent.width - width
-                    padding: 8
-                    background: Rectangle { color: Theme.surface; border.color: Theme.border; radius: Theme.radius }
-                    contentItem: Column {
-                        spacing: 2
-                        Text {
-                            text: qsTr("Activity mode tracks")
-                            color: Theme.textMuted
-                            font.pixelSize: 11
-                            bottomPadding: 4
-                        }
-                        Repeater {
-                            model: [
-                                { key: "person", label: qsTr("Person") },
-                                { key: "vehicle", label: qsTr("Vehicle") },
-                                { key: "pet", label: qsTr("Pet") },
-                                { key: "visitor", label: qsTr("Doorbell visitor") },
-                                { key: "motion", label: qsTr("Motion") }
-                            ]
-                            Rectangle {
-                                required property var modelData
-                                readonly property bool on: Activity.trackedTypes.indexOf(modelData.key) >= 0
-                                width: 190
-                                height: 28
-                                radius: 4
-                                color: rowHover.hovered ? Theme.surfaceAlt : "transparent"
-                                Row {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 6
-                                    spacing: 8
-                                    Rectangle {
-                                        width: 16; height: 16; radius: 3
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        color: parent.parent.on ? Theme.accent : Theme.surfaceAlt
-                                        border.color: parent.parent.on ? Theme.accent : Theme.border
-                                        Text {
-                                            anchors.centerIn: parent
-                                            visible: parent.parent.parent.on
-                                            text: "\u2713"; color: Theme.window; font.pixelSize: 11; font.bold: true
-                                        }
-                                    }
-                                    Text {
-                                        text: parent.parent.modelData.label
-                                        color: Theme.text
-                                        font.pixelSize: 12
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                }
-                                HoverHandler { id: rowHover }
-                                TapHandler { onTapped: page.setActivityType(parent.modelData.key, !parent.on) }
-                            }
-                        }
+                ThemedMenu {
+                    id: highlightMenu
+                    ThemedMenuItem {
+                        text: qsTr("Edit rules…")
+                        onTriggered: page.editHighlightRulesRequested()
                     }
                 }
             }
@@ -1133,16 +997,10 @@ Item {
                             mosaicSettle.stop();
                             page.rebuildMosaic();   // a swap moves at once
                         }
-                        if (page.activityOn) {
-                            var pinned = page.userPinnedTiles;
-                            pinned[targetPane - page.pageOffset] = true;
-                            page.userPinnedTiles = pinned;
-                            page.applyPins();
-                        }
                     }
-                    readonly property var activity: page.activityOf(index)
-                    activityKind: activity ? activity.kind : ""
-                    activityText: page.activityLabel(activity, name)
+                    highlight: page.doorbellCamera === hostId + ":" + channel
+                               ? ({ kind: "doorbell", colour: "#f0a030", style: "steady", since: 0, flashUntil: 0, last: 0 })
+                               : Highlights.looks[hostId + ":" + channel] || null
 
                     // Slide to the new cell so a swap reads as movement rather
                     // than two panes blinking into each other's places. In the mosaic
