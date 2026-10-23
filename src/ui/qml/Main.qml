@@ -300,7 +300,7 @@ ApplicationWindow {
         if (c.capFloodlight) caps.push(qsTr("Floodlight"));
         if (c.capBattery) caps.push(qsTr("Battery"));
         propsDialog.heading = c.name;
-        propsDialog.subheading = (c.kind === "nvr" || c.kind === "frigate") ? qsTr("Camera on %1").arg(c.hostName)
+        propsDialog.subheading = c.multiChannel ? qsTr("Camera on %1").arg(c.hostName)
                                                   : qsTr("Camera");
         propsDialog.rows = [
             { label: qsTr("Status"), value: c.online ? qsTr("Online") : qsTr("Offline") },
@@ -314,7 +314,7 @@ ApplicationWindow {
         propsDialog.targetRow = row;
         propsDialog.isAdmin = c.isAdmin;
         propsDialog.showReboot = false;
-        propsDialog.showRemove = c.kind !== "nvr" && c.kind !== "frigate"; // NVR channels are removed as a whole
+        propsDialog.showRemove = !c.multiChannel; // NVR channels are removed as a whole
         propsDialog.removeLabel = qsTr("Remove device");
         propsDialog.open();
     }
@@ -322,7 +322,7 @@ ApplicationWindow {
         if (!host || host.name === undefined)
             return;
         propsDialog.heading = host.name;
-        propsDialog.subheading = host.kind === "frigate" ? qsTr("Frigate server") : host.kind === "nvr" ? qsTr("Reolink NVR") : qsTr("Camera");
+        propsDialog.subheading = host.frigateApi ? qsTr("Frigate server") : host.multiChannel ? qsTr("Reolink NVR") : qsTr("Camera");
         propsDialog.rows = [
             { label: qsTr("Model"), value: host.model || "—" },
             { label: qsTr("Address"),
@@ -335,7 +335,7 @@ ApplicationWindow {
         propsDialog.isAdmin = host.isAdmin;
         propsDialog.showReboot = true;
         propsDialog.showRemove = true;
-        propsDialog.removeLabel = (host.kind === "nvr" || host.kind === "frigate") ? qsTr("Remove server") : qsTr("Remove device");
+        propsDialog.removeLabel = host.multiChannel ? qsTr("Remove server") : qsTr("Remove device");
         propsDialog.open();
     }
 

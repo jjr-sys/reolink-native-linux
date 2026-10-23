@@ -433,16 +433,4 @@ api::BatchResult ReolinkHttpClient::callImpl(const Json &commands, long timeoutS
     return out;
 }
 
-api::CommandResult ReolinkHttpClient::callOne(const QString &cmd, Json param, int action)
-{
-    const api::BatchResult batch = call(Json::array({api::command(cmd, std::move(param), action)}));
-    if (!batch.transportOk || batch.results.isEmpty()) {
-        api::CommandResult r;
-        r.cmd = cmd;
-        r.detail = batch.error.isEmpty() ? QStringLiteral("no response") : batch.error;
-        return r;
-    }
-    return batch.results.first();
-}
-
 } // namespace rl

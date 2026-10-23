@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ReolinkApi.h"
+#include "ReolinkTransport.h"
 
 #include <QDateTime>
 #include <QMutex>
@@ -23,21 +24,17 @@ namespace rl {
 // fires several Search calls at once. Queueing them here costs a little
 // latency; racing them costs whole requests. Bulk clip downloads are exempt —
 // they run for minutes and would starve every command behind them.
-class ReolinkHttpClient
+class ReolinkHttpClient : public ReolinkTransport
 {
 public:
     ReolinkHttpClient(QString host, int port, bool https, QString username, QString password);
-    ~ReolinkHttpClient();
+    ~ReolinkHttpClient() override;
 
-    // Why the last exchange failed. Callers need the distinction because the
-    // right reaction differs: Transport (device off/wrong address) is safe to
-    // retry; Auth/Locked must NOT be auto-retried — every rejected login burns
-    // the firmware's 10-attempt counter toward locking the account out.
-    enum class FailKind { None, Transport, Auth, Locked, Protocol };
-    FailKind lastFailKind();
+    using FailKind = ReolinkTransport::FailKind;
+    FailKind lastFailKind() override;
 
     // Sends a batch of commands (api::command(...)), handling login transparently.
-    api::BatchResult call(const Json &commands);
+    api::BatchResult call(const Json &commands) override;
 
     // A command the device answers slowly (NvrDownload cuts the clip before replying:
     // about 1.6 s per minute of footage). Not held behind the one-at-a-time lock, so it
@@ -45,9 +42,6 @@ public:
     // cap for the reply and `cancel`, when set, aborts the wait promptly.
     api::BatchResult callSlow(const Json &commands, long timeoutSec,
                               const std::atomic<bool> *cancel = nullptr);
-
-    // Convenience for a single command; returns the lone CommandResult.
-    api::CommandResult callOne(const QString &cmd, Json param = Json::object(), int action = 0);
 
     // Fetch a JPEG snapshot of a channel (cmd=Snap, binary GET). Returns empty on
     // failure with *error set.

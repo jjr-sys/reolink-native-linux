@@ -59,7 +59,7 @@ ScrollView {
         var out = [];
         for (var i = 0; i < Devices.count; ++i) {
             var c = Devices.cameraInfo(i);
-            if (c.kind === "stream" || c.hostId === undefined)
+            if (!c.hasDetections || c.hostId === undefined)
                 continue;
             out.push({ key: c.hostId + ":" + c.channel, label: c.name + " · " + c.hostName });
         }

@@ -1,6 +1,7 @@
 #include "EventManager.h"
 
 #include "DeviceManager.h"
+#include "device/Detections.h"
 #include "device/FrigateApi.h"
 
 #include "core/Paths.h"
@@ -130,7 +131,7 @@ void EventManager::normalizeStoredCameraNames()
 {
     const QVector<EventRecord> events = m_db->recentEvents(kLoadLimit);
     for (const EventRecord &e : events) {
-        if (m_devices->hostInfo(e.hostId).value("kind").toString() != QLatin1String("frigate"))
+        if (!m_devices->hostInfo(e.hostId).value("frigateApi").toBool())
             continue;
         const QString pretty = frigate::displayCameraName(e.camera);
         if (pretty != e.camera)
@@ -391,7 +392,7 @@ void EventManager::clear()
 void EventManager::syncFrigateHistory(qint64 hostId)
 {
     const QVariantMap info = m_devices->hostInfo(hostId);
-    if (info.value("kind").toString() != QLatin1String("frigate"))
+    if (!info.value("frigateApi").toBool())
         return;
     const QString host = info.value("addr").toString();
     const int port = info.value("port").toInt();
@@ -425,7 +426,7 @@ void EventManager::checkFrigateCatchup()
         if (m_frigateHistoryChecked.contains(hostId))
             continue;
         const QVariantMap info = m_devices->hostInfo(hostId);
-        if (info.value("kind").toString() != QLatin1String("frigate") || !info.value("online").toBool())
+        if (!info.value("frigateApi").toBool() || !info.value("online").toBool())
             continue; // not Frigate, or its cameras aren't discovered yet — try again later
         m_frigateHistoryChecked.insert(hostId);
         bool hasAny = false;
@@ -440,7 +441,7 @@ void EventManager::syncAllFrigateHistory()
 {
     for (const QVariant &id : m_devices->hostIds()) {
         const qint64 hostId = id.toLongLong();
-        if (m_devices->hostInfo(hostId).value("kind").toString() == QLatin1String("frigate"))
+        if (m_devices->hostInfo(hostId).value("frigateApi").toBool())
             syncFrigateHistory(hostId);
     }
 }
@@ -449,9 +450,8 @@ void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> 
                                        const QVector<frigate::Event> &events)
 {
     const qint64 cutoff = QDateTime::currentSecsSinceEpoch() - kRetentionSecs;
-    QHash<QString, double> lastRaised; // "camera/type" -> last raised start, same burst
-                                        // gate as the live poller so a lingering person
-                                        // doesn't become a dozen separate rows.
+    device::BurstGate burst; // the live poller's gate, so a lingering person doesn't
+                             // become a dozen separate rows.
     bool added = false;
     QVector<QPair<qint64, QString>> newThumbs; // (local db id, Frigate's own event id)
     // Frigate returns newest first; walk oldest first so the burst gate sees them
@@ -463,11 +463,8 @@ void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> 
         const QString type = frigate::typeForLabel(ev.label);
         if (type.isEmpty())
             continue;
-        const QString key = ev.camera + u'/' + type;
-        double &last = lastRaised[key];
-        if (!frigate::startsNewBurst(last, ev.start))
+        if (!burst.admit(ev.camera, type, ev.start))
             continue;
-        last = ev.start;
 
         const int channel = channelOf.value(ev.camera);
         const qint64 ts = static_cast<qint64>(ev.start);
@@ -478,7 +475,7 @@ void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> 
         bool dup = false;
         for (const EventRecord &e : m_all) {
             if (e.hostId == hostId && e.channel == channel
-                && qAbs(e.timestamp - ts) < qint64(frigate::kBurstGapSecs)) {
+                && device::sameBurstWindow(e.timestamp, ts)) {
                 dup = true;
                 if (e.thumbnail.isEmpty())
                     newThumbs.append({e.id, ev.id});

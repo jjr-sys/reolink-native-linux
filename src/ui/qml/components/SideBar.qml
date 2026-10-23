@@ -56,7 +56,7 @@ Rectangle {
                 ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r);
                 ctx.closePath();
             }
-            if (kind === "nvr" || kind === "frigate") {
+            if (kind === "nvr") {   // icon style, set by the caller
                 rr(2, 5, 16, 10, 2.2); ctx.stroke();
                 ctx.beginPath();
                 ctx.moveTo(4.5, 8.5); ctx.lineTo(10, 8.5);
@@ -141,7 +141,7 @@ Rectangle {
                     var h = Devices.hostInfo(parseInt(section));
                     return (h && h.channelCount !== undefined) ? h : null;
                 }
-                property bool isNvr: host && (host.kind === "nvr" || host.kind === "frigate")
+                property bool isNvr: host && host.multiChannel
                 readonly property bool inTrouble:
                     host && (host.problem === "unreachable" || host.problem === "auth"
                              || host.problem === "locked")
@@ -271,7 +271,7 @@ Rectangle {
                 required property string name
                 required property string status
                 required property string model
-                required property string kind
+                required property bool multiChannel
                 required property int hostId
                 required property bool online
                 required property int batteryPercent
@@ -285,7 +285,7 @@ Rectangle {
                 readonly property bool inTrouble:
                     problem === "unreachable" || problem === "auth" || problem === "locked"
 
-                readonly property bool underNvr: kind === "nvr" || kind === "frigate"
+                readonly property bool underNvr: multiChannel
                 readonly property bool hidden: underNvr && root.collapsed[hostId] === true
 
                 width: ListView.view.width

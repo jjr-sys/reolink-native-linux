@@ -103,3 +103,37 @@ _Avoid_: fast seek
 **Recording file snap**:
 Choosing the NVR recording file that contains a requested moment (or the nearest earlier one across a gap) and the offset into it, because the HTTP-FLV endpoint only starts on file boundaries.
 _Avoid_: seek rounding
+
+## Device model
+
+**Host kind**:
+What sort of thing a device row hangs off: a camera, an NVR, a bare stream URL or a Frigate server. It is stored as text but the app asks what a kind can do, not which kind it is.
+_Avoid_: device type (as a string compare)
+
+**Capability**:
+One thing a host kind can do, such as logging in with the Reolink protocol, fanning out into several cameras or being reached through Frigate's API.
+_Avoid_: feature flag
+
+**Direct host**:
+A host that is only played from a URL: a bare stream or a Frigate server. It has no Reolink login, settings, talk or recording search.
+_Avoid_: non-Reolink host
+
+**Host session**:
+The app's standing with one host: whether a login is running, why the host is offline, when to try again and whether its polls are healthy. Unreachable hosts are retried with backoff; hosts that refused the login are never retried automatically.
+_Avoid_: connection
+
+**API-only state**:
+A host whose HTTP API has stopped answering but which still answers on the Baichuan port; its cameras stay online and only the API-driven features are down.
+_Avoid_: half-online
+
+**Detection**:
+One motion, person, vehicle, pet or visitor event on a camera, once the app has decided it is new, however it arrived (poll, push or Frigate).
+_Avoid_: alarm (that is the device's own word)
+
+**Push takeover**:
+Once a host's Baichuan push is subscribed, its detections come from push and the poll stops reporting them.
+_Avoid_: push mode
+
+**Burst**:
+Several Frigate events for one camera and type that start within 30 seconds of each other; they raise one detection.
+_Avoid_: duplicate
