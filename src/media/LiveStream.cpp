@@ -8,6 +8,10 @@ using Mode = LiveStreamTransport::Mode;
 using State = StreamPlayer::State;
 using Task = LiveStreamScheduler::Task;
 
+// Baichuan main-stream retries are a flat delay (three of them, then RTSP fallback),
+// not a backoff; substream and other retries use LiveStream::m_backoff.
+constexpr int kBaichuanMainRetryMs = 1500;
+
 class QtLiveStreamScheduler final : public LiveStreamScheduler
 {
 public:
@@ -253,7 +257,7 @@ void LiveStream::resetPolicy()
     m_bcSub = false;
     m_terminal = false;
     m_retries = 0;
-    m_backoffMs = 1000;
+    m_backoff.reset();
     setDegraded(false);
 }
 
@@ -315,7 +319,7 @@ void LiveStream::onState(quint64 attempt, State state, const QString &error)
         return;
     if (state == State::Streaming) {
         m_retries = 0;
-        m_backoffMs = 1000;
+        m_backoff.reset();
         setRecovering(false);
         setState(state);
         return;
@@ -363,10 +367,9 @@ void LiveStream::onState(quint64 attempt, State state, const QString &error)
     setState(State::Error, error.isEmpty() ? tr("Live stream interrupted") : error);
     if (failedMode == Mode::BaichuanMain) {
         ++m_retries;
-        retry(1500);
+        retry(kBaichuanMainRetryMs);
     } else {
-        retry(m_backoffMs);
-        m_backoffMs = qMin(m_backoffMs * 2, 30000);
+        retry(m_backoff.fail());
     }
 }
 

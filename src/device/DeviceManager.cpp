@@ -1,6 +1,7 @@
 #include <QElapsedTimer>
 #include "DeviceManager.h"
 
+#include "core/Backoff.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "device/FrigateApi.h"
@@ -32,6 +33,10 @@
 namespace rl {
 
 namespace {
+
+// Unreachable-host probe: seconds, doubling 15..300.
+constexpr BackoffPolicy kHostRetry{15, 300};
+
 // Firmware spells the codec several ways ("h265", "H265", "hevc") and newer
 // builds sometimes omit the field entirely. Empty result = unknown, and an
 // unknown codec is PROBED from the stream rather than assumed — assuming h264
@@ -885,9 +890,9 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
             v.channels.clear(); // handled as a plain failure below
         } else {
             // Keep trying HTTP with the usual backoff so names and the rest arrive later.
-            const int delay = m_retryDelaySecs.value(hostId, 15);
+            const int delay = m_retryDelaySecs.value(hostId, kHostRetry.start);
             m_nextRetryAt[hostId] = QDateTime::currentDateTimeUtc().addSecs(delay);
-            m_retryDelaySecs[hostId] = qMin(delay * 2, 300);
+            m_retryDelaySecs[hostId] = kHostRetry.grow(delay);
             if (same)
                 return; // nothing changed; don't rebuild rows under running streams
         }
@@ -896,9 +901,9 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
     if (!v.degraded && v.problem == Problem::Unreachable && m_entries.at(first).degraded) {
         // Still showing the Baichuan-listed cameras; the HTTP retry failed again. Leave the
         // rows (and their streams) alone and try again later.
-        const int delay = m_retryDelaySecs.value(hostId, 15);
+        const int delay = m_retryDelaySecs.value(hostId, kHostRetry.start);
         m_nextRetryAt[hostId] = QDateTime::currentDateTimeUtc().addSecs(delay);
-        m_retryDelaySecs[hostId] = qMin(delay * 2, 300);
+        m_retryDelaySecs[hostId] = kHostRetry.grow(delay);
         return;
     }
 
@@ -923,9 +928,9 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
         // login burns the firmware's 10-attempt lockout counter, so recovery
         // there is Reconnect / Update credentials in the sidebar.
         if (v.problem == Problem::Unreachable) {
-            const int delay = m_retryDelaySecs.value(hostId, 15);
+            const int delay = m_retryDelaySecs.value(hostId, kHostRetry.start);
             m_nextRetryAt[hostId] = QDateTime::currentDateTimeUtc().addSecs(delay);
-            m_retryDelaySecs[hostId] = qMin(delay * 2, 300);
+            m_retryDelaySecs[hostId] = kHostRetry.grow(delay);
         } else {
             m_nextRetryAt.remove(hostId);
             m_retryDelaySecs.remove(hostId);

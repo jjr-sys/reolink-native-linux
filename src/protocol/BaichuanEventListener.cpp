@@ -1,5 +1,6 @@
 #include "BaichuanEventListener.h"
 
+#include "core/Backoff.h"
 #include "protocol/BcAlarmEvents.h"
 
 #include <QDeadlineTimer>
@@ -15,8 +16,7 @@
 namespace rl {
 
 namespace {
-constexpr int kRetryMs = 5'000;
-constexpr int kMaxRetryMs = 60'000;
+constexpr BackoffPolicy kReconnect{5'000, 60'000};
 constexpr int kRefusedMs = 600'000;
 constexpr qint64 kKeepaliveMs = 30'000;
 constexpr int kReadWaitMs = 300; // how quickly a stop request is noticed while connected
@@ -82,11 +82,11 @@ void BaichuanEventListener::run(std::shared_ptr<Shared> shared, BaichuanControl:
             emit o->subscribedChanged(on);
         });
     };
-    int wait = kRetryMs;
+    Backoff backoff(kReconnect);
     while (!shared->stop) {
         BaichuanControl control(params);
         if (control.open() && control.post(bc::kCmdSubscribeEvents)) {
-            wait = kRetryMs;
+            backoff.reset();
             QElapsedTimer sinceKeepalive;
             sinceKeepalive.start();
             while (!shared->stop) {
@@ -113,14 +113,12 @@ void BaichuanEventListener::run(std::shared_ptr<Shared> shared, BaichuanControl:
             }
             setSubscribed(false);
         } else if (control.refused()) {
-            wait = kRefusedMs;
+            backoff.setDelay(kRefusedMs);
             shared->post([](BaichuanEventListener *o) { emit o->refused(); });
         }
         control.close();
-        if (!shared->sleepFor(wait))
+        if (!shared->sleepFor(backoff.fail()))
             return;
-        if (wait < kRefusedMs)
-            wait = std::min(wait * 2, kMaxRetryMs);
     }
 }
 

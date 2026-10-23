@@ -1,4 +1,5 @@
 #include "StreamPlayer.h"
+#include "core/Backoff.h"
 #include "media/LiveUrl.h"
 
 #include "AudioDecoder.h"
@@ -36,8 +37,7 @@ namespace {
 
 constexpr int kOpenTimeoutMs = 10000;
 constexpr int kReadStallTimeoutMs = 10000; // §5.8 watchdog: no packet in 10s → reconnect
-constexpr int kBackoffStartMs = 1000;
-constexpr int kBackoffCapMs = 30000;
+constexpr BackoffPolicy kBackoff{1000, 30000};
 
 using Session = StreamPlayer::Session;
 using State = StreamPlayer::State;
@@ -982,7 +982,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
 
 void runWorker(std::shared_ptr<Session> s)
 {
-    int backoffMs = kBackoffStartMs;
+    Backoff backoff(kBackoff);
     bool streaming = false;
     // Live sources reconnect indefinitely; a non-live retry (playback FLV on a
     // busy NVR) is capped so it can't loop forever.
@@ -994,7 +994,7 @@ void runWorker(std::shared_ptr<Session> s)
         if (s->abort.load() || !retry)
             break;
         if (s->framesDecoded.load() - framesBefore > 100) {
-            backoffMs = kBackoffStartMs;
+            backoff.reset();
             retriesLeft = 6; // made progress; reset the budget
         }
         if (!live && --retriesLeft <= 0)
@@ -1003,10 +1003,9 @@ void runWorker(std::shared_ptr<Session> s)
         // flipping straight back to a "connecting" spinner that never explains itself.
         if (!s->lastWasError.load())
             postState(s, State::Connecting, QStringLiteral("reconnecting"));
-        QDeadlineTimer wait(backoffMs);
+        QDeadlineTimer wait(backoff.fail());
         while (!wait.hasExpired() && !s->abort.load())
             QThread::msleep(50);
-        backoffMs = qMin(backoffMs * 2, kBackoffCapMs);
     }
     if (!s->abort.load()) // terminal non-retryable end (EOF/no-video)
         postState(s, State::Stopped, QString());
