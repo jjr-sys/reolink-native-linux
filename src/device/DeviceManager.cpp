@@ -139,11 +139,6 @@ DeviceManager::~DeviceManager()
     m_pending.waitForFinished();
 }
 
-static QString detKey(qint64 hostId, int channel)
-{
-    return QString::number(hostId) + u':' + QString::number(channel);
-}
-
 void DeviceManager::applyConnectivity(qint64 hostId, bool transportOk,
                                       const QHash<int, bool> &chanOnline)
 {
@@ -289,7 +284,8 @@ void DeviceManager::pollDetections()
         QVector<int> channels;
         QVector<bool> wantAi;
         QVector<QString> names;
-        bool pushLive = false; // detections come by push; poll only channel status
+        bool pushLive = false;     // detections come by push; the poll reports none
+        bool queryStates = true;   // ask for motion/AI state (not when push covers an NVR)
     };
     QHash<qint64, HostPoll> byHost;
     QVector<qint64> order;
@@ -314,7 +310,9 @@ void DeviceManager::pollDetections()
     for (qint64 hostId : order) {
         if (!m_sessions.of(hostId).beginPoll())
             continue;
-        byHost[hostId].pushLive = m_pushLive.contains(hostId);
+        device::HostDetections &det = m_detections[hostId];
+        byHost[hostId].pushLive = det.pushLive();
+        byHost[hostId].queryStates = det.pollQueriesStates(byHost[hostId].channels.size());
         const HostPoll hp = byHost.value(hostId);
 
         m_pending.addFuture(QtConcurrent::run([this, hostId, hp] {
@@ -324,7 +322,7 @@ void DeviceManager::pollDetections()
             Json cmds = Json::array();
             // Pushed detections replace the state queries; a multi-channel host still
             // answers GetChannelstatus below, which keeps connectivity current.
-            const bool statesByPush = hp.pushLive && hp.channels.size() > 1;
+            const bool statesByPush = !hp.queryStates;
             for (int i = 0; i < hp.channels.size() && !statesByPush; ++i) {
                 const int ch = hp.channels[i];
                 items.append({ch, false});
@@ -380,28 +378,27 @@ void DeviceManager::pollDetections()
                     applyConnectivity(hostId, transportOk, chanOnline);
                     if (!transportOk)
                         return;
-                    // Push took over (or still holds) this host's detections.
-                    if (hp.pushLive || m_pushLive.contains(hostId))
-                        return;
-                    for (int i = 0; i < hp.channels.size(); ++i) {
-                        api::DetectionState st = states.value(hp.channels[i]);
-                        // The poll can't see a doorbell press; keep what push last said.
-                        st.visitor = m_lastDetection.value(detKey(hostId, hp.channels[i])).visitor;
-                        applyDetectionState(hostId, hp.channels[i], st, hp.names[i]);
-                    }
+                    // The module drops the poll's report once push holds the host.
+                    device::HostDetections &det = m_detections[hostId];
+                    for (int i = 0; i < hp.channels.size(); ++i)
+                        emitDetections(hostId,
+                                       det.onPoll(hp.channels[i], states.value(hp.channels[i]),
+                                                  hp.names[i], hp.pushLive),
+                                       false);
                 },
                 Qt::QueuedConnection);
         }));
     }
 }
 
-void DeviceManager::applyDetectionState(qint64 hostId, int channel, const api::DetectionState &st,
-                                        const QString &camera)
+void DeviceManager::emitDetections(qint64 hostId, const QVector<device::Detection> &found,
+                                   bool frigateHost)
 {
-    const QString ckey = detKey(hostId, channel);
-    for (const QString &type : api::risingDetections(m_lastDetection.value(ckey), st))
-        emit detectionEvent(hostId, channel, type, camera);
-    m_lastDetection[ckey] = st;
+    for (const device::Detection &d : found)
+        emit detectionEvent(hostId, d.channel, d.type,
+                            frigateHost ? displayName(d.camera, device::kindToString(
+                                                                    device::Kind::Frigate))
+                                        : d.camera);
 }
 
 void DeviceManager::ensurePushListener(const Entry &e)
@@ -425,10 +422,7 @@ void DeviceManager::ensurePushListener(const Entry &e)
     auto *l = new BaichuanEventListener(p, this);
     connect(l, &BaichuanEventListener::subscribedChanged, this, [this, hostId](bool on) {
         qCInfo(lcProto) << "push detections" << (on ? "on" : "off") << "for host" << hostId;
-        if (on)
-            m_pushLive.insert(hostId);
-        else
-            m_pushLive.remove(hostId);
+        m_detections[hostId].setPushLive(on);
     });
     connect(l, &BaichuanEventListener::alarmEvents, this,
             [this, hostId](const QByteArray &xml) { onAlarmEvents(hostId, xml); });
@@ -442,7 +436,7 @@ void DeviceManager::ensurePushListener(const Entry &e)
 void DeviceManager::stopPushListener(qint64 hostId)
 {
     delete m_pushListeners.take(hostId);
-    m_pushLive.remove(hostId);
+    m_detections[hostId].setPushLive(false);
 }
 
 void DeviceManager::onAlarmEvents(qint64 hostId, const QByteArray &xml)
@@ -450,7 +444,8 @@ void DeviceManager::onAlarmEvents(qint64 hostId, const QByteArray &xml)
     for (const bc::ChannelAlarm &a : bc::parseAlarmEvents(xml))
         for (const Entry &e : std::as_const(m_entries))
             if (e.rec.id == hostId && e.channel == a.channel) {
-                applyDetectionState(hostId, a.channel, a.state, e.chanName);
+                emitDetections(hostId, m_detections[hostId].onPush(a.channel, a.state, e.chanName),
+                               false);
                 break;
             }
 }
@@ -766,6 +761,7 @@ void DeviceManager::removeDevice(int row)
         }
     }
     stopPushListener(id);
+    m_detections.remove(id);
     delete m_frigateLive.take(id);
     m_db->removeHost(id);
     m_credentials->remove(id);
@@ -1014,66 +1010,38 @@ void DeviceManager::pollFrigate()
         const QString host = e.rec.addr;
         const int port = e.rec.port;
         ensureFrigateLive(hostId, host, port);
-        QHash<QString, int> channelOf;
+        const QHash<QString, int> channelOf = frigateChannels(hostId);
         QHash<int, bool> online;
-        for (const Entry &c : m_entries)
-            if (c.rec.id == hostId) {
-                channelOf.insert(c.chanName, c.channel);
-                online.insert(c.channel, true);
-            }
-        const bool initialized = m_frigateWatermark.contains(hostId);
-        const double after = m_frigateWatermark.value(hostId, 0.0);
+        for (auto it = channelOf.constBegin(); it != channelOf.constEnd(); ++it)
+            online.insert(it.value(), true);
+        const device::FrigatePoll plan = m_detections[hostId].frigatePlan();
         m_pending.addFuture(QtConcurrent::run([this, hostId, host, port, channelOf, online,
-                                               initialized, after] {
+                                               plan] {
             QString error;
             const QByteArray body = frigate::httpGet(
-                frigate::eventsUrl(host, port, after, initialized ? 50 : 1), 8000, &error);
+                frigate::eventsUrl(host, port, plan.after, plan.initialized ? 50 : 1), 8000, &error);
             const Json parsed = Json::parse(body.toStdString(), nullptr, false);
             const bool ok = error.isEmpty() && !parsed.is_discarded() && parsed.is_array();
             const QVector<frigate::Event> events = ok ? frigate::parseEvents(parsed) : QVector<frigate::Event>();
             QMetaObject::invokeMethod(
                 this,
-                [this, hostId, ok, events, channelOf, online, initialized, after] {
+                [this, hostId, ok, events, channelOf, online, plan] {
                     m_sessions.of(hostId).endPoll();
                     applyConnectivity(hostId, ok, online);
                     if (!ok)
                         return;
-                    if (!initialized) {
-                        // Newest event's start; with none yet, the server's clock is ours.
-                        m_frigateWatermark[hostId] = frigate::newWatermark(
-                            events.isEmpty() ? QDateTime::currentSecsSinceEpoch() : 0.0, events);
-                        // RL_FRIGATE_BACKFILL=<seconds>: treat the last N seconds of real
-                        // events as new, so the event path can be tested without waiting.
-                        const int backfill = qEnvironmentVariableIntValue("RL_FRIGATE_BACKFILL");
-                        if (backfill > 0)
-                            m_frigateWatermark[hostId] =
-                                static_cast<double>(QDateTime::currentSecsSinceEpoch() - backfill);
-                        return;
-                    }
-                    // Newest first from Frigate; raise oldest first.
-                    for (int i = events.size() - 1; i >= 0; --i) {
-                        const frigate::Event &ev = events.at(i);
-                        const QString type = frigate::typeForLabel(ev.label);
-                        if (ev.start <= after || type.isEmpty() || !channelOf.contains(ev.camera))
-                            continue;
-                        // Already raised from the websocket if it was up: the burst rule skips it.
-                        raiseFrigateEvent(hostId, channelOf.value(ev.camera), ev.camera, type, ev.start);
-                    }
-                    m_frigateWatermark[hostId] = frigate::newWatermark(after, events);
+                    // RL_FRIGATE_BACKFILL=<seconds>: treat the last N seconds of real events
+                    // as new, so the event path can be tested without waiting.
+                    const int backfill = qEnvironmentVariableIntValue("RL_FRIGATE_BACKFILL");
+                    emitDetections(hostId,
+                                   m_detections[hostId].onFrigatePoll(
+                                       plan, events, channelOf, QDateTime::currentSecsSinceEpoch(),
+                                       backfill),
+                                   true);
                 },
                 Qt::QueuedConnection);
         }));
     }
-}
-
-void DeviceManager::raiseFrigateEvent(qint64 hostId, int channel, const QString &camera,
-                                      const QString &type, double start)
-{
-    double &last = m_frigateLastRaised[QString::number(hostId) + u'/' + camera + u'/' + type];
-    if (!frigate::startsNewBurst(last, start))
-        return;
-    last = start;
-    emit detectionEvent(hostId, channel, type, displayName(camera, QStringLiteral("frigate")));
 }
 
 void DeviceManager::ensureFrigateLive(qint64 hostId, const QString &host, int port)
@@ -1097,17 +1065,22 @@ void DeviceManager::ensureFrigateLive(qint64 hostId, const QString &host, int po
     m_frigateLive.insert(hostId, l);
 }
 
+QHash<QString, int> DeviceManager::frigateChannels(qint64 hostId) const
+{
+    QHash<QString, int> channelOf;
+    for (const Entry &c : m_entries)
+        if (c.rec.id == hostId)
+            channelOf.insert(c.chanName, c.channel);
+    return channelOf;
+}
+
 void DeviceManager::onFrigateLiveEvent(qint64 hostId, const QString &camera, const QString &label,
                                        double start)
 {
-    const QString type = frigate::typeForLabel(label);
-    if (type.isEmpty())
-        return;
-    for (const Entry &e : std::as_const(m_entries))
-        if (e.rec.id == hostId && e.chanName == camera) {
-            raiseFrigateEvent(hostId, e.channel, camera, type, start);
-            return;
-        }
+    emitDetections(hostId,
+                   m_detections[hostId].onFrigateLive(camera, label, start,
+                                                      frigateChannels(hostId)),
+                   true);
 }
 
 void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, bool storeNew)

@@ -4,6 +4,7 @@
 #include "core/Database.h"
 #include "CameraCommands.h"
 #include "DeviceKind.h"
+#include "Detections.h"
 #include "HostSession.h"
 #include "DownloadSource.h"
 #include "protocol/ReolinkApi.h"
@@ -414,28 +415,23 @@ private:
     QFutureSynchronizer<void> m_pending; // drains in-flight validations at teardown
 
     QTimer m_pollTimer;
-    // Keyed by "hostId:channel" so each NVR camera is tracked independently.
-    QHash<QString, api::DetectionState> m_lastDetection; // for 0->1 edge detection
+    // Everything about what a host has detected: edges, push-over-poll takeover, Frigate's
+    // watermark and burst gate (see Detections.h). The sockets below only feed it.
+    QHash<qint64, device::HostDetections> m_detections;
     // Baichuan push (wayfinder/detection-highlights ticket 06): one listener per Reolink
     // host. While a host's is subscribed, the poll stops asking it for motion/AI state.
     QHash<qint64, BaichuanEventListener *> m_pushListeners;
-    QSet<qint64> m_pushLive;
     void ensurePushListener(const Entry &e);
     void stopPushListener(qint64 hostId);
     void onAlarmEvents(qint64 hostId, const QByteArray &xml);
-    // Raise detectionEvent for each detection that began on a channel, from either source.
-    void applyDetectionState(qint64 hostId, int channel, const api::DetectionState &st,
-                             const QString &camera);
-    QHash<qint64, double> m_frigateWatermark;            // newest Frigate event start seen (server clock)
-    QHash<QString, double> m_frigateLastRaised;          // host/camera/type -> start of last detection raised
+    // Emit detectionEvent for each normalised detection (Frigate names are prettified).
+    void emitDetections(qint64 hostId, const QVector<device::Detection> &found, bool frigateHost);
     // Frigate's /ws websocket per Frigate host (ticket 07): new events at once; the poll
-    // above still runs as catch-up and connectivity check.
+    // still runs as catch-up and connectivity check.
     QHash<qint64, FrigateLive *> m_frigateLive;
     void ensureFrigateLive(qint64 hostId, const QString &host, int port);
     void onFrigateLiveEvent(qint64 hostId, const QString &camera, const QString &label, double start);
-    // Raise one detection for a Frigate event unless it belongs to a burst already raised.
-    void raiseFrigateEvent(qint64 hostId, int channel, const QString &camera, const QString &type,
-                           double start);
+    QHash<QString, int> frigateChannels(qint64 hostId) const; // camera key -> channel
     QHash<int, int> m_pushEnabled;  // row -> push enable (1/0/-1) for notif gating
     // Per-host login, retry-backoff and poll-health rules (see HostSession.h).
     device::HostSessions m_sessions;

@@ -1,6 +1,7 @@
 #include "EventManager.h"
 
 #include "DeviceManager.h"
+#include "device/Detections.h"
 #include "device/FrigateApi.h"
 
 #include "core/Paths.h"
@@ -449,9 +450,8 @@ void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> 
                                        const QVector<frigate::Event> &events)
 {
     const qint64 cutoff = QDateTime::currentSecsSinceEpoch() - kRetentionSecs;
-    QHash<QString, double> lastRaised; // "camera/type" -> last raised start, same burst
-                                        // gate as the live poller so a lingering person
-                                        // doesn't become a dozen separate rows.
+    device::BurstGate burst; // the live poller's gate, so a lingering person doesn't
+                             // become a dozen separate rows.
     bool added = false;
     QVector<QPair<qint64, QString>> newThumbs; // (local db id, Frigate's own event id)
     // Frigate returns newest first; walk oldest first so the burst gate sees them
@@ -463,11 +463,8 @@ void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> 
         const QString type = frigate::typeForLabel(ev.label);
         if (type.isEmpty())
             continue;
-        const QString key = ev.camera + u'/' + type;
-        double &last = lastRaised[key];
-        if (!frigate::startsNewBurst(last, ev.start))
+        if (!burst.admit(ev.camera, type, ev.start))
             continue;
-        last = ev.start;
 
         const int channel = channelOf.value(ev.camera);
         const qint64 ts = static_cast<qint64>(ev.start);
@@ -478,7 +475,7 @@ void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> 
         bool dup = false;
         for (const EventRecord &e : m_all) {
             if (e.hostId == hostId && e.channel == channel
-                && qAbs(e.timestamp - ts) < qint64(frigate::kBurstGapSecs)) {
+                && device::sameBurstWindow(e.timestamp, ts)) {
                 dup = true;
                 if (e.thumbnail.isEmpty())
                     newThumbs.append({e.id, ev.id});

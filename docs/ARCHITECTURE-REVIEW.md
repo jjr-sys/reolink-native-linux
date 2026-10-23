@@ -99,3 +99,47 @@ and signal QML uses is unchanged.
 
 **Revert:** `git revert` the commit "Split DeviceManager: host session and camera commands
 behind protocol seams".
+
+### Candidate 5: one detections module per host
+
+**Module:** `src/device/Detections.{h,cpp}`. `HostDetections` (one per host, kept in
+`DeviceManager::m_detections`) takes every source's message and returns `Detection`
+values (`channel`, `type`, `camera`) for `DeviceManager` to emit as `detectionEvent`.
+It owns:
+- 0-to-1 edge detection per channel (`api::risingDetections`) for poll and push alike, so
+  the two share one "last state";
+- push-over-poll takeover: `setPushLive`, `pollQueriesStates(channelCount)`, and `onPoll`
+  dropping a poll that was sent while push was live or is answered while it is, and
+  carrying over the pushed `visitor` flag (a poll cannot see a doorbell press);
+- Frigate's watermark and its first-poll rule (first poll raises nothing, only sets the
+  watermark; `RL_FRIGATE_BACKFILL` seconds supported), and the burst gate shared by the
+  Frigate poll and websocket, so an event seen on both is raised once.
+`BurstGate` and `sameBurstWindow` are also used by `EventManager::applyFrigateHistory`
+(its private `lastRaised` map and its inline `abs(ts - ts) < kBurstGapSecs` became those),
+so the live path and the history catch-up cannot drift apart.
+Tests: `tests/test_detections.cpp` (table tests for takeover, burst boundary at 30 s,
+watermark, poll/socket dedup in both orders, history window).
+
+**Decisions**
+- Logic only: the sockets and timers (`BaichuanEventListener`, `FrigateLive`, the poll
+  tick) stay in `DeviceManager`, which feeds the module. A `DetectionHub` QObject owning
+  the listeners too would be the next step; it needs a camera-name resolver from the
+  model, so it was left.
+- Burst key is now `camera/type` inside a per-host gate; it was `host/camera/type` in a
+  global map. Same behaviour, since a gate belongs to one host.
+- Reolink poll with push live on a single-channel host still queries states, as before
+  (the poll is that camera's health check).
+- Rest of `EventManager` (532 lines, no test): its other rules are persistence concerns
+  (retention 7 days / 10,000 per property, notification gating by `pushEnabledFor`,
+  thumbnail capture) and do not duplicate the detection rules, so they were not moved.
+  The one duplicate (burst gate and history window) is shared as above. A table test for
+  retention and the history de-duplication needs an in-memory `Database`; left.
+- No user-visible change.
+
+**Revert:** `git revert` the commit "One detections module per host".
+
+### Build and test notes
+
+`ctest` runs offscreen without a display or keyring. `test_mosaicpacker` has a wall-clock
+assertion (`tieBreakBuildTime`, under 10 ms) that fails when the machine is loaded (seen
+at load average 29, passes at load 4); it does not touch this code.
