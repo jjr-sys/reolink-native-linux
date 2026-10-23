@@ -57,3 +57,21 @@ _Avoid_: scene mode
 **Unmarked range**:
 The time outside the Marked range, to which the selected unmarked-range scene mode applies.
 _Avoid_: default mode
+
+## Live grid arrangement
+
+**Camera key**:
+A camera's identity as "hostId:channel". Unlike a model row it does not change when devices are added, removed or reordered.
+_Avoid_: row, device index
+
+**Arrangement**:
+Which camera sits in which pane of the Live grid, kept at 32 panes long so a layout made in the 16 grid survives a visit to the 4 grid. Saved as one key per pane joined by commas, "-" for an empty pane.
+_Avoid_: layout (that is the grid size or the mosaic packing)
+
+**Page**:
+The run of preset-many panes of the arrangement the grid shows at once; previous/next turns it and wraps.
+_Avoid_: screen
+
+**Waiting camera**:
+A camera in the saved arrangement whose host has not yet reported it. Its pane is held for it, and nothing is saved over the arrangement meanwhile, until it arrives or the wait is given up.
+_Avoid_: missing camera
