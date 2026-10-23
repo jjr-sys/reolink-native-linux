@@ -13,6 +13,9 @@ import ReolinkApp.Core
 QtObject {
     id: root
 
+    // Only for its stored-text reader, so the format is known in one place.
+    readonly property LiveArrangement format: LiveArrangement {}
+
     readonly property var list: parse(store.list)
 
     function parse(s) {
@@ -130,7 +133,7 @@ QtObject {
     }
     // The grid arrangement's cameras in pane order: a new mosaic's order is seeded from it.
     function gridOrder() {
-        return String(gridStore.value("arrangement", "")).split(",").filter(k => k && k !== "-");
+        return format.savedKeys(String(gridStore.value("arrangement", "")));
     }
     // `items` are { site, order, ratio, ... }; sorted in place for the grouping and returned.
     function arrange(items, grouping, siteOrder) {
