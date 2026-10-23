@@ -75,3 +75,13 @@ _Avoid_: screen
 **Waiting camera**:
 A camera in the saved arrangement whose host has not yet reported it. Its pane is held for it, and nothing is saved over the arrangement meanwhile, until it arrives or the wait is given up.
 _Avoid_: missing camera
+
+## Home Assistant seam (Bosch controls)
+
+**Home Assistant transport**:
+The one-method interface through which the Bosch tour controller sends a bearer-authenticated request to Home Assistant and receives status, body, and network error. Production uses a network adapter; tests use a scripted adapter that answers each request on demand.
+_Avoid_: HA client, connection
+
+**Scripted transport**:
+A test adapter for the Home Assistant transport that records requests and lets the test choose when and how each is answered.
+_Avoid_: mock server

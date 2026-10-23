@@ -1,14 +1,12 @@
 #include "BoschTourController.h"
 
 #include "core/CredentialStore.h"
+#include "device/HomeAssistantTransport.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QHash>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QSettings>
 #include <QSet>
 #include <QTimer>
@@ -46,9 +44,11 @@ QString responseMessage(const QByteArray &body)
 
 } // namespace
 
-BoschTourController::BoschTourController(CredentialStore *credentials, QObject *parent)
+BoschTourController::BoschTourController(CredentialStore *credentials,
+                                         HomeAssistantTransport *transport, QObject *parent)
     : QObject(parent), m_credentials(credentials),
-      m_network(new QNetworkAccessManager(this)), m_pollTimer(new QTimer(this)),
+      m_transport(transport ? transport : new NetworkHomeAssistantTransport(this)),
+      m_pollTimer(new QTimer(this)),
       m_presetTimer(new QTimer(this)), m_irisHeartbeatTimer(new QTimer(this))
 {
     m_pollTimer->setInterval(kPollIntervalMs);
@@ -277,21 +277,9 @@ void BoschTourController::request(const QUrl &url, const QString &token,
                                   const QByteArray &body, ReplyHandler handler)
 {
     const quint64 generation = m_generation;
-    QNetworkRequest req(url);
-    req.setRawHeader("Authorization", "Bearer " + token.toUtf8());
-    req.setRawHeader("User-Agent", "curl/8.5.0");
-    req.setRawHeader("Accept", "application/json");
-    if (!body.isNull())
-        req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    QNetworkReply *reply = body.isNull() ? m_network->get(req) : m_network->post(req, body);
-    connect(reply, &QNetworkReply::finished, this,
-            [this, reply, generation, handler = std::move(handler)]() mutable {
-        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        const QByteArray data = reply->readAll();
-        const QString error = reply->error() == QNetworkReply::NoError
-                                  ? QString()
-                                  : reply->errorString();
-        reply->deleteLater();
+    m_transport->send(url, token, body,
+                      [this, generation, handler = std::move(handler)](
+                          int status, const QByteArray &data, const QString &error) {
         if (generation == m_generation && handler)
             handler(status, data, error);
     });

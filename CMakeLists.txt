@@ -44,6 +44,7 @@ add_library(reolink_core STATIC
     src/device/FrigateLive.h src/device/FrigateLive.cpp
     src/protocol/WebSocketFrames.h
     src/device/BoschTourController.h src/device/BoschTourController.cpp
+    src/device/HomeAssistantTransport.h src/device/HomeAssistantTransport.cpp
     src/device/Highlights.h src/device/Highlights.cpp
     src/ui/MosaicPacker.h src/ui/MosaicPacker.cpp
     src/ui/MosaicLayout.h src/ui/MosaicLayout.cpp
@@ -214,7 +215,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})
