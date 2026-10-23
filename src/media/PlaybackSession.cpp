@@ -1,0 +1,190 @@
+#include "PlaybackSession.h"
+
+#include "StreamPlayer.h"
+#include "device/DeviceManager.h"
+
+namespace rl {
+
+// Production adapter: DeviceManager opens streams into the view's StreamPlayer.
+class DeviceTransport final : public PlaybackTransport
+{
+public:
+    QPointer<DeviceManager> devices;
+    QPointer<StreamPlayer> player;
+
+    bool streaming() const override { return player && player->state() == StreamPlayer::State::Streaming; }
+    bool busy() const override { return player && player->state() == StreamPlayer::State::Connecting; }
+    bool direct(int row) const override { return devices && row >= 0 && devices->isDirectAt(row); }
+    QString httpUrl(int row, qint64 epoch) override
+    {
+        return devices ? devices->playbackUrl(row, epoch, false) : QString();
+    }
+    bool seekInPlace(int row, qint64 epoch) override
+    {
+        return devices && devices->seekBaichuanPlayback(row, epoch);
+    }
+    void openHttp(int row, qint64, const QString &url) override
+    {
+        if (!devices || !player)
+            return;
+        player->setLoop(false);
+        player->setExpectedSize(devices->declaredSize(row, false));
+        player->setSource(url);
+        player->start();
+    }
+    void openBaichuan(int row, qint64 epoch, bool main) override
+    {
+        if (!devices || !player)
+            return;
+        player->setLoop(false);
+        devices->startBaichuanPlayback(row, epoch, player, main);
+    }
+    void stop() override
+    {
+        if (player)
+            player->stop();
+    }
+};
+
+namespace {
+// Stand-in until devices/player are bound: nothing plays.
+class NullTransport final : public PlaybackTransport
+{
+public:
+    bool streaming() const override { return false; }
+    bool busy() const override { return false; }
+    bool direct(int) const override { return false; }
+    QString httpUrl(int, qint64) override { return {}; }
+    bool seekInPlace(int, qint64) override { return false; }
+    void openHttp(int, qint64, const QString &) override {}
+    void openBaichuan(int, qint64, bool) override {}
+    void stop() override {}
+};
+} // namespace
+
+PlaybackSession::PlaybackSession(QObject *parent)
+    : QObject(parent)
+{
+    auto t = std::make_unique<DeviceTransport>();
+    m_device = t.get();
+    m_transport = std::move(t);
+}
+
+PlaybackSession::PlaybackSession(std::unique_ptr<PlaybackTransport> transport, QObject *parent)
+    : QObject(parent)
+    , m_transport(transport ? std::move(transport) : std::make_unique<NullTransport>())
+{
+}
+
+PlaybackSession::~PlaybackSession() = default;
+
+PlaybackSession::Route PlaybackSession::chooseRoute(bool hd, double speed, bool direct)
+{
+    if (direct)
+        return Route::Http;
+    if (hd)
+        return Route::BaichuanMain;
+    return speed > 1 ? Route::BaichuanSub : Route::Http;
+}
+
+PlaybackSession::Route PlaybackSession::route() const
+{
+    return chooseRoute(m_hd, m_speed, direct());
+}
+
+void PlaybackSession::setDevices(DeviceManager *devices)
+{
+    if (m_devices == devices)
+        return;
+    m_devices = devices;
+    if (m_device)
+        m_device->devices = devices;
+    emit devicesChanged();
+}
+
+void PlaybackSession::setPlayer(StreamPlayer *player)
+{
+    if (m_player == player)
+        return;
+    m_player = player;
+    if (m_device)
+        m_device->player = player;
+    emit playerChanged();
+}
+
+void PlaybackSession::setDeviceRow(int row)
+{
+    if (m_row == row)
+        return;
+    m_row = row;
+    emit deviceRowChanged();
+    emit routeChanged(); // direct-ness is per row
+}
+
+// Apply a change to hd/speed; if the route moved while a stream is up or opening,
+// ask the owner to replay the current moment on the new transport.
+template <typename Change> void PlaybackSession::changeRouteAware(Change change)
+{
+    const Route before = route();
+    change();
+    if (route() == before)
+        return;
+    emit routeChanged();
+    if (m_transport->streaming() || m_transport->busy())
+        emit reopenNeeded();
+}
+
+void PlaybackSession::setHd(bool hd)
+{
+    if (m_hd == hd)
+        return;
+    changeRouteAware([&] { m_hd = hd; emit hdChanged(); });
+}
+
+void PlaybackSession::setSpeed(double speed)
+{
+    if (qFuzzyCompare(m_speed, speed))
+        return;
+    changeRouteAware([&] { m_speed = speed; emit speedChanged(); });
+}
+
+PlaybackSession::Outcome PlaybackSession::openHttp(qint64 epoch)
+{
+    const QString url = m_transport->httpUrl(m_row, epoch);
+    if (url.isEmpty())
+        return Outcome::NoSource;
+    m_transport->openHttp(m_row, epoch, url);
+    return Outcome::Opened;
+}
+
+PlaybackSession::Outcome PlaybackSession::playAt(double epochSecs, bool covered)
+{
+    if (!covered) {
+        m_transport->stop();
+        return Outcome::Gap;
+    }
+    const qint64 epoch = static_cast<qint64>(epochSecs);
+    const Route r = route();
+    if (r == Route::Http)
+        return openHttp(epoch);
+    if (m_row < 0)
+        return Outcome::NoSource;
+    // Move the running native session in place (no reconnect) when possible.
+    if (m_transport->streaming() && m_transport->seekInPlace(m_row, epoch))
+        return Outcome::SeekedInPlace;
+    const bool main = r == Route::BaichuanMain;
+    m_transport->openBaichuan(m_row, epoch, main);
+    return main ? Outcome::OpenedHd : Outcome::Opened;
+}
+
+PlaybackSession::Outcome PlaybackSession::playHttpAt(double epoch)
+{
+    return openHttp(static_cast<qint64>(epoch));
+}
+
+void PlaybackSession::stop()
+{
+    m_transport->stop();
+}
+
+} // namespace rl

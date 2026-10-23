@@ -54,6 +54,8 @@ add_library(reolink_core STATIC
     src/media/LatestValueMailbox.h src/media/StreamPlayer.h src/media/StreamPlayer.cpp
     src/media/VaapiVideoBuffer.h src/media/VaapiVideoBuffer.cpp
     src/media/LiveStream.h src/media/LiveStream.cpp src/media/LiveStreamTransport.h
+    src/media/PlaybackSession.h src/media/PlaybackSession.cpp src/media/PlaybackTransport.h
+    src/device/RecordingFileSnap.h src/device/RecordingFileSnap.cpp
     src/media/ClipLoader.h src/media/ClipLoader.cpp
     src/media/AudioDecoder.h src/media/AudioDecoder.cpp
     src/media/AudioPlayback.h src/media/AudioPlayback.cpp
@@ -213,7 +215,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_playbacksession)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})
