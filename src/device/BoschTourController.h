@@ -8,12 +8,12 @@
 
 #include <functional>
 
-class QNetworkAccessManager;
 class QTimer;
 
 namespace rl {
 
 class CredentialStore;
+class HomeAssistantTransport;
 
 // Home Assistant is the shared authority for the Lascelles Bosch positions and
 // patrol. This client calls its existing pyscript services and HA's ONVIF PTZ
@@ -51,7 +51,10 @@ class BoschTourController : public QObject
     Q_PROPERTY(bool selectionTourRestoring READ selectionTourRestoring NOTIFY selectionTourRestoringChanged)
 
 public:
-    explicit BoschTourController(CredentialStore *credentials, QObject *parent = nullptr);
+    // transport is the Home Assistant seam; null selects the real network adapter.
+    explicit BoschTourController(CredentialStore *credentials,
+                                 HomeAssistantTransport *transport = nullptr,
+                                 QObject *parent = nullptr);
 
     bool configured() const { return !m_endpoint.isEmpty() && !m_token.isEmpty(); }
     bool connected() const { return m_connected; }
@@ -148,7 +151,7 @@ private:
                          const QString &networkError);
 
     CredentialStore *m_credentials = nullptr;
-    QNetworkAccessManager *m_network = nullptr;
+    HomeAssistantTransport *m_transport = nullptr;
     QTimer *m_pollTimer = nullptr;
     QTimer *m_presetTimer = nullptr;
     QTimer *m_irisHeartbeatTimer = nullptr;

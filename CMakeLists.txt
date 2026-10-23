@@ -44,6 +44,7 @@ add_library(reolink_core STATIC
     src/device/FrigateLive.h src/device/FrigateLive.cpp
     src/protocol/WebSocketFrames.h
     src/device/BoschTourController.h src/device/BoschTourController.cpp
+    src/device/HomeAssistantTransport.h src/device/HomeAssistantTransport.cpp
     src/device/Highlights.h src/device/Highlights.cpp
     src/ui/MosaicPacker.h src/ui/MosaicPacker.cpp
     src/ui/MosaicLayout.h src/ui/MosaicLayout.cpp
