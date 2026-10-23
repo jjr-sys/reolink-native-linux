@@ -1,5 +1,6 @@
 #include "FrigateLive.h"
 
+#include "core/Backoff.h"
 #include "device/FrigateApi.h"
 #include "protocol/WebSocketFrames.h"
 
@@ -16,8 +17,7 @@
 namespace rl {
 
 namespace {
-constexpr int kRetryMs = 5'000;
-constexpr int kMaxRetryMs = 60'000;
+constexpr BackoffPolicy kReconnect{5'000, 60'000};
 constexpr int kTimeoutMs = 8'000;
 constexpr qint64 kPingMs = 30'000;
 constexpr qint64 kSilentMs = 75'000; // nothing back for this long (pings included): reconnect
@@ -80,7 +80,7 @@ void FrigateLive::run(std::shared_ptr<Shared> shared, QString host, int port)
         shared->post([on](FrigateLive *o) { emit o->connectedChanged(on); });
     };
     const bool tls = port == 8971; // as FrigateApi: 8971 is the authenticated HTTPS port
-    int wait = kRetryMs;
+    Backoff backoff(kReconnect);
     while (!shared->stop) {
         const QByteArray cookie = frigate::sessionCookie(host, port, kTimeoutMs);
         QSslSocket sock;
@@ -123,7 +123,7 @@ void FrigateLive::run(std::shared_ptr<Shared> shared, QString host, int port)
 
         if (up) {
             setConnected(true);
-            wait = kRetryMs;
+            backoff.reset();
             QElapsedTimer sincePing, sinceHeard;
             sincePing.start();
             sinceHeard.start();
@@ -166,9 +166,8 @@ void FrigateLive::run(std::shared_ptr<Shared> shared, QString host, int port)
             setConnected(false);
         }
         sock.abort();
-        if (!shared->sleepFor(wait))
+        if (!shared->sleepFor(backoff.fail()))
             return;
-        wait = qMin(wait * 2, kMaxRetryMs);
     }
 }
 
