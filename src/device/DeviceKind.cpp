@@ -77,12 +77,6 @@ const QRegularExpression &hikvisionMain()
 }
 } // namespace
 
-StreamVendor streamVendor(const QString &savedUrl)
-{
-    return hikvisionMain().match(savedUrl).hasMatch() ? StreamVendor::Hikvision
-                                                      : StreamVendor::Generic;
-}
-
 bool looksLikeBoschFeed(const QString &label)
 {
     return label.contains(QLatin1String("bosch"), Qt::CaseInsensitive);

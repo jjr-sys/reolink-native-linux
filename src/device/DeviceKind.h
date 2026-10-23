@@ -47,8 +47,6 @@ QVariantMap capabilityMap(Kind kind);
 // ---- how a camera is addressed -------------------------------------------------
 
 // Stream vendors whose URL layout lets us pick a quality. Recognised from the saved URL.
-enum class StreamVendor { Generic, Hikvision };
-StreamVendor streamVendor(const QString &savedUrl);
 
 // The Bosch camera's feed arrives through Frigate, so it is recognised by its name; its
 // controls come from the Home Assistant Bosch integration, not from the host's kind.

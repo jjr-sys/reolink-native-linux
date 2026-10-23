@@ -116,7 +116,7 @@ stayed in DeviceManager.
    This replaces the page's `crossed && !hdMode` and the HD tap handler's manual replay.
    Deliberate differences: toggling HD on a direct (Frigate) row no longer reopens a stream that
    would not change; and a grid pane on a Frigate row no longer tries Baichuan above 1x
-   (the single-pane page already excluded direct rows). Revert: the QML commit.
+   (the single-pane page already excluded direct rows); and on a direct row, speed crossing 1x no longer reopens the same HTTP URL (the old `crossed && !hdMode` rule did). Revert: the QML commit.
 2. Each pane (single page and each grid pane) owns its own session. The grid's speed change
    used to be fanned out by the page; each pane now reacts to its own route change, so only
    playing panes reopen.
@@ -140,8 +140,8 @@ ones, so revert in reverse order (5, then 1, then 2).
 **Module:** `src/device/DeviceKind.{h,cpp}`. `Kind` enum, `Capabilities` table
 (`reolinkProtocol`, `multiChannel`, `alwaysOnline`, `frigateApi`, `detections`),
 `liveUrl(LiveSource, mainStream)` (live URL per kind and quality), `directLiveUrl` (moved
-here unchanged, still reachable as `rl::directLiveUrl`), `streamVendor()` (Hikvision) and
-`looksLikeBoschFeed()`. Test: `tests/test_devicekind.cpp`.
+here unchanged, still reachable as `rl::directLiveUrl`), and
+`looksLikeBoschFeed()`. Hikvision is still only the path rule inside `directLiveUrl` (a `streamVendor()` helper was written and removed unused; making it a real capability is not done). Test: `tests/test_devicekind.cpp`.
 
 **Decisions**
 - The Database `kind` column is untouched: still the strings `camera|nvr|stream|frigate`.

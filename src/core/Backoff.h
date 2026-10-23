@@ -6,7 +6,7 @@
 namespace rl {
 
 // Grow-and-cap retry delay. Units are the caller's (ms for the stream and socket loops,
-// seconds for DeviceManager's host probe). Each user keeps its own start, cap and reset
+// seconds for HostSession's host probe). Each user keeps its own start, cap and reset
 // rule; this module only owns the arithmetic and holds no clock: callers sleep or
 // schedule, and anything time-dependent takes "now" as an argument so tests can fake it.
 struct BackoffPolicy

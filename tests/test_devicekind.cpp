@@ -80,13 +80,6 @@ private slots:
         QCOMPARE(m.value("reolinkProtocol").toBool(), false);
     }
 
-    void hikvisionIsRecognisedByPath()
-    {
-        QCOMPARE(streamVendor(QStringLiteral("rtsp://h:554/Streaming/Channels/101")),
-                 StreamVendor::Hikvision);
-        QCOMPARE(streamVendor(QStringLiteral("rtsp://h:554/h264Preview_01_main")),
-                 StreamVendor::Generic);
-    }
     void boschFeedIsRecognisedByName()
     {
         QVERIFY(looksLikeBoschFeed(QStringLiteral("Bosch Camera")));
