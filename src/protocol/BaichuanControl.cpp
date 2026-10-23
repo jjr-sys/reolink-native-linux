@@ -459,3 +459,12 @@ bool BaichuanControl::writeEnable(quint32 getCmdId, quint32 setCmdId, int channe
 }
 
 } // namespace rl
+
+namespace rl {
+BaichuanOpener realBaichuanOpener()
+{
+    return [](const BaichuanParams &p) -> std::unique_ptr<BaichuanLink> {
+        return std::make_unique<BaichuanControl>(p);
+    };
+}
+} // namespace rl

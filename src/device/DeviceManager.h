@@ -2,7 +2,9 @@
 
 #include "core/CredentialStore.h"
 #include "core/Database.h"
+#include "CameraCommands.h"
 #include "DeviceKind.h"
+#include "HostSession.h"
 #include "DownloadSource.h"
 #include "protocol/ReolinkApi.h"
 // Not forward-declared on purpose — see the note by the other forward
@@ -345,11 +347,9 @@ private:
     // One model row = one camera. A standalone camera is a host with a single
     // channel (0); an NVR fans out into one Entry per online channel, all sharing
     // the same host connection (hostId, addr, credentials, client).
-    // Why a host isn't online. Drives both the sidebar visuals and the retry
-    // policy: Unreachable is auto-retried with backoff (device off, wrong IP,
-    // network down — retrying is free); Auth/Locked are NEVER auto-retried,
-    // because each rejected login burns the firmware's lockout counter.
-    enum class Problem { None, Connecting, Unreachable, Auth, Locked };
+    using Problem = device::Problem;
+    using ChannelResult = device::ChannelResult;
+    using Validation = device::Validation;
 
     struct Entry {
         HostRecord rec;    // host connection (shared across an NVR's channels)
@@ -389,37 +389,6 @@ private:
         QVector<std::pair<qint64, qint64>> recordingFiles;
         // Persistent authenticated client for the host, shared by its channels.
         std::shared_ptr<ReolinkHttpClient> client;
-    };
-
-    // One camera's validated state (channel within a host).
-    struct ChannelResult {
-        int channel = 0;
-        QString name;
-        bool online = false;
-        QString codec; // empty = unknown; the stream is probed instead of assumed
-        QSize mainSize; // GetEnc-declared main/sub resolution (for rotation detection)
-        QSize subSize;
-        QString uid;
-        api::ChannelCaps caps;
-    };
-
-    // Outcome of a worker-thread validation, applied back on the GUI thread.
-    struct Validation {
-        bool online = false;
-        QString status;
-        Problem problem = Problem::Unreachable;
-        QString hostName; // device/NVR name from GetDevInfo
-        QString model;
-        int channelNum = 0;
-        bool isAdmin = false;
-        bool talk = false;
-        QString password;
-        api::BatteryInfo battery;
-        std::shared_ptr<ReolinkHttpClient> client;
-        // The HTTP API did not answer but Baichuan listed the cameras: show them (live view
-        // works) and keep retrying HTTP for names and the rest.
-        bool degraded = false;
-        QVector<ChannelResult> channels; // one per camera to show
     };
 
     // Runs on a worker: loads the password from the keyring (or stores newPassword
@@ -467,23 +436,15 @@ private:
     // Raise one detection for a Frigate event unless it belongs to a burst already raised.
     void raiseFrigateEvent(qint64 hostId, int channel, const QString &camera, const QString &type,
                            double start);
-    QHash<QString, bool> m_pollInFlight;                 // avoid overlapping polls
     QHash<int, int> m_pushEnabled;  // row -> push enable (1/0/-1) for notif gating
-    QHash<qint64, int> m_hostFails; // consecutive poll transport failures per host
-    // Hosts whose HTTP API stopped answering but which still answer on the Baichuan port:
-    // their cameras stay online (live view works), only the API-driven features are down.
-    QSet<qint64> m_apiOnly;
-    QSet<qint64> m_aliveProbing; // hosts with a Baichuan liveness check in flight
+    // Per-host login, retry-backoff and poll-health rules (see HostSession.h).
+    device::HostSessions m_sessions;
+    BaichuanOpener m_baichuan = realBaichuanOpener();
+    device::CameraCommands m_commands{m_baichuan};
     void probeHostAlive(qint64 hostId, const QString &hostName);
     void markHostUnreachable(qint64 hostId, const QString &hostName);
     bool m_pushWarmed = false;      // one-time warm of the push cache after priming
 
-    // Auto-retry of Unreachable hosts, driven by the poll tick. Backoff doubles
-    // 15s -> 300s cap; cleared on success or when the failure is Auth/Locked
-    // (those wait for the user — see Problem).
-    QHash<qint64, QDateTime> m_nextRetryAt;
-    QHash<qint64, int> m_retryDelaySecs;
-    QSet<qint64> m_validating;      // hosts with a validation in flight
 
     // The in-flight Baichuan playback session, so a scrub can seek it in place.
     // Weak: the StreamPlayer owns the client's lifetime.

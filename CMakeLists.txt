@@ -37,6 +37,7 @@ add_library(reolink_core STATIC
     src/protocol/BcCrypto.h src/protocol/BcCrypto.cpp
     src/protocol/BaichuanClient.h src/protocol/BaichuanClient.cpp
     src/protocol/BaichuanControl.h src/protocol/BaichuanControl.cpp
+    src/protocol/ReolinkTransport.h src/protocol/BaichuanLink.h
     src/protocol/BaichuanEventListener.h src/protocol/BaichuanEventListener.cpp
     src/protocol/BcAlarmEvents.h
     src/device/HighlightPolicy.h src/device/HighlightPolicy.cpp
@@ -49,6 +50,8 @@ add_library(reolink_core STATIC
     src/ui/MosaicLayout.h src/ui/MosaicLayout.cpp
     src/device/DownloadPlan.h src/device/DownloadSource.h src/device/DownloadQueue.h src/device/DownloadQueue.cpp
     src/device/DeviceKind.h src/device/DeviceKind.cpp
+    src/device/HostSession.h src/device/HostSession.cpp
+    src/device/CameraCommands.h src/device/CameraCommands.cpp
     src/device/DeviceManager.h src/device/DeviceManager.cpp
     src/device/DeviceDiscovery.h src/device/DeviceDiscovery.cpp
     src/device/EventManager.h src/device/EventManager.cpp
@@ -214,7 +217,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_devicekind)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_devicekind test_hostsession)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})
