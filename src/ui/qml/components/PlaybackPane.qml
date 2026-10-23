@@ -79,23 +79,22 @@ Rectangle {
 
     function epochOf(sec) { return Math.floor(dayEpoch + sec); }
 
-    function playHd(sec, main) {
-        if (main === undefined) main = true;
-        // Seek the running Baichuan session in place when possible (no
-        // reconnect); otherwise open one at this moment.
-        if (streaming && Devices.seekBaichuanPlayback(deviceRow, epochOf(sec)))
-            return;
-        player.loop = false;
-        Devices.startBaichuanPlayback(deviceRow, epochOf(sec), player, main);
+    // Transport and seek-or-reopen live in PlaybackSession (HD only while maximized,
+    // enforced by the page via showHdToggle).
+    PlaybackSession {
+        id: session
+        devices: Devices
+        player: player
+        deviceRow: root.deviceRow
+        hd: root.hdActive
+        speed: root.speed
+        onReopenNeeded: root.playAtSecs(root.playheadSecs, root.epochOf(root.playheadSecs))
     }
 
     function setHd(on) {
         if (hdActive === on)
             return;
-        hdActive = on;
-        // Mid-playback, carry the watched moment across the transport switch.
-        if (streaming || player.state === StreamPlayer.Connecting)
-            playAtSecs(playheadSecs, epochOf(playheadSecs));
+        hdActive = on; // the session replays the moment if the transport changes
     }
     // Restoring the grid (or losing maximize any other way) drops back to the
     // sub stream — a grid cell must not keep holding a main-stream session.
@@ -141,21 +140,7 @@ Rectangle {
         if (!hasSource)
             return;
         _suppressResume = false;
-        if (!covered(sec)) {
-            player.stop();
-            return;
-        }
-        if (hdActive || speed > 1) {
-            playHd(sec, hdActive); // above 1x the sub stream also comes over the native protocol
-            return;
-        }
-        var url = Devices.playbackUrl(deviceRow, epoch, false); // sub stream
-        if (url.length === 0)
-            return;
-        player.loop = false;
-        player.expectedSize = Devices.declaredSize(deviceRow, false);
-        player.source = url;
-        player.start();
+        session.playAt(epoch, covered(sec));
     }
 
     function stopPlayback() {

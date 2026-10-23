@@ -37,6 +37,16 @@ Item {
     // HD mode streams the full-resolution main stream over native Baichuan; off =
     // light sub-stream (FLV) scrubbing.
     property bool hdMode: false
+    // Transport choice and seek-or-reopen for the single pane; the grid panes own theirs.
+    PlaybackSession {
+        id: session
+        devices: Devices
+        player: player
+        deviceRow: page.deviceRow
+        hd: page.hdMode
+        speed: page.speed
+        onReopenNeeded: page.playAt(page.playheadSecs)
+    }
 
     // ---- Synced multi-camera playback ---------------------------------------
     // Like the official client: up to 4 panes, one calendar and one timeline
@@ -323,45 +333,14 @@ Item {
         }
         if (!inRecording(sec)) {
             page.holdFrame = false;
-            player.stop();
+            session.playAt(epochAt(sec), false);
             return;
         }
-        if (page.hdMode && !page.directRow) {
-            page.playHd(sec);
-            return;
-        }
-        // Faster than real time: the NVR's HTTP stream is sent at 1x, so above that the
-        // sub stream comes over the native protocol, which is delivered ahead of time.
-        if (page.speed > 1 && !page.directRow) {
-            page.playHd(sec, false);
-            return;
-        }
-        // Scrub against the sub stream: it is light and always landscape, so the
-        // timeline stays responsive. (HD mode below plays the full-res main.)
-        player.loop = false;
-        var url = Devices.playbackUrl(page.deviceRow, epochAt(sec), false);
-        if (url.length > 0) {
-            player.expectedSize = Devices.declaredSize(page.deviceRow, false); // sub
-            player.source = url;
-            player.start();
-        }
-    }
-
-    // HD: stream the full-resolution main stream over native Baichuan (TCP 9000)
-    // from this exact moment — realtime and frame-accurate, the way the official
-    // apps do it (HTTP-FLV can't carry the HEVC main stream, cmd=Download is slow).
-    function playHd(sec, main) {
-        if (main === undefined) main = true;
-        if (page.deviceRow < 0)
-            return;
-        if (main) statusText.text = qsTr("HD");
-        // Seek the running session in place (no reconnect) when possible; else open
-        // a fresh Baichuan session.
-        if (player.state === StreamPlayer.Streaming
-            && Devices.seekBaichuanPlayback(page.deviceRow, epochAt(sec)))
-            return;
-        player.loop = false;
-        Devices.startBaichuanPlayback(page.deviceRow, epochAt(sec), player, main);
+        // Transport (HTTP sub / Baichuan HD / Baichuan fast sub) and seek-or-reopen
+        // are PlaybackSession's decision.
+        session.playAt(epochAt(sec));
+        if (session.route === PlaybackSession.BaichuanMain)
+            statusText.text = qsTr("HD");
     }
 
     property real _pendingPlayEpoch: 0  // play this once the day's search returns
@@ -386,15 +365,6 @@ Item {
     // A Frigate camera: its footage plays from the server as one stream at normal speed.
     // No HD stream, faster speeds, exporting or the NVR downloads manager.
     readonly property bool directRow: page.deviceRow >= 0 && Devices.isDirectAt(page.deviceRow)
-    property real _prevSpeed: 1.0
-    onSpeedChanged: {
-        // Crossing 1x on the SD stream swaps HTTP for the native protocol (or back), so
-        // re-open at the current moment. Everything else just changes pacing on the fly.
-        var crossed = (_prevSpeed > 1) !== (speed > 1);
-        _prevSpeed = speed;
-        if (crossed && !page.hdMode && (player.state === StreamPlayer.Streaming || page.streamingPanes > 0))
-            page.playAt(page.playheadSecs);
-    }
     function speedText(v) { return (v === 0.25 ? "0.25" : v === 0.5 ? "0.5" : String(v)) + "×"; }
     // Jump the playhead by `secs` and carry on playing from there.
     function skip(secs) {
@@ -547,12 +517,7 @@ Item {
                     page._pendingPlayEpoch = 0;
                     page._pendingPlaySecs = -1;
                     page._suppressResume = false; // event playback crosses file boundaries too
-                    var url = Devices.playbackUrl(page.deviceRow, ep, false); // sub stream
-                    if (url.length > 0) {
-                        player.expectedSize = Devices.declaredSize(page.deviceRow, false);
-                        player.source = url;
-                        player.start();
-                    }
+                    session.playHttpAt(ep); // sub stream, whatever HD/speed say
                 } else if (page._pendingPlaySecs >= 0) {
                     // Camera switch: resume at the same playhead moment (playAt
                     // respects SD/HD mode and stops if no recording covers it).
@@ -1152,11 +1117,8 @@ Item {
                     }
                     TapHandler {
                         onTapped: {
+                            // The session replays the current moment if the transport changes.
                             page.hdMode = !page.hdMode;
-                            // Re-play the current moment in the newly selected quality.
-                            if (player.state === StreamPlayer.Streaming
-                                || player.state === StreamPlayer.Connecting)
-                                page.playAt(page.playheadSecs);
                         }
                     }
                 }
