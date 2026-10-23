@@ -2,6 +2,7 @@
 
 #include "core/CredentialStore.h"
 #include "core/Database.h"
+#include "DeviceKind.h"
 #include "DownloadSource.h"
 #include "protocol/ReolinkApi.h"
 // Not forward-declared on purpose — see the note by the other forward
@@ -41,12 +42,6 @@ class ReolinkHttpClient;
 
 namespace rl {
 
-// The URL a direct-URL ("stream") host plays at the asked quality. The saved URL is
-// its main stream. Hikvision cameras serve a channel's main stream at
-// /Streaming/Channels/<N>01 and its sub stream at <N>02, so a Fluent tile gets the
-// small stream there as it does for every other camera; any other URL plays as saved.
-QString directLiveUrl(const QString &savedUrl, bool mainStream);
-
 // The device tree behind the sidebar: hosts from the database, exposed to QML.
 // Adding a camera/NVR validates it over the HTTP-CGI API on a worker thread
 // (Login + GetDevInfo + GetEnc) and fills in name/model/codec. Credentials live
@@ -62,6 +57,7 @@ public:
         NameRole = Qt::UserRole + 1,
         AddrRole,
         KindRole,
+        MultiChannelRole,
         ModelRole,
         OnlineRole,
         StatusRole,
@@ -159,9 +155,10 @@ public:
     {
         if (row < 0 || row >= m_entries.size())
             return false;
-        const QString &k = m_entries.at(row).rec.kind;
-        return k == QLatin1String("stream") || k == QLatin1String("frigate");
+        return m_entries.at(row).kindCaps().direct();
     }
+    // The Bosch camera's feed (recognised by its name); its controls come from Home Assistant.
+    Q_INVOKABLE bool isBoschFeed(const QString &label) const { return device::looksLikeBoschFeed(label); }
     Q_INVOKABLE bool isAdminAt(int row) const
     {
         return row >= 0 && row < m_entries.size() && m_entries.at(row).isAdmin;
@@ -356,6 +353,12 @@ private:
 
     struct Entry {
         HostRecord rec;    // host connection (shared across an NVR's channels)
+        device::Capabilities kindCaps() const
+        {
+            return device::capabilities(device::kindFromString(rec.kind));
+        }
+        // A Reolink host whose credentials are loaded: HTTP/Baichuan commands may be sent.
+        bool reolinkReady() const { return kindCaps().reolinkProtocol && primed; }
         int channel = 0;   // channel index on the host
         QString chanName;  // camera name for this channel
         bool online = false;

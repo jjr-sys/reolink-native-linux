@@ -556,7 +556,7 @@ Rectangle {
     property bool boschPtzOpen: false
     property bool boschTourOwnedHere: false
     readonly property bool isBoschFeed: root.hasSource
-        && root.label.toLowerCase().indexOf("bosch") !== -1
+        && Devices.isBoschFeed(root.label)
 
     function positionSequenceIndex(token) {
         var sequence = BoschTour.selectionTourRoute;

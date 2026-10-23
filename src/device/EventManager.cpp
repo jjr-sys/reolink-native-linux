@@ -130,7 +130,7 @@ void EventManager::normalizeStoredCameraNames()
 {
     const QVector<EventRecord> events = m_db->recentEvents(kLoadLimit);
     for (const EventRecord &e : events) {
-        if (m_devices->hostInfo(e.hostId).value("kind").toString() != QLatin1String("frigate"))
+        if (!m_devices->hostInfo(e.hostId).value("frigateApi").toBool())
             continue;
         const QString pretty = frigate::displayCameraName(e.camera);
         if (pretty != e.camera)
@@ -391,7 +391,7 @@ void EventManager::clear()
 void EventManager::syncFrigateHistory(qint64 hostId)
 {
     const QVariantMap info = m_devices->hostInfo(hostId);
-    if (info.value("kind").toString() != QLatin1String("frigate"))
+    if (!info.value("frigateApi").toBool())
         return;
     const QString host = info.value("addr").toString();
     const int port = info.value("port").toInt();
@@ -425,7 +425,7 @@ void EventManager::checkFrigateCatchup()
         if (m_frigateHistoryChecked.contains(hostId))
             continue;
         const QVariantMap info = m_devices->hostInfo(hostId);
-        if (info.value("kind").toString() != QLatin1String("frigate") || !info.value("online").toBool())
+        if (!info.value("frigateApi").toBool() || !info.value("online").toBool())
             continue; // not Frigate, or its cameras aren't discovered yet — try again later
         m_frigateHistoryChecked.insert(hostId);
         bool hasAny = false;
@@ -440,7 +440,7 @@ void EventManager::syncAllFrigateHistory()
 {
     for (const QVariant &id : m_devices->hostIds()) {
         const qint64 hostId = id.toLongLong();
-        if (m_devices->hostInfo(hostId).value("kind").toString() == QLatin1String("frigate"))
+        if (m_devices->hostInfo(hostId).value("frigateApi").toBool())
             syncFrigateHistory(hostId);
     }
 }

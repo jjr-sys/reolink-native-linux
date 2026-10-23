@@ -66,9 +66,16 @@ QString viewModeKey(qint64 hostId, int channel)
 }
 // Frigate names its cameras like config keys ("bosch_camera"); show those as a person
 // would write them. The raw key stays in the entry, since Frigate's URLs need it.
+// Adds the kind's capabilities (direct, multiChannel, frigateApi, ...) to a QML map.
+void mergeCaps(QVariantMap &m, const QString &kind)
+{
+    const QVariantMap caps = device::capabilityMap(device::kindFromString(kind));
+    for (auto it = caps.constBegin(); it != caps.constEnd(); ++it)
+        m.insert(it.key(), it.value());
+}
 QString displayName(const QString &name, const QString &kind)
 {
-    return kind == QLatin1String("frigate") ? frigate::displayCameraName(name) : name;
+    return device::capabilities(device::kindFromString(kind)).frigateApi ? frigate::displayCameraName(name) : name;
 }
 const QStringList kViewModes{"fisheye", "ptz", "panorama", "dual", "quad", "fisheye_ptz"};
 // Load a camera's saved fisheye settings into a device entry.
@@ -86,13 +93,6 @@ void loadLensSettings(Entry &e, qint64 hostId, int channel)
 
 
 namespace {
-// Hosts that are not Reolink devices: no login, no Baichuan, no settings, no playback.
-// A "stream" is a bare URL; "frigate" is a Frigate server's cameras.
-bool isDirectKind(const QString &kind)
-{
-    return kind == QLatin1String("stream") || kind == QLatin1String("frigate");
-}
-
 // Downscaled JPEG in the thumbnail cache; false if it could not be written.
 bool saveEventThumbnail(const QByteArray &jpeg, const QString &path)
 {
@@ -172,7 +172,7 @@ DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject
         e.chanName = rec.name;
         e.rotationOverride = loadRotation(rec.id, 0);
         loadLensSettings(e, rec.id, 0);
-        e.online = rec.kind == QLatin1String("stream");
+        e.online = device::capabilities(device::kindFromString(rec.kind)).alwaysOnline;
         e.status = e.online ? tr("ready") : tr("connecting…");
         m_entries.append(e);
     }
@@ -368,7 +368,7 @@ void DeviceManager::pollDetections()
     QVector<qint64> order;
     for (const Entry &e : m_entries) {
         // Offline entries stay in the poll: that's how we notice recovery.
-        if (isDirectKind(e.rec.kind) || !e.client)
+        if (e.kindCaps().direct() || !e.client)
             continue;
         if (!byHost.contains(e.rec.id)) {
             byHost[e.rec.id] = HostPoll{e.client, {}, {}, {}};
@@ -483,7 +483,7 @@ void DeviceManager::ensurePushListener(const Entry &e)
 {
     // RL_NO_PUSH=1 keeps to the poll (scratch runs that shouldn't hold NVR sessions).
     static const bool disabled = qEnvironmentVariableIsSet("RL_NO_PUSH");
-    if (disabled || isDirectKind(e.rec.kind) || !e.primed || e.password.isEmpty())
+    if (disabled || !e.reolinkReady() || e.password.isEmpty())
         return;
     if (BaichuanEventListener *l = m_pushListeners.value(e.rec.id)) {
         const BaichuanControl::Params &p = l->params();
@@ -547,6 +547,8 @@ QVariant DeviceManager::data(const QModelIndex &index, int role) const
         return e.rec.addr;
     case KindRole:
         return e.rec.kind;
+    case MultiChannelRole:
+        return e.kindCaps().multiChannel;
     case ModelRole:
         return e.rec.model;
     case OnlineRole:
@@ -607,6 +609,7 @@ QHash<int, QByteArray> DeviceManager::roleNames() const
         {NameRole, "name"},
         {AddrRole, "addr"},
         {KindRole, "kind"},
+        {MultiChannelRole, "multiChannel"},
         {ModelRole, "model"},
         {OnlineRole, "online"},
         {StatusRole, "status"},
@@ -725,7 +728,7 @@ void DeviceManager::addDevice(const QString &addr, const QString &username,
                               const QString &password, bool https, int port)
 {
     HostRecord rec;
-    rec.kind = QStringLiteral("camera"); // refined to "nvr" after GetDevInfo
+    rec.kind = device::kindToString(device::Kind::Camera); // refined to "nvr" after GetDevInfo
     rec.name = addr;
     rec.addr = addr;
     rec.https = https;
@@ -764,7 +767,7 @@ void DeviceManager::addStreamUrl(const QString &name, const QString &url)
         u.isValid() && !u.scheme().isEmpty() ? u.toString(QUrl::FullyEncoded) : url;
 
     HostRecord rec;
-    rec.kind = QStringLiteral("stream");
+    rec.kind = device::kindToString(device::Kind::Stream);
     rec.name = name.isEmpty() ? cleanUrl : name;
     rec.addr = cleanUrl;
     rec.https = false;
@@ -942,7 +945,7 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
         rec.name = v.hostName;
     rec.model = v.model;
     if (v.channelNum > 1)
-        rec.kind = QStringLiteral("nvr");
+        rec.kind = device::kindToString(device::Kind::Nvr);
     m_db->updateHost(rec);
 
     // Build the new per-channel entries.
@@ -1032,7 +1035,7 @@ void DeviceManager::addFrigate(const QString &name, const QString &host, int por
                                const QString &username, const QString &password)
 {
     HostRecord rec;
-    rec.kind = QStringLiteral("frigate");
+    rec.kind = device::kindToString(device::Kind::Frigate);
     rec.name = name.trimmed().isEmpty() ? host : name.trimmed();
     rec.addr = host;
     rec.port = port > 0 ? port : 8971;
@@ -1090,7 +1093,7 @@ void DeviceManager::pollFrigate()
 {
     QSet<qint64> done;
     for (const Entry &e : m_entries) {
-        if (e.rec.kind != QLatin1String("frigate") || !e.primed || done.contains(e.rec.id))
+        if (!e.kindCaps().frigateApi || !e.primed || done.contains(e.rec.id))
             continue;
         done.insert(e.rec.id);
         const qint64 hostId = e.rec.id;
@@ -1208,7 +1211,7 @@ void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, boo
         return;
     m_validating.insert(hostId);
     const HostRecord rec = m_entries.at(row).rec;
-    const bool isStream = rec.kind == QLatin1String("stream");
+    const bool isStream = device::capabilities(device::kindFromString(rec.kind)).alwaysOnline;
     // Already showing the Baichuan-discovered list: just retry HTTP, don't reopen Baichuan
     // (the NVR has few connection slots).
     // Same when the host's list already came from HTTP: a fallback list would be discarded.
@@ -1244,7 +1247,7 @@ void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, boo
             return;
         }
 
-        if (rec.kind == QLatin1String("frigate")) {
+        if (device::capabilities(device::kindFromString(rec.kind)).frigateApi) {
             postValidation(hostId, validateFrigate(rec, password));
             return;
         }
@@ -1414,7 +1417,7 @@ std::shared_ptr<ReolinkHttpClient> DeviceManager::clientFor(int row)
     if (row < 0 || row >= m_entries.size())
         return {};
     Entry &e = m_entries[row];
-    if (isDirectKind(e.rec.kind) || !e.primed)
+    if (!e.reolinkReady())
         return {};
     if (!e.client)
         e.client = std::make_shared<ReolinkHttpClient>(e.rec.addr, e.rec.port, e.rec.https,
@@ -1507,7 +1510,7 @@ void DeviceManager::captureEventThumbnail(qint64 hostId, int channel, qint64 eve
             Qt::QueuedConnection);
     };
     const Entry &e = m_entries.at(row);
-    if (e.rec.kind == QLatin1String("frigate")) {
+    if (e.kindCaps().frigateApi) {
         const QString url = frigate::latestFrameUrl(e.rec.addr, e.rec.port, e.chanName);
         m_pending.addFuture(QtConcurrent::run([finish, url] { finish(frigate::httpGet(url, 8000)); }));
         return;
@@ -1584,7 +1587,7 @@ void DeviceManager::searchFrigateRecordings(int row, int year, int month, int da
 
 void DeviceManager::searchRecordings(int row, int year, int month, int day)
 {
-    if (row >= 0 && row < m_entries.size() && m_entries.at(row).rec.kind == QLatin1String("frigate")) {
+    if (row >= 0 && row < m_entries.size() && m_entries.at(row).kindCaps().frigateApi) {
         searchFrigateRecordings(row, year, month, day);
         return;
     }
@@ -1670,11 +1673,11 @@ QString DeviceManager::playbackUrl(int row, qint64 startEpoch, bool mainStream)
     if (row < 0 || row >= m_entries.size() || startEpoch <= 0)
         return {};
     const Entry &e = m_entries.at(row);
-    if (e.rec.kind == QLatin1String("frigate")) {
+    if (e.kindCaps().frigateApi) {
         // Plays from `startEpoch` for a few hours, then stops; a seek opens a new list.
         return frigate::vodUrl(e.rec.addr, e.rec.port, e.chanName, startEpoch, startEpoch + 3 * 3600);
     }
-    if (isDirectKind(e.rec.kind) || !e.primed)
+    if (!e.reolinkReady())
         return {};
     // The FLV endpoint only accepts a start on a recording-file boundary and uses
     // `seek` for the offset into that file — a mid-file start time is rejected. Snap
@@ -1714,7 +1717,7 @@ void DeviceManager::requestHdClip(int row, qint64 startEpoch, int durationSecs)
         return;
     }
     const Entry &e = m_entries.at(row);
-    if (isDirectKind(e.rec.kind) || !e.primed) {
+    if (!e.reolinkReady()) {
         emit hdClipFailed(row, tr("no recordings on this device"));
         return;
     }
@@ -1787,7 +1790,7 @@ DownloadSource DeviceManager::downloadSource(int row)
     if (!client)
         return s;
     const Entry &e = m_entries.at(row);
-    if (isDirectKind(e.rec.kind))
+    if (e.kindCaps().direct())
         return s;
     s.hostId = e.rec.id;
     s.site = e.rec.name;
@@ -1869,7 +1872,7 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     if (row < 0 || row >= m_entries.size() || !player)
         return;
     const Entry &e = m_entries.at(row);
-    if (isDirectKind(e.rec.kind) || !e.primed)
+    if (!e.reolinkReady())
         return;
 
     BaichuanClient::Params p;
@@ -1916,7 +1919,7 @@ void DeviceManager::startTalk(int row, TalkSession *session)
     if (row < 0 || row >= m_entries.size() || !session)
         return;
     const Entry &e = m_entries.at(row);
-    if (isDirectKind(e.rec.kind) || !e.primed || !e.talk)
+    if (!e.reolinkReady() || !e.talk)
         return;
 
     BaichuanTalk::Params p;
@@ -2253,6 +2256,7 @@ QVariantMap DeviceManager::hostInfo(qint64 hostId) const
         return m;
     m["name"] = host->rec.name;
     m["kind"] = host->rec.kind;
+    mergeCaps(m, host->rec.kind);
     m["model"] = host->rec.model;
     m["addr"] = host->rec.addr;
     m["port"] = host->rec.port;
@@ -2290,6 +2294,7 @@ QVariantMap DeviceManager::cameraInfo(int row) const
     m["addr"] = e.rec.addr;
     m["channel"] = e.channel;
     m["kind"] = e.rec.kind;
+    mergeCaps(m, e.rec.kind);
     m["model"] = e.rec.model;
     m["codec"] = e.mainCodec;
     m["mainSize"] = dim(e.mainSize);
@@ -2422,7 +2427,7 @@ void DeviceManager::fetchAlerts(int row)
         return;
     }
     const Entry &e = m_entries.at(row);
-    if (isDirectKind(e.rec.kind) || !e.primed) {
+    if (!e.reolinkReady()) {
         emit alertsLoaded(row, {});
         return;
     }
@@ -2493,7 +2498,7 @@ void DeviceManager::warmPushCache()
     int i = 0;
     for (int row = 0; row < m_entries.size(); ++row) {
         const Entry &e = m_entries.at(row);
-        if (isDirectKind(e.rec.kind) || !e.primed)
+        if (!e.reolinkReady())
             continue;
         m_pushWarmed = true;   // a camera is ready; don't re-warm every poll cycle
         // Stagger so we never open several Baichuan settings sessions at once.
@@ -2541,7 +2546,7 @@ void DeviceManager::fetchRecSchedule(int row)
         return;
     }
     const Entry &e = m_entries.at(row);
-    if (isDirectKind(e.rec.kind) || !e.primed) {
+    if (!e.reolinkReady()) {
         emit recScheduleLoaded(row, {});
         return;
     }
@@ -2631,7 +2636,7 @@ void DeviceManager::fetchBcConfig(int row, int cmdId, const QString &reqBody)
         return;
     }
     const Entry &e = m_entries.at(row);
-    if (isDirectKind(e.rec.kind) || !e.primed) {
+    if (!e.reolinkReady()) {
         emit bcConfigLoaded(row, cmdId, {});
         return;
     }
@@ -2699,25 +2704,9 @@ QString DeviceManager::nameAt(int row) const
 QString DeviceManager::eventClipUrl(qint64 hostId, int channel, qint64 timestamp) const
 {
     for (const Entry &e : m_entries)
-        if (e.rec.id == hostId && e.channel == channel && e.rec.kind == QLatin1String("frigate"))
+        if (e.rec.id == hostId && e.channel == channel && e.kindCaps().frigateApi)
             return frigate::clipUrl(e.rec.addr, e.rec.port, e.chanName, timestamp);
     return {};
-}
-
-QString directLiveUrl(const QString &savedUrl, bool mainStream)
-{
-    if (mainStream)
-        return savedUrl;
-    // Hikvision: ".../Streaming/Channels/<N>01" is the main stream, "<N>02" the sub
-    // stream. Only that path segment changes; credentials and the query stay as saved.
-    static const QRegularExpression hikvisionMain(
-        QStringLiteral("(/Streaming/Channels/\\d+?)01(?=/?(?:\\?|$))"));
-    const QRegularExpressionMatch m = hikvisionMain.match(savedUrl);
-    if (!m.hasMatch())
-        return savedUrl;
-    QString url = savedUrl;
-    url.replace(m.capturedEnd(1), 2, QStringLiteral("02"));
-    return url;
 }
 
 QString DeviceManager::liveUrl(int row, bool mainStream)
@@ -2725,26 +2714,17 @@ QString DeviceManager::liveUrl(int row, bool mainStream)
     if (row < 0 || row >= m_entries.size())
         return {};
     const Entry &e = m_entries.at(row);
-
-    if (e.rec.kind == QLatin1String("frigate"))
-        return frigate::liveUrl(e.rec.addr, e.rec.port, e.chanName);
-
-    if (e.rec.kind == QLatin1String("stream")) {
-        const QString saved = directLiveUrl(e.rec.addr, mainStream);
-        if (e.rec.username.isEmpty() && e.password.isEmpty())
-            return saved;
-        QUrl u(saved);
-        u.setUserName(e.rec.username);
-        u.setPassword(e.password);
-        return u.toString(QUrl::FullyEncoded);
-    }
-
-    if (!e.primed)
-        return {};
-    // Sub stream ("Fluent") is h264 on all models; main ("Clear") may be h265.
-    const QString codec = (mainStream && !e.mainCodec.isEmpty()) ? e.mainCodec
-                                                                 : QStringLiteral("h264");
-    return api::rtspUrl(e.rec.addr, e.rec.username, e.password, e.channel, mainStream, codec);
+    device::LiveSource src;
+    src.kind = device::kindFromString(e.rec.kind);
+    src.addr = e.rec.addr;
+    src.port = e.rec.port;
+    src.username = e.rec.username;
+    src.password = e.password;
+    src.chanName = e.chanName;
+    src.channel = e.channel;
+    src.mainCodec = e.mainCodec;
+    src.primed = e.primed;
+    return device::liveUrl(src, mainStream);
 }
 
 } // namespace rl
