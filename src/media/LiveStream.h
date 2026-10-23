@@ -1,6 +1,7 @@
 #pragma once
 
 #include "LiveStreamTransport.h"
+#include "core/Backoff.h"
 #include "device/DeviceManager.h"
 
 #include <QQmlParserStatus>
@@ -111,7 +112,7 @@ private:
     bool m_bcSub = false;
     bool m_terminal = false;
     int m_retries = 0;
-    int m_backoffMs = 1000;
+    Backoff m_backoff{BackoffPolicy{1000, 30000}};
     quint64 m_attempt = 0;
     quint64 m_hideEpoch = 0;
     LiveStreamTransport::Mode m_mode = LiveStreamTransport::Mode::Url;
