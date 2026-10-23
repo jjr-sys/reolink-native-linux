@@ -57,3 +57,13 @@ _Avoid_: scene mode
 **Unmarked range**:
 The time outside the Marked range, to which the selected unmarked-range scene mode applies.
 _Avoid_: default mode
+
+## Home Assistant seam (Bosch controls)
+
+**Home Assistant transport**:
+The one-method interface through which the Bosch tour controller sends a bearer-authenticated request to Home Assistant and receives status, body, and network error. Production uses a network adapter; tests use a scripted adapter that answers each request on demand.
+_Avoid_: HA client, connection
+
+**Scripted transport**:
+A test adapter for the Home Assistant transport that records requests and lets the test choose when and how each is answered.
+_Avoid_: mock server
