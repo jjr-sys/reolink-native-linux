@@ -85,3 +85,21 @@ _Avoid_: HA client, connection
 **Scripted transport**:
 A test adapter for the Home Assistant transport that records requests and lets the test choose when and how each is answered.
 _Avoid_: mock server
+
+## Playback session
+
+**Playback session**:
+One playback view's decisions about how recorded footage reaches the screen: which transport carries it, whether a seek moves the running stream or reopens it, and when a change of quality or speed needs a reopen.
+_Avoid_: playback state, playback controller
+
+**Playback route**:
+The transport chosen for recorded footage: the NVR's HTTP-FLV sub stream, the native (Baichuan) main stream for HD, or the native sub stream for faster than real time. Direct (Frigate) footage always uses HTTP.
+_Avoid_: playback mode, quality
+
+**Seek in place**:
+Moving a running native playback stream to another moment without reconnecting.
+_Avoid_: fast seek
+
+**Recording file snap**:
+Choosing the NVR recording file that contains a requested moment (or the nearest earlier one across a gap) and the offset into it, because the HTTP-FLV endpoint only starts on file boundaries.
+_Avoid_: seek rounding

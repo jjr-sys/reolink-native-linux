@@ -1,0 +1,240 @@
+#include "device/RecordingFileSnap.h"
+#include "media/PlaybackSession.h"
+
+#include <QtTest>
+
+using namespace rl;
+namespace {
+using Route = PlaybackSession::Route;
+using Outcome = PlaybackSession::Outcome;
+
+// Scripted adapter: records what the session asked of the device, answers from fields.
+class Transport final : public PlaybackTransport
+{
+public:
+    struct Open { Route route; int row; qint64 epoch; QString url; };
+    QVector<Open> opens;
+    int stops = 0;
+    int seeks = 0;
+    bool isStreaming = false;
+    bool isBusy = false;
+    bool isDirect = false;
+    bool seekWorks = true;
+    QString url = "http://local/flv";
+    bool streaming() const override { return isStreaming; }
+    bool busy() const override { return isBusy; }
+    bool direct(int) const override { return isDirect; }
+    QString httpUrl(int, qint64) override { return url; }
+    bool seekInPlace(int, qint64) override { ++seeks; return seekWorks; }
+    void openHttp(int row, qint64 epoch, const QString &u) override
+    {
+        opens.append({Route::Http, row, epoch, u});
+    }
+    void openBaichuan(int row, qint64 epoch, bool main) override
+    {
+        opens.append({main ? Route::BaichuanMain : Route::BaichuanSub, row, epoch, {}});
+    }
+    void stop() override { ++stops; isStreaming = false; }
+};
+
+struct Fixture {
+    Transport *t = new Transport;
+    PlaybackSession s{std::unique_ptr<PlaybackTransport>(t)};
+    Fixture() { s.setDeviceRow(3); }
+};
+using Files = QVector<std::pair<qint64, qint64>>;
+} // namespace
+
+class TestPlaybackSession : public QObject
+{
+    Q_OBJECT
+private slots:
+    // ---- file snapping (moved out of DeviceManager::playbackUrl) ----
+    void snapInsideFileSeeksIntoIt()
+    {
+        const Files f{{1000, 1100}, {1200, 1300}};
+        const auto s = snapToRecordingFile(f, 1250);
+        QVERIFY(s.found);
+        QCOMPARE(s.fileStart, qint64(1200));
+        QCOMPARE(s.seekSecs, 50);
+    }
+    void snapInGapUsesNearestEarlierFile()
+    {
+        const Files f{{1000, 1100}, {1200, 1300}};
+        const auto s = snapToRecordingFile(f, 1150);
+        QVERIFY(s.found);
+        QCOMPARE(s.fileStart, qint64(1000));
+        QCOMPARE(s.seekSecs, 100); // clamped to the file length
+    }
+    void snapBeforeAnyFileIsNotFound()
+    {
+        QVERIFY(!snapToRecordingFile(Files{{1000, 1100}}, 999).found);
+        QVERIFY(!snapToRecordingFile(Files{}, 5).found);
+    }
+
+    // ---- transport choice ----
+    void routeFollowsHdAndSpeedAndDirect()
+    {
+        QCOMPARE(PlaybackSession::chooseRoute(false, 1.0, false), Route::Http);
+        QCOMPARE(PlaybackSession::chooseRoute(false, 0.5, false), Route::Http);
+        QCOMPARE(PlaybackSession::chooseRoute(false, 2.0, false), Route::BaichuanSub);
+        QCOMPARE(PlaybackSession::chooseRoute(true, 1.0, false), Route::BaichuanMain);
+        QCOMPARE(PlaybackSession::chooseRoute(true, 4.0, false), Route::BaichuanMain);
+        // Direct (Frigate) footage has one HTTP stream at 1x: HD and speed are ignored.
+        QCOMPARE(PlaybackSession::chooseRoute(true, 4.0, true), Route::Http);
+    }
+    void sdAtNormalSpeedOpensHttpSubStream()
+    {
+        Fixture f;
+        QCOMPARE(f.s.playAt(5000), Outcome::Opened);
+        QCOMPARE(f.t->opens.size(), 1);
+        QCOMPARE(f.t->opens[0].route, Route::Http);
+        QCOMPARE(f.t->opens[0].epoch, qint64(5000));
+        QCOMPARE(f.t->opens[0].url, QString("http://local/flv"));
+    }
+    void httpWithNoUrlDoesNothing()
+    {
+        Fixture f;
+        f.t->url.clear();
+        QCOMPARE(f.s.playAt(5000), Outcome::NoSource);
+        QVERIFY(f.t->opens.isEmpty());
+        QCOMPARE(f.t->stops, 0);
+    }
+    void fastSpeedUsesBaichuanSub()
+    {
+        Fixture f;
+        f.s.setSpeed(2.0);
+        f.s.playAt(5000);
+        QCOMPARE(f.t->opens.last().route, Route::BaichuanSub);
+    }
+    void hdUsesBaichuanMainAndReportsIt()
+    {
+        Fixture f;
+        f.s.setHd(true);
+        QCOMPARE(f.s.playAt(5000), Outcome::OpenedHd);
+        QCOMPARE(f.t->opens.last().route, Route::BaichuanMain);
+    }
+    void directRowStaysOnHttp()
+    {
+        Fixture f;
+        f.t->isDirect = true;
+        f.s.setHd(true);
+        f.s.setSpeed(2.0);
+        f.s.playAt(5000);
+        QCOMPARE(f.t->opens.last().route, Route::Http);
+    }
+
+    // ---- seek or reopen ----
+    void streamingBaichuanSeeksInPlace()
+    {
+        Fixture f;
+        f.s.setHd(true);
+        f.t->isStreaming = true;
+        QCOMPARE(f.s.playAt(6000), Outcome::SeekedInPlace);
+        QVERIFY(f.t->opens.isEmpty());
+        QCOMPARE(f.t->seeks, 1);
+    }
+    void failedInPlaceSeekReopens()
+    {
+        Fixture f;
+        f.s.setHd(true);
+        f.t->isStreaming = true;
+        f.t->seekWorks = false;
+        QCOMPARE(f.s.playAt(6000), Outcome::OpenedHd);
+        QCOMPARE(f.t->opens.size(), 1);
+    }
+    void notStreamingNeverTriesInPlaceSeek()
+    {
+        Fixture f;
+        f.s.setHd(true);
+        f.s.playAt(6000);
+        QCOMPARE(f.t->seeks, 0);
+    }
+    void httpAlwaysReopens()
+    {
+        Fixture f;
+        f.t->isStreaming = true;
+        f.s.playAt(6000);
+        QCOMPARE(f.t->seeks, 0);
+        QCOMPARE(f.t->opens.size(), 1);
+    }
+    void gapStopsAndOpensNothing()
+    {
+        Fixture f;
+        QCOMPARE(f.s.playAt(6000, /*covered=*/false), Outcome::Gap);
+        QCOMPARE(f.t->stops, 1);
+        QVERIFY(f.t->opens.isEmpty());
+    }
+    void noDeviceRowOpensNothingOverBaichuan()
+    {
+        Fixture f;
+        f.s.setDeviceRow(-1);
+        f.s.setHd(true);
+        QCOMPARE(f.s.playAt(6000), Outcome::NoSource);
+        QVERIFY(f.t->opens.isEmpty());
+    }
+    void playHttpAtIgnoresHdAndSpeed()
+    {
+        Fixture f; // event jump: always the light sub stream
+        f.s.setHd(true);
+        f.s.setSpeed(2.0);
+        f.s.playHttpAt(7000);
+        QCOMPARE(f.t->opens.last().route, Route::Http);
+    }
+
+    // ---- reopen on route change ----
+    void crossingOneXWhilePlayingAsksForReopen()
+    {
+        Fixture f;
+        QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
+        f.t->isStreaming = true;
+        f.s.setSpeed(2.0);
+        QCOMPARE(spy.count(), 1);
+        f.s.setSpeed(4.0); // same route
+        QCOMPARE(spy.count(), 1);
+        f.s.setSpeed(1.0);
+        QCOMPARE(spy.count(), 2);
+    }
+    void speedChangeWhileIdleDoesNotReopen()
+    {
+        Fixture f;
+        QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
+        f.s.setSpeed(2.0);
+        QCOMPARE(spy.count(), 0);
+    }
+    void connectingCountsAsPlaying()
+    {
+        Fixture f;
+        QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
+        f.t->isBusy = true;
+        f.s.setHd(true);
+        QCOMPARE(spy.count(), 1);
+    }
+    void speedChangeInHdKeepsRoute()
+    {
+        Fixture f;
+        f.s.setHd(true);
+        f.t->isStreaming = true;
+        QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
+        f.s.setSpeed(2.0);
+        QCOMPARE(spy.count(), 0);
+    }
+    void hdOnDirectRowDoesNotReopen()
+    {
+        Fixture f;
+        f.t->isDirect = true;
+        f.t->isStreaming = true;
+        QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
+        f.s.setHd(true);
+        QCOMPARE(spy.count(), 0);
+    }
+    void stopStops()
+    {
+        Fixture f;
+        f.s.stop();
+        QCOMPARE(f.t->stops, 1);
+    }
+};
+
+QTEST_MAIN(TestPlaybackSession)
+#include "test_playbacksession.moc"

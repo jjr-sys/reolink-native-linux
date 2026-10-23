@@ -14,6 +14,7 @@
 #include "device/EventManager.h"
 #include "media/StreamPlayer.h"
 #include "media/LiveStream.h"
+#include "media/PlaybackSession.h"
 #include "media/ClipLoader.h"
 #include "media/TalkSession.h"
 #include "ui/LiveArrangement.h"
@@ -182,6 +183,7 @@ int main(int argc, char *argv[])
 
     qmlRegisterType<rl::StreamPlayer>("ReolinkApp.Core", 1, 0, "StreamPlayer");
     qmlRegisterType<rl::LiveStream>("ReolinkApp.Core", 1, 0, "LiveStream");
+    qmlRegisterType<rl::PlaybackSession>("ReolinkApp.Core", 1, 0, "PlaybackSession");
     qmlRegisterType<rl::ClipLoader>("ReolinkApp.Core", 1, 0, "ClipLoader");
     qmlRegisterType<rl::TalkSession>("ReolinkApp.Core", 1, 0, "TalkSession");
     qmlRegisterType<rl::LiveArrangement>("ReolinkApp.Core", 1, 0, "LiveArrangement");

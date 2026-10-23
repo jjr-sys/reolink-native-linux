@@ -1,5 +1,6 @@
 #include <QElapsedTimer>
 #include "DeviceManager.h"
+#include "RecordingFileSnap.h"
 
 #include "core/Backoff.h"
 #include "core/Log.h"
@@ -1681,26 +1682,12 @@ QString DeviceManager::playbackUrl(int row, qint64 startEpoch, bool mainStream)
     }
     if (isDirectKind(e.rec.kind) || !e.primed)
         return {};
-    // The FLV endpoint only accepts a start on a recording-file boundary and uses
-    // `seek` for the offset into that file — a mid-file start time is rejected. Snap
-    // to the file containing startEpoch (or the nearest earlier one for a gap).
-    qint64 fileStart = -1;
-    qint64 fileEnd = 0;
-    for (const auto &f : e.recordingFiles) {
-        if (startEpoch >= f.first && startEpoch <= f.second) {
-            fileStart = f.first;
-            fileEnd = f.second;
-            break;
-        }
-        if (f.first <= startEpoch && f.first > fileStart) { // nearest earlier start
-            fileStart = f.first;
-            fileEnd = f.second;
-        }
-    }
-    if (fileStart < 0)
+    // The FLV endpoint wants a recording-file boundary plus a seek offset.
+    const RecordingFileSnap snap = snapToRecordingFile(e.recordingFiles, startEpoch);
+    if (!snap.found)
         return {}; // no recording covers this moment
-    const int seekSecs = static_cast<int>(qBound<qint64>(0, startEpoch - fileStart,
-                                                         qMax<qint64>(0, fileEnd - fileStart)));
+    const qint64 fileStart = snap.fileStart;
+    const int seekSecs = snap.seekSecs;
     // `start` is the file's PlaybackTime (its wall-clock start + the device's UTC
     // offset), which the NVR requires as a boundary.
     const QDateTime start = QDateTime::fromSecsSinceEpoch(fileStart + e.playbackOffsetSecs);
