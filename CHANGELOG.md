@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the project is pre-1.0, minor versions may still change behaviour.
 
+## [Unreleased]
+
+### Fixed
+
+- **The Farm Hikvision tile no longer pulls the camera's 4K main stream into the
+  grid.** A direct-URL camera always played the URL as saved, so the grid's
+  Fluent tile decoded 3840x2160 over the farm link. The link could not carry it,
+  the decoder reported errors and the tile reconnected every few minutes. A
+  Hikvision `/Streaming/Channels/<N>01` URL now plays `<N>02` (the camera's sub
+  stream) when a tile asks for Fluent, as every other camera does. Maximize and
+  the HD switch still play the saved main stream.
+
 ## [0.10.0-jjr] — 2026-09-20
 
 ### Added

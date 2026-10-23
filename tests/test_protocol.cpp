@@ -1,3 +1,4 @@
+#include "device/DeviceManager.h"
 #include "media/BcMediaParser.h"
 #include "protocol/BcCrypto.h"
 #include "protocol/ReolinkApi.h"
@@ -125,6 +126,28 @@ private slots:
         const QString url = api::rtspUrl(QStringLiteral("h"), QStringLiteral("user@x"),
                                          QStringLiteral("p:a/s"), 0, true);
         QCOMPARE(url, QStringLiteral("rtsp://user%40x:p%3Aa%2Fs@h:554/h264Preview_01_main"));
+    }
+
+    void directLiveUrlMapsHikvisionSubStream()
+    {
+        // A direct-URL host saves its main stream. Hikvision's <N>01 path has a <N>02
+        // sub stream for Fluent tiles; anything else plays as saved at either quality.
+        const QString hik = QStringLiteral("rtsp://10.0.0.9:554/Streaming/Channels/101");
+        QCOMPARE(rl::directLiveUrl(hik, true), hik);
+        QCOMPARE(rl::directLiveUrl(hik, false),
+                 QStringLiteral("rtsp://10.0.0.9:554/Streaming/Channels/102"));
+        QCOMPARE(rl::directLiveUrl(QStringLiteral("rtsp://h/Streaming/Channels/1601/"), false),
+                 QStringLiteral("rtsp://h/Streaming/Channels/1602/"));
+        QCOMPARE(rl::directLiveUrl(
+                     QStringLiteral("rtsp://h/Streaming/Channels/101?transportmode=unicast"),
+                     false),
+                 QStringLiteral("rtsp://h/Streaming/Channels/102?transportmode=unicast"));
+        const QString sub = QStringLiteral("rtsp://h/Streaming/Channels/102");
+        QCOMPARE(rl::directLiveUrl(sub, false), sub);
+        const QString other = QStringLiteral("rtsp://h:554/h264Preview_01_main");
+        QCOMPARE(rl::directLiveUrl(other, false), other);
+        QCOMPARE(rl::directLiveUrl(QStringLiteral("rtsp://h/Streaming/Channels/01"), false),
+                 QStringLiteral("rtsp://h/Streaming/Channels/01"));
     }
 
     void ipv6HostsAreBracketed()

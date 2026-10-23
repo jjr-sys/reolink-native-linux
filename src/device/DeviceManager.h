@@ -41,6 +41,12 @@ class ReolinkHttpClient;
 
 namespace rl {
 
+// The URL a direct-URL ("stream") host plays at the asked quality. The saved URL is
+// its main stream. Hikvision cameras serve a channel's main stream at
+// /Streaming/Channels/<N>01 and its sub stream at <N>02, so a Fluent tile gets the
+// small stream there as it does for every other camera; any other URL plays as saved.
+QString directLiveUrl(const QString &savedUrl, bool mainStream);
+
 // The device tree behind the sidebar: hosts from the database, exposed to QML.
 // Adding a camera/NVR validates it over the HTTP-CGI API on a worker thread
 // (Login + GetDevInfo + GetEnc) and fills in name/model/codec. Credentials live

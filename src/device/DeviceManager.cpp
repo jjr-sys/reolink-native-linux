@@ -2704,6 +2704,22 @@ QString DeviceManager::eventClipUrl(qint64 hostId, int channel, qint64 timestamp
     return {};
 }
 
+QString directLiveUrl(const QString &savedUrl, bool mainStream)
+{
+    if (mainStream)
+        return savedUrl;
+    // Hikvision: ".../Streaming/Channels/<N>01" is the main stream, "<N>02" the sub
+    // stream. Only that path segment changes; credentials and the query stay as saved.
+    static const QRegularExpression hikvisionMain(
+        QStringLiteral("(/Streaming/Channels/\\d+?)01(?=/?(?:\\?|$))"));
+    const QRegularExpressionMatch m = hikvisionMain.match(savedUrl);
+    if (!m.hasMatch())
+        return savedUrl;
+    QString url = savedUrl;
+    url.replace(m.capturedEnd(1), 2, QStringLiteral("02"));
+    return url;
+}
+
 QString DeviceManager::liveUrl(int row, bool mainStream)
 {
     if (row < 0 || row >= m_entries.size())
@@ -2714,9 +2730,10 @@ QString DeviceManager::liveUrl(int row, bool mainStream)
         return frigate::liveUrl(e.rec.addr, e.rec.port, e.chanName);
 
     if (e.rec.kind == QLatin1String("stream")) {
+        const QString saved = directLiveUrl(e.rec.addr, mainStream);
         if (e.rec.username.isEmpty() && e.password.isEmpty())
-            return e.rec.addr;
-        QUrl u(e.rec.addr);
+            return saved;
+        QUrl u(saved);
         u.setUserName(e.rec.username);
         u.setPassword(e.password);
         return u.toString(QUrl::FullyEncoded);
