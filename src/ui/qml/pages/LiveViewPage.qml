@@ -19,13 +19,15 @@ Item {
     signal popOut(int deviceRow, string label)
     signal openBoschTourRequested()
 
-    property int preset: 4
-    property int maximizedIndex: -1
-    property int selectedIndex: -1
+    // The arrangement (which camera is in which pane, paging, focus, the saved layout) lives in
+    // `arrangement`; this page renders it and reports what the user did.
+    property alias preset: arrangement.preset
+    property alias maximizedKey: arrangement.maximized   // "hostId:channel" or ""
+    property alias selectedKey: arrangement.selected
 
     // A maximized pane is effectively the single ("1") view, so light that button
     // up in the layout toolbar rather than the underlying grid preset.
-    readonly property int activePreset: maximizedIndex >= 0 ? 1 : tabOpen ? 0 : preset
+    readonly property int activePreset: maximizedKey !== "" ? 1 : tabOpen ? 0 : preset
 
     // ---- Mosaic ------------------------------------------------------------
     // A switch on the grid size (wayfinder/mosaic-live-view): the current grid page's
@@ -66,7 +68,7 @@ Item {
     }
     function openTab(id) {
         mosaicTab = id;
-        maximizedIndex = -1;
+        maximizedKey = "";
     }
 
     function cameraKey(row) { return Mosaics.cameraKey(row); }
@@ -91,11 +93,11 @@ Item {
                     list.push(mosaicItem(byKey[cams[k]], list.length));
             return Mosaics.arrange(list, tabMosaic.grouping, tabMosaic.siteOrder).map(x => x.row);
         }
-        for (var i = pageOffset; i < pageOffset + preset && i < paneSlots.length; ++i) {
-            var r = paneSlots[i];
-            if (r >= 0 && r < Devices.count)
-                list.push(mosaicItem(r, list.length));
-        }
+        var byPageKey = rowsByKey();
+        arrangement.pageKeys.forEach(k => {
+            if (byPageKey[k] !== undefined)
+                list.push(mosaicItem(byPageKey[k], list.length));
+        });
         return Mosaics.arrange(list, "site", []).map(x => x.row);
     }
     // Drops in a named mosaic: a camera not in it is added (before the pane it lands on);
@@ -112,16 +114,10 @@ Item {
     function tabDrop(targetRow, sourceRow) {
         if (!tabDropAllowed(targetRow, sourceRow) || targetRow === sourceRow)
             return;
-        var cams = tabMosaic.cameras.slice();
-        var ti = cams.indexOf(cameraKey(targetRow)), si = cams.indexOf(cameraKey(sourceRow));
-        if (ti < 0)
+        var cams = tabMosaic.cameras;
+        if (cams.indexOf(cameraKey(targetRow)) < 0)
             return;
-        if (si < 0) {
-            cams.splice(ti, 0, cameraKey(sourceRow));
-        } else {
-            cams[si] = cams[ti];
-            cams[ti] = cameraKey(sourceRow);
-        }
+        cams = arrangement.dropInto(cams, cameraKey(targetRow), cameraKey(sourceRow));
         Mosaics.update(mosaicTab, { cameras: cams });
     }
 
@@ -145,7 +141,7 @@ Item {
     function rebuildMosaic() {
         if (!mosaicShown)
             return;
-        if (!mosaicWaitOver && (!layoutRestored || hasPendingPanes() || tabMissing()))
+        if (!mosaicWaitOver && (!arrangement.restored || arrangement.hasPending || tabMissing()))
             return;
         mosaic.panes = mosaicRows().map(r => ({ row: r,
                                                 large: Mosaics.has(activeMosaic, "large", cameraKey(r)),
@@ -206,8 +202,8 @@ Item {
     function showCamera(row) {
         if (row < 0 || row >= Devices.count)
             return;
-        maximizedIndex = row;
-        selectedIndex = row;
+        maximizedKey = cameraKey(row);
+        selectedKey = maximizedKey;
     }
     // Column/row counts per preset. 6 (3x2) and 20 (5x4) are the non-square layouts,
     // both wider than tall to suit a landscape screen.
@@ -217,87 +213,51 @@ Item {
     readonly property int rows: preset === 1 ? 1 : (preset === 4 || preset === 6) ? 2 : preset === 9 ? 3
                               : (preset === 16 || preset === 20) ? 4 : 5
 
-    // ---- Paging ---------------------------------------------------------------
-    // With more cameras than the grid has cells, the grid shows one page of `preset`
-    // cameras at a time (in pane order). Paging never touches the saved arrangement.
-    property int gridPage: 0
-    readonly property int pageCount: Math.max(1, Math.ceil(Devices.count / preset))
-    readonly property int curPage: Math.min(gridPage, pageCount - 1)
-    readonly property int pageOffset: curPage * preset
-    onPresetChanged: { gridPage = 0; layoutStore.preset = preset; repackMosaic(); }
+    // ---- Paging and arrangement ----------------------------------------------
+    // The grid shows one page of `preset` cameras at a time, in pane order; paging never
+    // touches the saved arrangement. All of it is LiveArrangement's.
+    readonly property int pageCount: arrangement.pageCount
+    readonly property int curPage: arrangement.curPage
+    readonly property int pageOffset: arrangement.pageOffset
+    onPresetChanged: { layoutStore.preset = preset; repackMosaic(); }
+    LiveArrangement {
+        id: arrangement
+        saved: layoutStore.arrangement
+        onSaveRequested: (text) => layoutStore.arrangement = text
+        onPageChanged: page.repackMosaic()
+        onPaneKeysChanged: page.scheduleMosaic()
+    }
 
-    // Previous/next: a maximized camera steps to its neighbour in pane order;
-    // otherwise the grid moves a page. Both wrap around.
+    // Previous/next: a maximized camera steps to its neighbour in pane order (a tab's order
+    // in a tab); otherwise the grid moves a page. Both wrap around.
     function step(dir) {
-        if (maximizedIndex >= 0) {
-            var order = tabOpen ? mosaic.layoutPanes.map(p => p.row) : paneSlots.filter(r => r >= 0);
-            var i = order.indexOf(maximizedIndex);
-            if (order.length < 2 || i < 0)
+        if (maximizedKey !== "") {
+            var order = tabOpen ? mosaic.layoutPanes.map(p => cameraKey(p.row)) : [];
+            if (tabOpen && order.length < 2)
                 return;
-            var row = order[(i + dir + order.length) % order.length];
-            maximizedIndex = row;
-            selectedIndex = row;
+            var k = arrangement.neighbour(maximizedKey, dir, order);
+            if (k !== "") {
+                maximizedKey = k;
+                selectedKey = k;
+            }
         } else if (pageCount > 1) {
-            gridPage = (curPage + dir + pageCount) % pageCount;
+            arrangement.turnPage(dir);
         }
     }
-    readonly property bool canStep: maximizedIndex >= 0 ? Devices.count > 1 : !tabOpen && pageCount > 1
+    readonly property bool canStep: maximizedKey !== "" ? arrangement.cameras.length > 1 : !tabOpen && pageCount > 1
 
-    // ---- Which camera sits in which pane -----------------------------------
-    // paneSlots[pane] = device row (-1 = empty). Without this the grid is a
-    // straight 1:1 map of model order, so a camera can only ever appear in the
-    // pane matching its position in the sidebar. Always kept at maxPanes long so
-    // an arrangement made in the 16-grid survives a trip through the 4-grid. Longer than
-    // the biggest grid so cameras beyond 25 can still be reached by paging.
-    readonly property int maxPanes: 32
-    property var paneSlots: []
-
-    onGridPageChanged: repackMosaic()
-    onPaneSlotsChanged: scheduleMosaic()
-
-    function rowAt(pane) {
-        return pane >= 0 && pane < paneSlots.length ? paneSlots[pane] : -1;
-    }
-    function paneOfRow(row) { return row < 0 ? -1 : paneSlots.indexOf(row); }
-
-    // Put `row` in `pane`. If it is already on the grid the two panes trade
-    // places, so a drag can never quietly drop a camera off the layout.
-    function assignPane(pane, row) {
-        if (pane < 0 || pane >= maxPanes || row < 0 || row >= Devices.count)
-            return;
-        var s = paneSlots.slice();
-        while (s.length < maxPanes) s.push(-1);
-        var from = s.indexOf(row);
-        if (from === pane)
-            return;
-        var displaced = s[pane];
-        s[pane] = row;
-        if (from >= 0)
-            s[from] = displaced;   // swap
-        paneSlots = s;
-        saveLayout();
-    }
-
-    // Repair the mapping against the current model: drop rows that no longer
-    // exist, remove duplicates, then fill gaps with cameras that aren't placed.
-    // Runs whenever devices are added or removed.
-    function syncSlots() {
-        var s = [];
-        var seen = ({});
-        for (var i = 0; i < maxPanes; ++i) {
-            var r = i < paneSlots.length ? paneSlots[i] : -1;
-            if (r < 0 || r >= Devices.count || seen[r])
-                r = -1;
-            else
-                seen[r] = true;
-            s.push(r);
+    function keyAt(pane) { return arrangement.paneKeys[pane] || ""; }
+    // A drop on a pane: a camera already on the grid trades places with it.
+    function assignPane(pane, row) { arrangement.assign(pane, cameraKey(row)); }
+    // The device model changed: tell the arrangement which cameras exist now.
+    function syncCameras() {
+        var keys = [];
+        for (var r = 0; r < Devices.count; ++r) {
+            var k = cameraKey(r);
+            if (k)
+                keys.push(k);
         }
-        var free = [];
-        for (var d = 0; d < Devices.count; ++d)
-            if (!seen[d]) free.push(d);
-        for (i = 0; i < s.length && free.length > 0; ++i)
-            if (s[i] < 0) s[i] = free.shift();
-        paneSlots = s;
+        arrangement.cameras = keys;
     }
 
     // ---- Layout persistence -------------------------------------------------
@@ -316,8 +276,6 @@ Item {
         id: shapeStore
         category: "mosaicShapes"       // "hostId:channel" = decoded width/height
     }
-    property bool layoutRestored: false
-
     // The Highlights switch (wayfinder/detection-highlights), remembered.
     Settings {
         id: highlightStore
@@ -325,137 +283,13 @@ Item {
         property bool on: true
     }
 
-    // Saved cameras that had no row when the layout was restored ("pane index" -> "hostId:channel").
-    // A host whose camera list arrives late (its API is slow or down at start) must get its
-    // cameras back in their saved panes, and the saved arrangement must not be overwritten with
-    // stand-ins meanwhile.
-    property var pendingPanes: ({})
-    function hasPendingPanes() { return Object.keys(pendingPanes).length > 0; }
-    Timer {
-        id: pendingGiveUp
-        interval: 120000
-        onTriggered: { page.pendingPanes = ({}); page.saveLayout(); }
-    }
-
-    function saveLayout() {
-        if (!layoutRestored || hasPendingPanes())
-            return;
-        var out = [];
-        for (var i = 0; i < maxPanes; ++i) {
-            var r = i < paneSlots.length ? paneSlots[i] : -1;
-            if (r < 0) { out.push("-"); continue; }
-            var c = Devices.cameraInfo(r);
-            out.push(c && c.hostId !== undefined ? c.hostId + ":" + c.channel : "-");
-        }
-        layoutStore.arrangement = out.join(",");
-    }
-
-    function restoreLayout() {
-        if (layoutRestored || Devices.count === 0)
-            return;
-        layoutRestored = true;
-        var saved = layoutStore.arrangement;
-        if (saved.length > 0) {
-            // Build "hostId:channel" -> row once, then place each saved pane.
-            var byKey = ({});
-            for (var r = 0; r < Devices.count; ++r) {
-                var c = Devices.cameraInfo(r);
-                if (c && c.hostId !== undefined)
-                    byKey[c.hostId + ":" + c.channel] = r;
-            }
-            var parts = saved.split(",");
-            var s = [];
-            var used = ({});
-            for (var i = 0; i < maxPanes; ++i) {
-                var key = i < parts.length ? parts[i] : "-";
-                var row = (key !== "-" && byKey[key] !== undefined) ? byKey[key] : -1;
-                if (row >= 0 && used[row]) row = -1;
-                if (row >= 0) used[row] = true;
-                s.push(row);
-            }
-            paneSlots = s;
-            var pending = ({});
-            for (var p = 0; p < maxPanes && p < parts.length; ++p)
-                if (parts[p] !== "-" && byKey[parts[p]] === undefined)
-                    pending[p] = parts[p];
-            pendingPanes = pending;
-            if (hasPendingPanes())
-                pendingGiveUp.restart();
-        }
-        syncSlots();   // place any camera the saved layout didn't cover
-    }
-
-    // Rows arrived: put any saved camera that now exists back in its pane.
-    function applyPendingPanes() {
-        if (!hasPendingPanes())
-            return;
-        var byKey = ({});
-        for (var r = 0; r < Devices.count; ++r) {
-            var c = Devices.cameraInfo(r);
-            if (c && c.hostId !== undefined)
-                byKey[c.hostId + ":" + c.channel] = r;
-        }
-        var s = paneSlots.slice();
-        var left = ({});
-        for (var p in pendingPanes) {
-            var row = byKey[pendingPanes[p]];
-            if (row === undefined) { left[p] = pendingPanes[p]; continue; }
-            for (var i = 0; i < s.length; ++i)
-                if (s[i] === row) s[i] = -1;   // it was standing in elsewhere
-            s[parseInt(p)] = row;
-        }
-        paneSlots = s;
-        pendingPanes = left;
-        if (!hasPendingPanes()) {
-            pendingGiveUp.stop();
-            syncSlots();
-            saveLayout();
-        }
-    }
-
-    // Removing a device shifts row indices; keep maximized/selected pointing at the
-    // right pane (or clear them) so the grid never blanks or maximizes the wrong cam.
+    // Row indices shift when a device is added, removed or the model reset; the arrangement
+    // is keyed by camera, so it only needs to hear which cameras exist.
     Connections {
         target: Devices
-        function onRowsRemoved(parent, first, last) {
-            const removed = last - first + 1;
-            if (page.maximizedIndex > last)
-                page.maximizedIndex -= removed;
-            else if (page.maximizedIndex >= first)
-                page.maximizedIndex = -1;
-            if (page.selectedIndex > last)
-                page.selectedIndex -= removed;
-            else if (page.selectedIndex >= first)
-                page.selectedIndex = -1;
-            // Slots hold row indices, which shift the same way.
-            var s = page.paneSlots.slice();
-            for (var i = 0; i < s.length; ++i) {
-                if (s[i] > last) s[i] -= removed;
-                else if (s[i] >= first) s[i] = -1;
-            }
-            page.paneSlots = s;
-            page.syncSlots();
-            page.saveLayout();
-        }
-        function onRowsInserted(parent, first, last) {
-            const added = last - first + 1;
-            var s = page.paneSlots.slice();
-            for (var i = 0; i < s.length; ++i)
-                if (s[i] >= first) s[i] += added;
-            page.paneSlots = s;
-            // First devices to arrive are the cue to apply the saved layout.
-            if (!page.layoutRestored) {
-                page.restoreLayout();
-            } else {
-                page.applyPendingPanes();
-                page.syncSlots();
-            }
-        }
-        function onModelReset() {
-            page.paneSlots = [];
-            page.layoutRestored = false;
-            page.restoreLayout();
-        }
+        function onRowsRemoved() { page.syncCameras(); }
+        function onRowsInserted() { page.syncCameras(); }
+        function onModelReset() { arrangement.reset(); page.syncCameras(); }
     }
 
     Component.onCompleted: {
@@ -464,7 +298,7 @@ Item {
         mosaicMode = layoutStore.mosaic;
         if (Mosaics.find(layoutStore.tab))
             mosaicTab = layoutStore.tab;
-        restoreLayout();
+        syncCameras();
         Highlights.enabled = highlightStore.on;
     }
 
@@ -502,7 +336,7 @@ Item {
                         onClicked: {
                             page.preset = parent.modelData;
                             page.mosaicTab = "";
-                            page.maximizedIndex = -1;
+                            page.maximizedKey = "";
                         }
                     }
                     ToolTip {
@@ -543,7 +377,7 @@ Item {
                         // From a tab, Mosaic goes back to the grid-page mosaic.
                         page.mosaicMode = page.tabOpen || !page.mosaicMode;
                         page.mosaicTab = "";
-                        page.maximizedIndex = -1;
+                        page.maximizedKey = "";
                     }
                 }
                 ToolTip {
@@ -810,7 +644,7 @@ Item {
                         x: (parent.width - width) / 2
                         y: parent.height + 6
                         contentItem: Text {
-                            text: page.maximizedIndex >= 0
+                            text: page.maximizedKey !== ""
                                 ? (modelData < 0 ? qsTr("Previous camera") : qsTr("Next camera"))
                                 : (modelData < 0 ? qsTr("Previous page") : qsTr("Next page"))
                             color: Theme.text; font.pixelSize: 11
@@ -820,7 +654,7 @@ Item {
                 }
             }
             Text {
-                visible: page.canStep && page.maximizedIndex < 0
+                visible: page.canStep && page.maximizedKey === ""
                 text: qsTr("%1 / %2").arg(page.curPage + 1).arg(page.pageCount)
                 color: Theme.textMuted
                 font.pixelSize: 12
@@ -877,7 +711,7 @@ Item {
 
             Text {
                 anchors.centerIn: parent
-                visible: page.mosaicShown && page.maximizedIndex < 0 && mosaic.layoutPanes.length === 0
+                visible: page.mosaicShown && page.maximizedKey === "" && mosaic.layoutPanes.length === 0
                 text: page.mosaicWaitOver && page.mosaicRows().length === 0
                       ? (page.tabOpen ? qsTr("None of this mosaic's cameras are here")
                                       : qsTr("No cameras on this page"))
@@ -912,7 +746,7 @@ Item {
                 LivePane {
                     required property int index
                     readonly property int slot: page.pageOffset + index
-                    visible: page.maximizedIndex === -1 && !page.mosaicShown && page.rowAt(slot) < 0
+                    visible: page.maximizedKey === "" && !page.mosaicShown && page.keyAt(slot) === ""
                     width: gridArea.cellWidth
                     height: gridArea.cellHeight
                     x: gridArea.slotX(slot)
@@ -943,15 +777,15 @@ Item {
                     required property string viewMode
                     required property bool online
 
-                    readonly property int slot: page.paneOfRow(index)
-                    readonly property bool isMaximized: page.maximizedIndex === index
+                    readonly property int slot: arrangement.paneKeys.indexOf(cameraKey)
+                    readonly property bool isMaximized: page.maximizedKey === cameraKey
                     readonly property var mrect: page.mosaicShown ? page.mosaicRectByRow[index] : undefined
                     readonly property bool inMosaic: mrect !== undefined
 
                     // A maximized pane shows even when its slot is beyond the grid
                     // preset (e.g. camera 5 clicked while in the 4-grid).
                     visible: isMaximized ||
-                             (page.maximizedIndex === -1 && (page.mosaicShown ? inMosaic
+                             (page.maximizedKey === "" && (page.mosaicShown ? inMosaic
                               : slot >= page.pageOffset && slot < page.pageOffset + page.preset))
                     width: isMaximized ? gridArea.width : inMosaic ? mrect.width : gridArea.cellWidth
                     height: isMaximized ? gridArea.height : inMosaic ? mrect.height : gridArea.cellHeight
@@ -974,7 +808,7 @@ Item {
                     viewRotation: rotationOverride
                     fisheyeLens: isFisheye
                     fisheyeMode: viewMode
-                    selected: page.selectedIndex === index
+                    selected: page.selectedKey === cameraKey
                     audioAllowed: !page.audioSuppressed
                     pageActive: page.active && page.visible
                     // Sub-stream in the grid, main stream when maximized (DESIGN §5.7). In a
@@ -999,17 +833,17 @@ Item {
                     capSiren: hasSiren
                     capFloodlight: hasFloodlight
                     capTalk: hasTalk
-                    // idx is the device row: maximizedIndex/selectedIndex track
-                    // cameras, not cells, so they survive a rearrange.
-                    onToggleMaximize: (idx) => {
-                        page.maximizedIndex = page.maximizedIndex === idx ? -1 : idx;
+                    // Focus is kept by camera key, not cell or row, so it survives a
+                    // rearrange and a device being added or removed.
+                    onToggleMaximize: {
+                        page.maximizedKey = page.maximizedKey === cameraKey ? "" : cameraKey;
                         // A double-click arrives as click + double-click; the click may
                         // just have deselected this tile. Maximizing keeps it selected.
-                        page.selectedIndex = idx;
+                        page.selectedKey = cameraKey;
                     }
                     // Click selects (blue border + sound); clicking the selected tile
                     // again deselects it and mutes.
-                    onClicked: (idx) => page.selectedIndex = page.selectedIndex === idx ? -1 : idx
+                    onClicked: page.selectedKey = page.selectedKey === cameraKey ? "" : cameraKey
                     onPopOut: (row, lbl) => page.popOut(row, lbl)
                     onOpenBoschTourRequested: page.openBoschTourRequested()
                     onCameraDropped: (targetPane, row) => {
