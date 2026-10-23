@@ -16,6 +16,7 @@
 #include "media/LiveStream.h"
 #include "media/ClipLoader.h"
 #include "media/TalkSession.h"
+#include "ui/LiveArrangement.h"
 #include "ui/MosaicLayout.h"
 
 #include <QApplication>
@@ -183,6 +184,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::LiveStream>("ReolinkApp.Core", 1, 0, "LiveStream");
     qmlRegisterType<rl::ClipLoader>("ReolinkApp.Core", 1, 0, "ClipLoader");
     qmlRegisterType<rl::TalkSession>("ReolinkApp.Core", 1, 0, "TalkSession");
+    qmlRegisterType<rl::LiveArrangement>("ReolinkApp.Core", 1, 0, "LiveArrangement");
     qmlRegisterType<rl::MosaicLayout>("ReolinkApp.Core", 1, 0, "MosaicLayout");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);
