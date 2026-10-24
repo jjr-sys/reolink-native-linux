@@ -599,6 +599,23 @@ void DeviceManager::testDevice(const QString &addr, const QString &username,
     }));
 }
 
+namespace {
+// The restream login is kept in the keyring as "user\npassword" (a user name has no newline).
+QString restreamKey(qint64 hostId) { return QStringLiteral("restream-login/%1").arg(hostId); }
+QString packRestream(const QString &user, const QString &password) { return user + QLatin1Char('\n') + password; }
+void unpackRestream(const QString &packed, QString *user, QString *password)
+{
+    const int nl = packed.indexOf(QLatin1Char('\n'));
+    if (nl <= 0) {
+        user->clear();
+        password->clear();
+        return;
+    }
+    *user = packed.left(nl);
+    *password = packed.mid(nl + 1);
+}
+} // namespace
+
 void DeviceManager::reconnect(int row)
 {
     if (row < 0 || row >= m_entries.size())
@@ -766,6 +783,7 @@ void DeviceManager::removeDevice(int row)
     delete m_frigateLive.take(id);
     m_db->removeHost(id);
     m_credentials->remove(id);
+    m_credentials->removeSecret(restreamKey(id));
     emit countChanged();
 }
 
@@ -835,6 +853,8 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
             m_entries[i].problem = v.problem;
             m_entries[i].primed = true;
             m_entries[i].password = v.password;
+            m_entries[i].restreamUser = v.restreamUser;
+            m_entries[i].restreamPassword = v.restreamPassword;
         }
         emit dataChanged(index(first), index(first + oldCount - 1));
         if (changed)
@@ -880,6 +900,8 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
         e.talk = ch.caps.talk;
         e.isAdmin = v.isAdmin;
         e.password = v.password;
+        e.restreamUser = v.restreamUser;
+        e.restreamPassword = v.restreamPassword;
         e.primed = true;
         e.problem = Problem::None;
         e.rotationOverride = loadRotation(rec.id, ch.channel);
@@ -941,7 +963,8 @@ DeviceManager::Validation DeviceManager::validateFrigate(const HostRecord &rec,
 }
 
 void DeviceManager::addFrigate(const QString &name, const QString &host, int port,
-                               const QString &username, const QString &password)
+                               const QString &username, const QString &password,
+                               const QString &restreamUser, const QString &restreamPassword)
 {
     HostRecord rec;
     rec.kind = device::kindToString(device::Kind::Frigate);
@@ -955,6 +978,11 @@ void DeviceManager::addFrigate(const QString &name, const QString &host, int por
         emit deviceError(host, m_db->lastError());
         return;
     }
+    if (!restreamUser.trimmed().isEmpty()
+        && !m_credentials->storeSecret(restreamKey(rec.id),
+                                       packRestream(restreamUser.trimmed(), restreamPassword),
+                                       QStringLiteral("Frigate restream login")))
+        qCWarning(lcCore) << "Keyring unavailable; restream login not saved";
     beginInsertRows({}, m_entries.size(), m_entries.size());
     Entry e;
     e.rec = rec;
@@ -964,6 +992,45 @@ void DeviceManager::addFrigate(const QString &name, const QString &host, int por
     endInsertRows();
     emit countChanged();
     validateAsync(rec.id, password, !password.isEmpty());
+}
+
+void DeviceManager::setRestreamLogin(int row, const QString &user, const QString &password)
+{
+    if (row < 0 || row >= m_entries.size())
+        return;
+    const Entry &at = m_entries.at(row);
+    if (!at.kindCaps().frigateApi)
+        return;
+    const qint64 hostId = at.rec.id;
+    const QString u = user.trimmed();
+    // An empty password keeps the saved one (user-only fix), as updateCredentials does.
+    QString pw = password;
+    if (pw.isEmpty() && !u.isEmpty()) {
+        for (const Entry &e : std::as_const(m_entries))
+            if (e.rec.id == hostId) {
+                pw = e.restreamPassword;
+                break;
+            }
+    }
+    for (int i = 0; i < m_entries.size(); ++i) {
+        if (m_entries[i].rec.id != hostId)
+            continue;
+        m_entries[i].restreamUser = u;
+        m_entries[i].restreamPassword = u.isEmpty() ? QString() : pw;
+    }
+    // Stored before the host revalidates (as addStreamUrl stores), so the validation reads it back
+    // rather than racing a background write; a keyring call is a few milliseconds.
+    if (u.isEmpty())
+        m_credentials->removeSecret(restreamKey(hostId));
+    else if (!m_credentials->storeSecret(restreamKey(hostId), packRestream(u, pw),
+                                         QStringLiteral("Frigate restream login")))
+        qCWarning(lcCore) << "Keyring unavailable; restream login not saved";
+    reconnect(row);
+}
+
+QString DeviceManager::restreamUserAt(int row) const
+{
+    return row >= 0 && row < m_entries.size() ? m_entries.at(row).restreamUser : QString();
 }
 
 void DeviceManager::testFrigate(const QString &host, int port,
@@ -1132,7 +1199,10 @@ void DeviceManager::validateAsync(qint64 hostId, const QString &newPassword, boo
         }
 
         if (device::capabilities(device::kindFromString(rec.kind)).frigateApi) {
-            postValidation(hostId, validateFrigate(rec, password));
+            Validation v = validateFrigate(rec, password);
+            unpackRestream(m_credentials->lookupSecret(restreamKey(hostId)), &v.restreamUser,
+                           &v.restreamPassword);
+            postValidation(hostId, v);
             return;
         }
 
@@ -2373,6 +2443,8 @@ QString DeviceManager::liveUrl(int row, bool mainStream)
     src.port = e.rec.port;
     src.username = e.rec.username;
     src.password = e.password;
+    src.restreamUser = e.restreamUser;
+    src.restreamPassword = e.restreamPassword;
     src.chanName = e.chanName;
     src.channel = e.channel;
     src.mainCodec = e.mainCodec;

@@ -123,6 +123,9 @@ struct Validation {
     bool isAdmin = false;
     bool talk = false;
     QString password;
+    // A Frigate server's go2rtc restream login, read from the keyring beside the password.
+    QString restreamUser;
+    QString restreamPassword;
     api::BatteryInfo battery;
     std::shared_ptr<ReolinkHttpClient> client;
     // The HTTP API did not answer but Baichuan listed the cameras: show them (live view

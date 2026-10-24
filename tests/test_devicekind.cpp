@@ -88,6 +88,19 @@ private slots:
         QVERIFY(!looksLikeBoschFeed(QString()));
     }
 
+    void frigateLiveUrlCarriesTheRestreamLogin()
+    {
+        LiveSource s;
+        s.kind = Kind::Frigate;
+        s.addr = "h";
+        s.port = 8971;
+        s.chanName = "bosch_camera";
+        QCOMPARE(liveUrl(s, true), QString("rtsp://h:8554/bosch_camera"));
+        s.restreamUser = "outpost";
+        s.restreamPassword = "pw";
+        QCOMPARE(liveUrl(s, true), QString("rtsp://outpost:pw@h:8554/bosch_camera"));
+        QCOMPARE(liveUrl(s, false), QString("rtsp://outpost:pw@h:8554/bosch_camera"));
+    }
     void liveUrlPerKind()
     {
         LiveSource s;

@@ -600,9 +600,13 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
         // A recorder answering "not found" for a camera's stream means it has no video
         // from that camera (unreachable, or not a stream it can relay), not that the
         // app is stuck: say so.
+        // A server that wants a login (a Frigate restream, an IP camera) answers 401: say so, since
+        // "Server returned 401 Unauthorized" reads like the app failing rather than the login.
         const QString reason = rc == AVERROR_HTTP_NOT_FOUND
             ? QStringLiteral("Stream not found: the recorder has no video from this camera")
-            : QString::fromUtf8(buf);
+            : rc == AVERROR_HTTP_UNAUTHORIZED
+                ? QStringLiteral("Sign-in refused (401): this stream needs a login, or the saved one is wrong")
+                : QString::fromUtf8(buf);
         postState(s, State::Error, reason);
         return !packetSource && (live || s->retryOnError.load());
     }

@@ -120,7 +120,15 @@ public:
                                const QString &password, bool https = true, int port = 0);
     // A Frigate server (http, no login): each enabled camera becomes a row.
     Q_INVOKABLE void addFrigate(const QString &name, const QString &host, int port = 8971,
-                                const QString &username = {}, const QString &password = {});
+                                const QString &username = {}, const QString &password = {},
+                                const QString &restreamUser = {},
+                                const QString &restreamPassword = {});
+    // A Frigate server's go2rtc restream can require its own login (Basic), which is not the
+    // Frigate login. Stores it in the keyring (empty user clears it) and reconnects the host
+    // so its cameras reopen with it.
+    Q_INVOKABLE void setRestreamLogin(int row, const QString &user, const QString &password);
+    // The saved restream user of a Frigate host's row, for the edit dialog (never the password).
+    Q_INVOKABLE QString restreamUserAt(int row) const;
     // Checks the address answers like Frigate; reports through testDeviceResult.
     Q_INVOKABLE void testFrigate(const QString &host, int port = 8971,
                                  const QString &username = {}, const QString &password = {});
@@ -373,6 +381,8 @@ private:
         QSize subSize;                              // GetEnc-declared sub resolution
         QString uid;                                // per-camera UID (Baichuan playback)
         QString password;                           // in-memory only (keyring at rest)
+        QString restreamUser;                       // Frigate go2rtc login (keyring at rest)
+        QString restreamPassword;
         bool primed = false;                        // password loaded?
         bool validated = false;                     // channel list came from the HTTP API
         bool degraded = false;                      // channel list came from Baichuan only

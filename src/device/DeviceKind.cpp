@@ -99,7 +99,7 @@ QString liveUrl(const LiveSource &s, bool mainStream)
 {
     switch (s.kind) {
     case Kind::Frigate:
-        return frigate::liveUrl(s.addr, s.port, s.chanName);
+        return frigate::liveUrl(s.addr, s.port, s.chanName, s.restreamUser, s.restreamPassword);
     case Kind::Stream: {
         const QString saved = directLiveUrl(s.addr, mainStream);
         if (s.username.isEmpty() && s.password.isEmpty())

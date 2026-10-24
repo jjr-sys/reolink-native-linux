@@ -64,7 +64,8 @@ Dialog {
                 if (ok) {
                     Devices.addFrigate(frigateNameField.text, frigateHostField.text.trim(),
                                        frigatePortField.text.length > 0 ? parseInt(frigatePortField.text) : 8971,
-                                       frigateUserField.text.trim(), frigatePasswordField.text);
+                                       frigateUserField.text.trim(), frigatePasswordField.text,
+                                       frigateRestreamUserField.text.trim(), frigateRestreamPasswordField.text);
                     dialog.close();
                 } else if (problem === "auth") {
                     dialog.errorText = qsTr("Frigate rejected the sign-in. Check the username and password.");
@@ -421,9 +422,18 @@ Dialog {
                     placeholderText: qsTr("Frigate password")
                     echoMode: TextInput.Password
                 }
+                ThemedField {
+                    id: frigateRestreamUserField
+                    placeholderText: qsTr("Live stream username (only if the stream asks for one)")
+                }
+                ThemedField {
+                    id: frigateRestreamPasswordField
+                    placeholderText: qsTr("Live stream password")
+                    echoMode: TextInput.Password
+                }
                 Text {
                     Layout.fillWidth: true
-                    text: qsTr("Use the authenticated Frigate port 8971 and your login. Older servers can use port 5000. Each camera is added with live view and detections.")
+                    text: qsTr("Use the authenticated Frigate port 8971 and your login. Older servers can use port 5000. Each camera is added with live view and detections. If the server\'s live stream (go2rtc) needs its own login, enter it in the last two fields; it is not the Frigate login.")
                     color: Theme.textMuted
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap
@@ -454,6 +464,8 @@ Dialog {
         frigatePortField.text = "";
         frigateUserField.text = "";
         frigatePasswordField.text = "";
+        frigateRestreamUserField.text = "";
+        frigateRestreamPasswordField.text = "";
         discoveredModel.clear();
         testing = false;
         errorText = "";

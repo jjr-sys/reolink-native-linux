@@ -80,6 +80,10 @@ QString vodUrl(const QString &host, int port, const QString &camera, qint64 star
 QString configUrl(const QString &host, int port);
 QString eventsUrl(const QString &host, int port, double after, int limit);
 QString liveUrl(const QString &host, int port, const QString &camera);
+// The same, signed in with the restream's own login (go2rtc's RTSP username/password, a
+// Basic login that is not the Frigate login). An empty user sends no login.
+QString liveUrl(const QString &host, int port, const QString &camera,
+                const QString &restreamUser, const QString &restreamPassword);
 QString latestFrameUrl(const QString &host, int port, const QString &camera);
 
 // Register the Frigate login for this host. The HTTP helper obtains and caches the

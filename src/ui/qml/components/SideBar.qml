@@ -566,11 +566,18 @@ Rectangle {
         width: 360
         anchors.centerIn: Overlay.overlay
         property int targetRow: -1
+        // A Frigate server: its live stream (go2rtc) can need a login of its own.
+        property bool isFrigate: false
+        property string initialUser: ""
 
         function openFor(row) {
             targetRow = row;
             var info = Devices.cameraInfo(row);
+            isFrigate = !!(info && info.frigateApi === true);
+            credsRestreamUser.text = isFrigate ? Devices.restreamUserAt(row) : "";
+            credsRestreamPassword.text = "";
             credsUser.text = info && info.username !== undefined ? info.username : "";
+            initialUser = credsUser.text;
             credsPassword.text = "";
             credsTitle.text = qsTr("Update credentials — %1")
                 .arg(info && info.hostName ? info.hostName : (info && info.addr ? info.addr : ""));
@@ -625,6 +632,41 @@ Rectangle {
                     radius: 4
                 }
             }
+            Text {
+                Layout.fillWidth: true
+                visible: credsDialog.isFrigate
+                text: qsTr("Live stream login (go2rtc), if the stream asks for one. Not the Frigate login.")
+                color: Theme.textMuted
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+            }
+            TextField {
+                id: credsRestreamUser
+                Layout.fillWidth: true
+                visible: credsDialog.isFrigate
+                placeholderText: qsTr("Live stream username (blank for none)")
+                color: Theme.text
+                placeholderTextColor: Theme.textMuted
+                background: Rectangle {
+                    color: Theme.surfaceAlt
+                    border.color: parent.activeFocus ? Theme.accent : Theme.border
+                    radius: 4
+                }
+            }
+            TextField {
+                id: credsRestreamPassword
+                Layout.fillWidth: true
+                visible: credsDialog.isFrigate
+                placeholderText: qsTr("Live stream password (blank keeps the current one)")
+                echoMode: TextInput.Password
+                color: Theme.text
+                placeholderTextColor: Theme.textMuted
+                background: Rectangle {
+                    color: Theme.surfaceAlt
+                    border.color: parent.activeFocus ? Theme.accent : Theme.border
+                    radius: 4
+                }
+            }
         }
 
         footer: Item {
@@ -652,8 +694,14 @@ Rectangle {
                     HoverHandler { id: csHov }
                     TapHandler {
                         onTapped: {
-                            Devices.updateCredentials(credsDialog.targetRow,
-                                                      credsUser.text, credsPassword.text);
+                            // The restream login first: it is stored before the host revalidates.
+                            if (credsDialog.isFrigate)
+                                Devices.setRestreamLogin(credsDialog.targetRow,
+                                                         credsRestreamUser.text, credsRestreamPassword.text);
+                            if (!credsDialog.isFrigate || credsUser.text !== credsDialog.initialUser
+                                    || credsPassword.text.length > 0)
+                                Devices.updateCredentials(credsDialog.targetRow,
+                                                          credsUser.text, credsPassword.text);
                             credsDialog.close();
                         }
                     }

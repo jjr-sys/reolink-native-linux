@@ -10,6 +10,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Fixed
 
+- **A Frigate server whose live stream asks for a login now plays.** Frigate's
+  go2rtc restream can require its own username and password (a Basic login, not
+  the Frigate login), and every camera on such a server answered
+  `401 Unauthorized` and retried silently. The Add Frigate dialog and the
+  sidebar's Update credentials now take that login (kept in the keyring, never
+  the database), and live addresses carry it. A refused stream login now reads
+  "Sign-in refused (401)" instead of the library's text.
 - **The Farm Hikvision tile no longer pulls the camera's 4K main stream into the
   grid.** A direct-URL camera always played the URL as saved, so the grid's
   Fluent tile decoded 3840x2160 over the farm link. The link could not carry it,

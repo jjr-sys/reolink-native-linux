@@ -85,6 +85,19 @@ private slots:
         QCOMPARE(typeForLabel("cat"), QString("pet"));
         QCOMPARE(typeForLabel("package"), QString()); // not a detection the app models
     }
+    void liveUrl_restreamLogin()
+    {
+        // go2rtc's RTSP restream can require its own login (Basic), which is not the Frigate login.
+        QCOMPARE(liveUrl("h", 8971, "bosch_camera", "outpost", "p@ss:w/rd"),
+                 QString("rtsp://outpost:p%40ss%3Aw%2Frd@h:8554/bosch_camera"));
+        QCOMPARE(liveUrl("h", 8971, "a b", "u s", "x"),
+                 QString("rtsp://u%20s:x@h:8554/a%20b"));
+        // No user means no login at all, exactly as before.
+        QCOMPARE(liveUrl("h", 8971, "cam", "", "ignored"), QString("rtsp://h:8554/cam"));
+        QCOMPARE(liveUrl("h", 8971, "cam", "", ""), liveUrl("h", 8971, "cam"));
+        // A user with an empty password still sends the user.
+        QCOMPARE(liveUrl("h", 8971, "cam", "u", ""), QString("rtsp://u:@h:8554/cam"));
+    }
     void urls()
     {
         QCOMPARE(liveUrl("192.168.7.204", 5000, "bosch_camera"),

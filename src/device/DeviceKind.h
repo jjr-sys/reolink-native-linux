@@ -69,6 +69,9 @@ struct LiveSource
     QString password;  // from the keyring
     QString chanName;  // Frigate camera key
     int channel = 0;
+    // A Frigate server's go2rtc restream login, from the keyring; empty = the restream is open.
+    QString restreamUser;
+    QString restreamPassword;
     QString mainCodec; // GetEnc-declared main stream codec; empty if unknown
     bool primed = false; // credentials loaded and the host validated
 };

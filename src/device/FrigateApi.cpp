@@ -182,8 +182,17 @@ QString eventsUrl(const QString &host, int port, double after, int limit)
 
 QString liveUrl(const QString &host, int port, const QString &camera)
 {
+    return liveUrl(host, port, camera, {}, {});
+}
+
+QString liveUrl(const QString &host, int port, const QString &camera,
+                const QString &restreamUser, const QString &restreamPassword)
+{
     Q_UNUSED(port);
-    return QStringLiteral("rtsp://%1:8554/%2").arg(host, enc(camera));
+    if (restreamUser.isEmpty())
+        return QStringLiteral("rtsp://%1:8554/%2").arg(host, enc(camera));
+    return QStringLiteral("rtsp://%1:%2@%3:8554/%4")
+        .arg(enc(restreamUser), enc(restreamPassword), host, enc(camera));
 }
 
 QString clipUrl(const QString &host, int port, const QString &camera, qint64 timestamp)
