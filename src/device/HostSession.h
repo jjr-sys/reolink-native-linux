@@ -110,6 +110,7 @@ struct ChannelResult {
     QSize subSize;
     QString uid;
     api::ChannelCaps caps;
+    QString mainRestream; // Frigate: go2rtc stream for HD; empty = the camera's own
 };
 
 // Outcome of a worker-thread validation, applied back on the GUI thread.

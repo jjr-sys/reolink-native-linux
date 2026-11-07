@@ -45,6 +45,17 @@ QStringList parseCameraNames(const Json &config)
     return out;
 }
 
+QString mainRestream(const Json &config, const QString &camera)
+{
+    if (camera.isEmpty() || !config.is_object() || !config.contains("go2rtc"))
+        return {};
+    const Json &go2rtc = config["go2rtc"];
+    if (!go2rtc.is_object() || !go2rtc.contains("streams") || !go2rtc["streams"].is_object())
+        return {};
+    const QString name = camera + QStringLiteral("_main");
+    return go2rtc["streams"].contains(name.toStdString()) ? name : QString();
+}
+
 QVector<Event> parseEvents(const Json &events)
 {
     QVector<Event> out;

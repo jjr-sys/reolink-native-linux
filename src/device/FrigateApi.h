@@ -22,6 +22,10 @@ struct Event {
 
 // Enabled cameras in /api/config. go2rtc-only streams are not cameras and are ignored.
 QStringList parseCameraNames(const Json &config);
+// The go2rtc stream to play when a camera is shown in HD: "<camera>_main" when the config's
+// go2rtc section defines one (the usual way to publish a camera's full-resolution stream
+// next to the one Frigate itself uses, often the sub stream), else empty = the camera's own.
+QString mainRestream(const Json &config, const QString &camera);
 // Frigate names its cameras like config keys ("bosch_camera"). Show that the way a
 // person would write it; a name that already has a space (e.g. previously stored
 // under an older, already-pretty form) is returned unchanged.

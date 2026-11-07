@@ -896,6 +896,7 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
         e.mainSize = ch.mainSize;
         e.subSize = ch.subSize;
         e.uid = ch.uid;
+        e.mainRestream = ch.mainRestream;
         e.caps = ch.caps;
         e.talk = ch.caps.talk;
         e.isAdmin = v.isAdmin;
@@ -957,6 +958,7 @@ DeviceManager::Validation DeviceManager::validateFrigate(const HostRecord &rec,
         cr.name = names.at(i);
         cr.online = true;
         cr.codec = QStringLiteral("h264");
+        cr.mainRestream = frigate::mainRestream(cfg, names.at(i));
         v.channels.append(cr);
     }
     return v;
@@ -2448,6 +2450,7 @@ QString DeviceManager::liveUrl(int row, bool mainStream)
     src.chanName = e.chanName;
     src.channel = e.channel;
     src.mainCodec = e.mainCodec;
+    src.mainRestream = e.mainRestream;
     src.primed = e.primed;
     return device::liveUrl(src, mainStream);
 }

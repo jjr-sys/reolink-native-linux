@@ -55,6 +55,15 @@ private slots:
         QVERIFY(!names.contains("old"));
         QVERIFY(!names.contains("mulga-nvr_0")); // go2rtc-only streams are not cameras
     }
+    void mainRestream_onlyWhenGo2rtcPublishesIt()
+    {
+        const Json cfg = J("{ 'cameras': {'kitchen': {}, 'bosch_camera': {}}, 'go2rtc': {'streams': {'kitchen': ['rtsp://sub'], 'kitchen_main': ['rtsp://main'], 'bosch_camera': ['rtsp://y']}} }");
+        QCOMPARE(mainRestream(cfg, "kitchen"), QString("kitchen_main"));
+        QVERIFY(mainRestream(cfg, "bosch_camera").isEmpty());
+        QVERIFY(mainRestream(J("{'cameras': {'kitchen': {}}}"), "kitchen").isEmpty());
+        QVERIFY(mainRestream(J("{'go2rtc': {'streams': null}}"), "kitchen").isEmpty());
+        QVERIFY(mainRestream(cfg, "").isEmpty());
+    }
     void cameras_missingOrBadConfigIsEmpty()
     {
         QVERIFY(parseCameraNames(Json()).isEmpty());

@@ -101,6 +101,16 @@ private slots:
         QCOMPARE(liveUrl(s, true), QString("rtsp://outpost:pw@h:8554/bosch_camera"));
         QCOMPARE(liveUrl(s, false), QString("rtsp://outpost:pw@h:8554/bosch_camera"));
     }
+    void frigateHdPlaysTheMainRestreamWhenThereIsOne()
+    {
+        LiveSource s;
+        s.kind = Kind::Frigate;
+        s.addr = "h";
+        s.chanName = "kitchen";
+        s.mainRestream = "kitchen_main";
+        QCOMPARE(liveUrl(s, true), QString("rtsp://h:8554/kitchen_main"));
+        QCOMPARE(liveUrl(s, false), QString("rtsp://h:8554/kitchen"));
+    }
     void liveUrlPerKind()
     {
         LiveSource s;

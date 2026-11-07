@@ -380,6 +380,7 @@ private:
         QSize mainSize;                             // GetEnc-declared main resolution
         QSize subSize;                              // GetEnc-declared sub resolution
         QString uid;                                // per-camera UID (Baichuan playback)
+        QString mainRestream;                       // Frigate: go2rtc stream for HD ("" = own)
         QString password;                           // in-memory only (keyring at rest)
         QString restreamUser;                       // Frigate go2rtc login (keyring at rest)
         QString restreamPassword;

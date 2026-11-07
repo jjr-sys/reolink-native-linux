@@ -73,6 +73,7 @@ struct LiveSource
     QString restreamUser;
     QString restreamPassword;
     QString mainCodec; // GetEnc-declared main stream codec; empty if unknown
+    QString mainRestream; // Frigate: go2rtc stream to play for HD; empty = chanName
     bool primed = false; // credentials loaded and the host validated
 };
 
