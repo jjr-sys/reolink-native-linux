@@ -17,6 +17,8 @@ extern "C" {
 #include <libavutil/pixfmt.h>
 }
 
+#include "core/Log.h"
+
 #include <QDebug>
 
 #include <array>
@@ -38,6 +40,25 @@ constexpr uint32_t drmFourcc(char a, char b, char c, char d)
 
 constexpr uint32_t kDrmFormatR8 = drmFourcc('R', '8', ' ', ' ');
 constexpr uint32_t kDrmFormatGr88 = drmFourcc('G', 'R', '8', '8');
+
+// Flip the per-stream flag that sends this stream down the CPU upload path, and
+// say why the first time: the fallback costs real CPU, and without a reason it's
+// impossible to tell a driver limitation from a transient failure.
+void disableInterop(const std::shared_ptr<VaapiInteropState> &state, const char *reason,
+                    const AVFrame *frame = nullptr)
+{
+    if (!state || state->unavailable.exchange(true))
+        return;
+    if (frame)
+        qCInfo(lcMedia).nospace() << "VAAPI zero-copy off for this stream (" << reason << ", "
+                                  << frame->width << "x" << frame->height << "); using CPU upload";
+    else
+        qCInfo(lcMedia).nospace() << "VAAPI zero-copy off for this stream (" << reason
+                                  << "); using CPU upload";
+}
+
+// About a second of video at typical camera frame rates.
+constexpr int kMaxConsecutiveMapFailures = 25;
 
 using CreateImage = PFNEGLCREATEIMAGEKHRPROC;
 using DestroyImage = PFNEGLDESTROYIMAGEKHRPROC;
@@ -142,7 +163,7 @@ class VaapiVideoBuffer final : public QHwVideoBuffer
 {
 public:
     VaapiVideoBuffer(AVFrame *hwFrame, AVFrame *drmFrame, QVideoFrameFormat format,
-                     std::shared_ptr<std::atomic_bool> interopUnavailable)
+                     std::shared_ptr<VaapiInteropState> interopUnavailable)
         : QHwVideoBuffer(QVideoFrame::RhiTextureHandle),
           m_hwFrame(hwFrame), m_drmFrame(drmFrame), m_format(std::move(format)),
           m_interopUnavailable(std::move(interopUnavailable))
@@ -189,28 +210,23 @@ public:
 
     QVideoFrameTexturesUPtr mapTextures(QRhi &rhi, QVideoFrameTexturesUPtr &) override
     {
-        if (!m_interopUnavailable || m_interopUnavailable->load(std::memory_order_relaxed))
+        if (!m_interopUnavailable || m_interopUnavailable->unavailable.load(std::memory_order_relaxed))
             return {};
 
-        auto disableInterop = [this] {
-            if (m_interopUnavailable && !m_interopUnavailable->exchange(true))
-                qInfo() << "VAAPI DMA-BUF presentation unavailable; using CPU texture upload";
-        };
-
         if (rhi.backend() != QRhi::OpenGLES2) {
-            disableInterop();
+            disableInterop(m_interopUnavailable, "rhi backend not OpenGL ES");
             return {};
         }
 
         const EGLDisplay display = eglGetCurrentDisplay();
         if (display == EGL_NO_DISPLAY || eglGetCurrentContext() == EGL_NO_CONTEXT) {
-            disableInterop();
+            disableInterop(m_interopUnavailable, "no current EGL display/context");
             return {};
         }
         const char *extensions = eglQueryString(display, EGL_EXTENSIONS);
         if (!hasExtension(extensions, "EGL_EXT_image_dma_buf_import")
             || !hasExtension(extensions, "EGL_EXT_image_dma_buf_import_modifiers")) {
-            disableInterop();
+            disableInterop(m_interopUnavailable, "EGL dma-buf import extensions missing");
             return {};
         }
 
@@ -219,7 +235,7 @@ public:
         auto imageTarget = reinterpret_cast<ImageTargetTexture>(
             eglGetProcAddress("glEGLImageTargetTexture2DOES"));
         if (!createImage || !destroyImage || !imageTarget || !m_drmFrame || !m_drmFrame->data[0]) {
-            disableInterop();
+            disableInterop(m_interopUnavailable, "EGL/GL entry points or DRM frame missing");
             return {};
         }
 
@@ -228,7 +244,7 @@ public:
             || descriptor->layers[0].format != kDrmFormatR8
             || descriptor->layers[1].format != kDrmFormatGr88
             || descriptor->layers[0].nb_planes != 1 || descriptor->layers[1].nb_planes != 1) {
-            disableInterop();
+            disableInterop(m_interopUnavailable, "unexpected DRM layout (want R8 + GR88, 1 plane each)");
             return {};
         }
 
@@ -237,7 +253,7 @@ public:
             const auto &layer = descriptor->layers[plane];
             const auto &planeDesc = layer.planes[0];
             if (planeDesc.object_index < 0 || planeDesc.object_index >= descriptor->nb_objects) {
-                disableInterop();
+                disableInterop(m_interopUnavailable, "DRM plane object index out of range");
                 return {};
             }
             const auto &object = descriptor->objects[planeDesc.object_index];
@@ -247,7 +263,7 @@ public:
                                        static_cast<int>(planeDesc.offset),
                                        static_cast<int>(planeDesc.pitch), object.format_modifier,
                                        createImage, imageTarget)) {
-                disableInterop();
+                disableInterop(m_interopUnavailable, "EGL dma-buf import failed");
                 return {};
             }
         }
@@ -272,41 +288,47 @@ private:
     AVFrame *m_drmFrame = nullptr;
     AVFrame *m_cpuFrame = nullptr;
     QVideoFrameFormat m_format;
-    std::shared_ptr<std::atomic_bool> m_interopUnavailable;
+    std::shared_ptr<VaapiInteropState> m_interopUnavailable;
 };
 
 } // namespace
 
 QVideoFrame makeVaapiVideoFrame(const AVFrame *frame,
-                                const std::shared_ptr<std::atomic_bool> &interopUnavailable)
+                                const std::shared_ptr<VaapiInteropState> &interopUnavailable)
 {
     if (!frame || !frame->hw_frames_ctx || !interopUnavailable
-        || interopUnavailable->load(std::memory_order_relaxed))
+        || interopUnavailable->unavailable.load(std::memory_order_relaxed))
         return {};
 
     const auto *frames = reinterpret_cast<const AVHWFramesContext *>(frame->hw_frames_ctx->data);
     if (!frames || frames->sw_format != AV_PIX_FMT_NV12 || frame->width <= 0 || frame->height <= 0
         || (frame->width & 1) || (frame->height & 1)) {
-        interopUnavailable->store(true, std::memory_order_relaxed);
+        disableInterop(interopUnavailable, "surface not NV12 or odd size", frame);
         return {};
     }
 
     AVFrame *drmFrame = av_frame_alloc();
     if (!drmFrame) {
-        interopUnavailable->store(true, std::memory_order_relaxed);
+        disableInterop(interopUnavailable, "av_frame_alloc failed", frame);
         return {};
     }
     drmFrame->format = AV_PIX_FMT_DRM_PRIME;
     if (av_hwframe_map(drmFrame, frame, AV_HWFRAME_MAP_READ | AV_HWFRAME_MAP_DIRECT) < 0) {
         av_frame_free(&drmFrame);
-        interopUnavailable->store(true, std::memory_order_relaxed);
+        // Usually one corrupt frame from the camera, not a lasting limitation: send just
+        // this frame down the CPU path, and give up on zero-copy only after a sustained run.
+        if (interopUnavailable->consecutiveMapFailures.fetch_add(1, std::memory_order_relaxed) + 1
+            >= kMaxConsecutiveMapFailures)
+            disableInterop(interopUnavailable, "av_hwframe_map to DRM_PRIME failing persistently",
+                           frame);
         return {};
     }
+    interopUnavailable->consecutiveMapFailures.store(0, std::memory_order_relaxed);
 
     AVFrame *hwFrame = av_frame_clone(frame);
     if (!hwFrame) {
         av_frame_free(&drmFrame);
-        interopUnavailable->store(true, std::memory_order_relaxed);
+        disableInterop(interopUnavailable, "av_frame_clone failed", frame);
         return {};
     }
 
@@ -325,7 +347,7 @@ QVideoFrame makeVaapiVideoFrame(const AVFrame *frame,
 namespace rl {
 
 QVideoFrame makeVaapiVideoFrame(const AVFrame *,
-                                const std::shared_ptr<std::atomic_bool> &)
+                                const std::shared_ptr<VaapiInteropState> &)
 {
     return {};
 }

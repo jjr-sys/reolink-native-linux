@@ -747,8 +747,8 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             AVFrame *decoded = frame;
             if (hwPixFmt != AV_PIX_FMT_NONE && frame->format == hwPixFmt) {
                 if (hwPixFmt == AV_PIX_FMT_VAAPI
-                    && !s->vaapiInteropUnavailable->load(std::memory_order_relaxed)) {
-                    vaapiVideoFrame = makeVaapiVideoFrame(frame, s->vaapiInteropUnavailable);
+                    && !s->vaapiInterop->unavailable.load(std::memory_order_relaxed)) {
+                    vaapiVideoFrame = makeVaapiVideoFrame(frame, s->vaapiInterop);
                 }
                 if (!vaapiVideoFrame.isValid()) {
                     if (av_hwframe_transfer_data(hwTransfer, frame, 0) < 0) {
@@ -963,7 +963,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                     << "qt_hw_frames=" << perfVaapiFrames
                     << "hw_download_frames=" << perfHwTransferFrames
                     << "software_frames=" << perfSoftwareFrames
-                    << "interop_disabled=" << s->vaapiInteropUnavailable->load()
+                    << "interop_disabled=" << s->vaapiInterop->unavailable.load()
                     << "playout_frames=" << s->playoutFrames.load()
                     << "playout_peak_frames=" << s->playoutPeakFrames.load()
                     << "surface_mib_est=" << QString::number(s->playoutBytes.load() / 1048576.0, 'f', 1)

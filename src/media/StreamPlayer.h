@@ -1,6 +1,7 @@
 #pragma once
 
 #include "LatestValueMailbox.h"
+#include "VaapiVideoBuffer.h"
 #include "VideoPlayoutQueue.h"
 
 #include <QElapsedTimer>
@@ -104,10 +105,10 @@ public:
         std::atomic<qint64> playoutLateDrops{0};
         std::atomic<qint64> playoutOverflowDrops{0};
         std::atomic<bool> lastWasError{false}; // the last state posted was Error
-        // A render-thread import failure disables future VAAPI DMA-BUF frames for
-        // this session; Qt and the decoder then use the software upload fallback.
-        std::shared_ptr<std::atomic_bool> vaapiInteropUnavailable =
-            std::make_shared<std::atomic_bool>(false);
+        // VAAPI zero-copy state for this session. Once `unavailable` is set (a render-thread
+        // import failure, or persistent map failures), Qt and the decoder use the software
+        // upload fallback. Isolated map failures only divert the frame concerned.
+        std::shared_ptr<VaapiInteropState> vaapiInterop = std::make_shared<VaapiInteropState>();
         // Playback speed (1 = real time), shared with the player and the native client.
         std::shared_ptr<std::atomic<double>> speed = std::make_shared<std::atomic<double>>(1.0);
         // The most recent decoded picture, for saving a snapshot of what is on screen.
