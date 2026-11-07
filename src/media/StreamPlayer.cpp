@@ -8,6 +8,7 @@
 #include "core/Log.h"
 #include "core/Paths.h"
 
+#include <QRegularExpression>
 #include <QDateTime>
 #include <QDeadlineTimer>
 #include <QThread>
@@ -172,6 +173,10 @@ QVideoFrameFormat::PixelFormat mapPixelFormat(int avFormat)
 // then cancels itself if the player is destroyed before the event is delivered.
 void postState(const std::shared_ptr<Session> &s, State st, const QString &err)
 {
+    // Log each change INTO the error state (not every retry of the same one), so a pane
+    // that shows an error on screen leaves a trace, native (Baichuan) sources included.
+    if (st == State::Error && !s->lastWasError.load())
+        qCWarning(lcMedia).noquote() << "stream error:" << err;
     s->lastWasError.store(st == State::Error);
     QMutexLocker lock(&s->backMutex);
     if (!s->player)
@@ -607,6 +612,17 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             : rc == AVERROR_HTTP_UNAUTHORIZED
                 ? QStringLiteral("Sign-in refused (401): this stream needs a login, or the saved one is wrong")
                 : QString::fromUtf8(buf);
+        if (!packetSource) {
+            // Log what was asked for, minus secrets, so a server-side refusal (a Reolink
+            // NVR just drops the connection: "End of file") can be diagnosed from the log.
+            QString shown = QString::fromUtf8(url);
+            static const QRegularExpression queryLogin(
+                QStringLiteral("((?:token|password|user)=)[^&]*"));
+            static const QRegularExpression urlLogin(QStringLiteral("(://[^:/@]+:)[^@/]+@"));
+            shown.replace(queryLogin, QStringLiteral("\\1***"));
+            shown.replace(urlLogin, QStringLiteral("\\1***@"));
+            qCWarning(lcMedia).noquote() << "open failed:" << QString::fromUtf8(buf) << "for" << shown;
+        }
         postState(s, State::Error, reason);
         return !packetSource && (live || s->retryOnError.load());
     }

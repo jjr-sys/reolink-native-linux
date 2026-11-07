@@ -100,6 +100,24 @@ bool saveEventThumbnail(const QByteArray &jpeg, const QString &path)
 DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject *parent)
     : QAbstractListModel(parent), m_db(db), m_credentials(credentials)
 {
+    // The Playback page shows search results only on screen; log them so an empty page
+    // can be told apart from a failed search afterwards.
+    auto searchLabel = [this](int row) {
+        if (row < 0 || row >= m_entries.size())
+            return QStringLiteral("row %1").arg(row);
+        const Entry &e = m_entries.at(row);
+        return QStringLiteral("%1 / %2 (ch %3)").arg(e.rec.name, e.chanName).arg(e.channel);
+    };
+    connect(this, &DeviceManager::recordingsFound, this,
+            [searchLabel](int row, const QVariantList &segments) {
+                qCInfo(lcCore).noquote() << "recording search" << searchLabel(row) << ":"
+                                         << segments.size() << "recordings";
+            });
+    connect(this, &DeviceManager::recordingsFailed, this,
+            [searchLabel](int row, const QString &error) {
+                qCWarning(lcCore).noquote() << "recording search" << searchLabel(row)
+                                            << "failed:" << error;
+            });
     const QVector<HostRecord> stored = m_db->hosts();
     m_entries.reserve(stored.size());
     for (const HostRecord &rec : stored) {
@@ -1672,8 +1690,17 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     if (row < 0 || row >= m_entries.size() || !player)
         return;
     const Entry &e = m_entries.at(row);
-    if (!e.reolinkReady())
+    if (!e.reolinkReady()) {
+        if (startEpoch > 0)
+            qCWarning(lcCore).noquote() << "native playback not started:" << e.rec.name
+                                        << "is not ready";
         return;
+    }
+    if (startEpoch > 0)
+        qCInfo(lcCore).noquote()
+            << "native playback" << e.rec.name << "/" << e.chanName << "ch" << e.channel
+            << (mainStream ? "main" : "sub") << "from"
+            << QDateTime::fromSecsSinceEpoch(startEpoch).toString(Qt::ISODate);
 
     BaichuanClient::Params p;
     p.host = e.rec.addr;
