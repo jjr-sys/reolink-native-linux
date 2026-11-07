@@ -2,6 +2,8 @@
 
 #include <QByteArray>
 #include <QElapsedTimer>
+#include <QAudioDevice>
+#include <QMediaDevices>
 #include <QMutex>
 #include <QMutexLocker>
 
@@ -62,6 +64,11 @@ void ffmpegLog(void *, int level, const char *fmt, va_list vl)
 
 void installLogging()
 {
+    // Qt Multimedia's FFmpeg backend installs its own av_log callback when it first
+    // starts, and the app and Qt now share one libavutil (L-REO-01), so whichever is set
+    // last wins for every stream. Start the backend first so ours is the one that sticks.
+    // Needs the QGuiApplication to exist already.
+    (void)QMediaDevices::audioOutputs();
     av_log_set_callback(ffmpegLog);
     qSetMessagePattern(
         QStringLiteral("%{time hh:mm:ss.zzz} %{category} "
