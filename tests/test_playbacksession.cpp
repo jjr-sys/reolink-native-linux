@@ -75,26 +75,34 @@ private slots:
     // ---- transport choice ----
     void routeFollowsHdAndSpeedAndDirect()
     {
-        QCOMPARE(PlaybackSession::chooseRoute(false, 1.0, false), Route::Http);
-        QCOMPARE(PlaybackSession::chooseRoute(false, 0.5, false), Route::Http);
+        QCOMPARE(PlaybackSession::chooseRoute(false, 1.0, false), Route::BaichuanSub);
+        QCOMPARE(PlaybackSession::chooseRoute(false, 0.5, false), Route::BaichuanSub);
         QCOMPARE(PlaybackSession::chooseRoute(false, 2.0, false), Route::BaichuanSub);
         QCOMPARE(PlaybackSession::chooseRoute(true, 1.0, false), Route::BaichuanMain);
         QCOMPARE(PlaybackSession::chooseRoute(true, 4.0, false), Route::BaichuanMain);
         // Direct (Frigate) footage has one HTTP stream at 1x: HD and speed are ignored.
         QCOMPARE(PlaybackSession::chooseRoute(true, 4.0, true), Route::Http);
     }
-    void sdAtNormalSpeedOpensHttpSubStream()
+    void sdAtNormalSpeedOpensBaichuanSub()
     {
         Fixture f;
         QCOMPARE(f.s.playAt(5000), Outcome::Opened);
         QCOMPARE(f.t->opens.size(), 1);
-        QCOMPARE(f.t->opens[0].route, Route::Http);
+        QCOMPARE(f.t->opens[0].route, Route::BaichuanSub);
         QCOMPARE(f.t->opens[0].epoch, qint64(5000));
+    }
+    void directOpensHttpAtTheGivenMoment()
+    {
+        Fixture f;
+        f.t->isDirect = true;
+        QCOMPARE(f.s.playAt(5000), Outcome::Opened);
+        QCOMPARE(f.t->opens[0].route, Route::Http);
         QCOMPARE(f.t->opens[0].url, QString("http://local/flv"));
     }
     void httpWithNoUrlDoesNothing()
     {
         Fixture f;
+        f.t->isDirect = true;
         f.t->url.clear();
         QCOMPARE(f.s.playAt(5000), Outcome::NoSource);
         QVERIFY(f.t->opens.isEmpty());
@@ -153,6 +161,7 @@ private slots:
     void httpAlwaysReopens()
     {
         Fixture f;
+        f.t->isDirect = true;
         f.t->isStreaming = true;
         f.s.playAt(6000);
         QCOMPARE(f.t->seeks, 0);
@@ -173,27 +182,39 @@ private slots:
         QCOMPARE(f.s.playAt(6000), Outcome::NoSource);
         QVERIFY(f.t->opens.isEmpty());
     }
-    void playHttpAtIgnoresHdAndSpeed()
+    void playSubAtIgnoresHd()
     {
         Fixture f; // event jump: always the light sub stream
         f.s.setHd(true);
         f.s.setSpeed(2.0);
-        f.s.playHttpAt(7000);
+        f.s.playSubAt(7000);
+        QCOMPARE(f.t->opens.last().route, Route::BaichuanSub);
+    }
+    void playSubAtOnDirectUsesHttp()
+    {
+        Fixture f;
+        f.t->isDirect = true;
+        f.s.playSubAt(7000);
         QCOMPARE(f.t->opens.last().route, Route::Http);
     }
 
     // ---- reopen on route change ----
-    void crossingOneXWhilePlayingAsksForReopen()
+    void speedChangeKeepsTheNativeSessionOpen()
+    {
+        Fixture f; // one native sub session paces itself at any speed: no reopen
+        QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
+        f.t->isStreaming = true;
+        f.s.setSpeed(2.0);
+        f.s.setSpeed(1.0);
+        QCOMPARE(spy.count(), 0);
+    }
+    void togglingHdWhilePlayingAsksForReopen()
     {
         Fixture f;
         QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
         f.t->isStreaming = true;
-        f.s.setSpeed(2.0);
+        f.s.setHd(true);
         QCOMPARE(spy.count(), 1);
-        f.s.setSpeed(4.0); // same route
-        QCOMPARE(spy.count(), 1);
-        f.s.setSpeed(1.0);
-        QCOMPARE(spy.count(), 2);
     }
     void speedChangeWhileIdleDoesNotReopen()
     {

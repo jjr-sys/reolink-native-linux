@@ -1,5 +1,9 @@
 #include "PlaybackSession.h"
 
+#include "core/Log.h"
+
+#include <QDateTime>
+
 #include "StreamPlayer.h"
 #include "device/DeviceManager.h"
 
@@ -80,11 +84,10 @@ PlaybackSession::~PlaybackSession() = default;
 
 PlaybackSession::Route PlaybackSession::chooseRoute(bool hd, double speed, bool direct)
 {
+    Q_UNUSED(speed); // the native session paces itself from the shared speed setting
     if (direct)
         return Route::Http;
-    if (hd)
-        return Route::BaichuanMain;
-    return speed > 1 ? Route::BaichuanSub : Route::Http;
+    return hd ? Route::BaichuanMain : Route::BaichuanSub;
 }
 
 PlaybackSession::Route PlaybackSession::route() const
@@ -159,6 +162,24 @@ PlaybackSession::Outcome PlaybackSession::openHttp(qint64 epoch)
 
 PlaybackSession::Outcome PlaybackSession::playAt(double epochSecs, bool covered)
 {
+    const Outcome o = playAtImpl(epochSecs, covered);
+    const char *name = "?";
+    switch (o) {
+    case Outcome::Gap: name = "gap: stopped"; break;
+    case Outcome::NoSource: name = "no source"; break;
+    case Outcome::Opened: name = "opened"; break;
+    case Outcome::OpenedHd: name = "opened HD"; break;
+    case Outcome::SeekedInPlace: name = "seeked in place"; break;
+    }
+    qCInfo(lcMedia).noquote() << "playback row" << m_row << "at"
+                              << QDateTime::fromSecsSinceEpoch(qint64(epochSecs)).toString(Qt::ISODate)
+                              << (covered ? "" : "(timeline: no recording)") << "->"
+                              << name;
+    return o;
+}
+
+PlaybackSession::Outcome PlaybackSession::playAtImpl(double epochSecs, bool covered)
+{
     if (!covered) {
         m_transport->stop();
         return Outcome::Gap;
@@ -177,9 +198,17 @@ PlaybackSession::Outcome PlaybackSession::playAt(double epochSecs, bool covered)
     return main ? Outcome::OpenedHd : Outcome::Opened;
 }
 
-PlaybackSession::Outcome PlaybackSession::playHttpAt(double epoch)
+PlaybackSession::Outcome PlaybackSession::playSubAt(double epochSecs)
 {
-    return openHttp(static_cast<qint64>(epoch));
+    const qint64 epoch = static_cast<qint64>(epochSecs);
+    if (direct())
+        return openHttp(epoch);
+    if (m_row < 0)
+        return Outcome::NoSource;
+    if (m_transport->streaming() && m_transport->seekInPlace(m_row, epoch))
+        return Outcome::SeekedInPlace;
+    m_transport->openBaichuan(m_row, epoch, /*main=*/false);
+    return Outcome::Opened;
 }
 
 void PlaybackSession::stop()

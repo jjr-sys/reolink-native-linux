@@ -517,7 +517,7 @@ Item {
                     page._pendingPlayEpoch = 0;
                     page._pendingPlaySecs = -1;
                     page._suppressResume = false; // event playback crosses file boundaries too
-                    session.playHttpAt(ep); // sub stream, whatever HD/speed say
+                    session.playSubAt(ep); // sub stream, whatever HD says
                 } else if (page._pendingPlaySecs >= 0) {
                     // Camera switch: resume at the same playhead moment (playAt
                     // respects SD/HD mode and stops if no recording covers it).

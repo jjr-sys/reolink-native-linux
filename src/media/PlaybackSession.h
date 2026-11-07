@@ -38,8 +38,9 @@ public:
     ~PlaybackSession() override;
 
     // Pure policy. Direct (Frigate) footage is one HTTP stream at 1x: HD and speed
-    // do not apply. Otherwise HD = native main, above 1x = native sub (the NVR's
-    // HTTP stream is sent at 1x), else the HTTP-FLV sub stream.
+    // do not apply. A Reolink NVR always plays over native Baichuan: HD = main stream,
+    // else sub, at any speed. (Its HTTP-FLV playback endpoint is not used: NVRs drop
+    // every playback.bcs request (live FLV works), and it needs RTMP enabled anyway.)
     static Route chooseRoute(bool hd, double speed, bool direct);
     Route route() const;
 
@@ -58,8 +59,9 @@ public:
     // (a gap is normal: stop, no error). A native session is moved in place when one
     // is streaming, else (re)opened; HTTP always reopens at the snapped file.
     Q_INVOKABLE rl::PlaybackSession::Outcome playAt(double epoch, bool covered = true);
-    // Always the HTTP sub stream (event jump), whatever HD/speed say.
-    Q_INVOKABLE rl::PlaybackSession::Outcome playHttpAt(double epoch);
+    // Always the light sub stream (event jump), whatever HD says: native Baichuan sub
+    // for a Reolink device, the HTTP stream for direct (Frigate) footage.
+    Q_INVOKABLE rl::PlaybackSession::Outcome playSubAt(double epoch);
     Q_INVOKABLE void stop();
 
 signals:
@@ -77,6 +79,7 @@ private:
     bool direct() const { return m_transport->direct(m_row); }
     Outcome openHttp(qint64 epoch);
 
+    Outcome playAtImpl(double epochSecs, bool covered);
     std::unique_ptr<PlaybackTransport> m_transport;
     class DeviceTransport *m_device = nullptr; // set when m_transport is the production one
     QPointer<DeviceManager> m_devices;
