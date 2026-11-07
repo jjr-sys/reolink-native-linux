@@ -84,9 +84,14 @@ target_include_directories(reolink_core PUBLIC src third_party)
 target_link_libraries(reolink_core PUBLIC
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Sql Qt6::Multimedia Qt6::Concurrent Qt6::Network Qt6::DBus
     PkgConfig::FFMPEG PkgConfig::CURL PkgConfig::SECRET)
-# The VAAPI→DMA-BUF renderer uses Qt 6.8's private multimedia/RHI bridge.
+# The VAAPI→DMA-BUF renderer uses Qt's private multimedia/RHI bridge (QHwVideoBuffer);
+# verified against 6.8.3 and 6.11.3. Re-check qhwvideobuffer_p.h before widening further.
 # Keep it optional: unsupported Qt builds retain the normal CPU upload path.
-if(Qt6_VERSION VERSION_GREATER_EQUAL "6.8.0" AND Qt6_VERSION VERSION_LESS "6.9.0"
+# Qt >= 6.9 ships the private modules as separate packages that must be asked for.
+if(Qt6_VERSION VERSION_GREATER_EQUAL "6.9.0")
+    find_package(Qt6 QUIET COMPONENTS GuiPrivate MultimediaPrivate)
+endif()
+if(Qt6_VERSION VERSION_GREATER_EQUAL "6.8.0" AND Qt6_VERSION VERSION_LESS "6.12.0"
    AND TARGET Qt6::GuiPrivate AND TARGET Qt6::MultimediaPrivate
    AND TARGET OpenGL::OpenGL AND TARGET OpenGL::EGL)
     target_compile_definitions(reolink_core PRIVATE RL_HAVE_VAAPI_DMABUF_RHI=1)
