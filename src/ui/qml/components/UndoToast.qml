@@ -2,13 +2,16 @@ import QtQuick
 import ReolinkApp
 
 // "Cleared N cameras · Undo" for 5 s at the foot of a page. show(text); `undo` when the
-// button is used, `expired` when the toast goes without it.
+// button is used, `expired` when the toast goes without it. show(text, false) is a plain
+// notice with no Undo.
 Rectangle {
     id: root
     signal undo()
     signal expired()
 
-    function show(msg) {
+    property bool undoable: true
+    function show(msg, withUndo) {
+        undoable = withUndo !== false;
         label.text = msg;
         opacity = 1;
         timer.restart();
@@ -34,7 +37,11 @@ Rectangle {
     Timer {
         id: timer
         interval: 5000
-        onTriggered: { root.opacity = 0; root.expired(); }
+        onTriggered: {
+            root.opacity = 0;
+            if (root.undoable)
+                root.expired();
+        }
     }
     Row {
         id: row
@@ -47,6 +54,7 @@ Rectangle {
             font.pixelSize: 13
         }
         Text {
+            visible: root.undoable
             anchors.verticalCenter: parent.verticalCenter
             text: qsTr("Undo")
             color: undoHover.hovered ? Theme.text : Theme.accent

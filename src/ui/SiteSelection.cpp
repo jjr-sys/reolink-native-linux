@@ -87,6 +87,12 @@ void SiteSelection::toggle(const QString &key)
     setKeys(keys, true);
 }
 
+void SiteSelection::replace(const QStringList &keys)
+{
+    dropUndo();
+    setKeys(parse(keys.join(QLatin1Char(','))), true);
+}
+
 int SiteSelection::clear()
 {
     const int n = count();

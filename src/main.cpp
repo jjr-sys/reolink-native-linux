@@ -21,6 +21,7 @@
 #include "ui/SiteMap.h"
 #include "ui/SiteSelection.h"
 #include "ui/SiteBudget.h"
+#include "ui/SavedSelections.h"
 #include "ui/MosaicLayout.h"
 
 #include <QApplication>
@@ -193,6 +194,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::SiteMap>("ReolinkApp.Core", 1, 0, "SiteMap");
     qmlRegisterType<rl::SiteSelection>("ReolinkApp.Core", 1, 0, "SiteSelection");
     qmlRegisterType<rl::SiteBudget>("ReolinkApp.Core", 1, 0, "SiteBudget");
+    qmlRegisterType<rl::SavedSelections>("ReolinkApp.Core", 1, 0, "SavedSelections");
     qmlRegisterType<rl::MosaicLayout>("ReolinkApp.Core", 1, 0, "MosaicLayout");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);
@@ -232,6 +234,10 @@ int main(int argc, char *argv[])
                                              parser.isSet(hiddenOption) && tray.available());
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
                      [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
+    // The app-wide QML singletons that load stored state, created before any page binds to
+    // them: a first load inside a binding changes what that binding reads (a binding loop).
+    for (const char *name : {"Sites", "PanePrefs", "Saved"})
+        engine.singletonInstance<QObject *>("ReolinkApp", name);
     engine.loadFromModule("ReolinkApp", "Main");
 
     // RL_SCREENSHOT=<file.png> saves the window after RL_SCREENSHOT_MS (default 10 s) and

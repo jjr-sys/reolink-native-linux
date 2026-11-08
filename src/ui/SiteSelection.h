@@ -46,6 +46,8 @@ public:
 
     Q_INVOKABLE bool contains(const QString &key) const { return m_keys.contains(key); }
     Q_INVOKABLE void toggle(const QString &key);
+    // Replace the whole selection (a saved selection recalled), in this order.
+    Q_INVOKABLE void replace(const QStringList &keys);
     // Returns how many cameras were cleared.
     Q_INVOKABLE int clear();
     Q_INVOKABLE void undo();

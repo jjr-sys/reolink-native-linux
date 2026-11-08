@@ -3,6 +3,8 @@
 #include "ui/SiteMap.h"
 #include "ui/SiteSelection.h"
 
+#include <QHash>
+
 namespace rl {
 
 namespace {
@@ -135,6 +137,27 @@ bool SiteBudget::canHd(const QString &key) const
     if (m_selection && !m_selection->contains(key))
         return fits(siteOf(key), costOf(key, true));
     return fits(siteOf(key), hdExtra(key));
+}
+
+QStringList SiteBudget::recall(const QStringList &keys)
+{
+    QHash<QString, double> sums;
+    QStringList kept, skipped;
+    for (const QString &k : keys) {
+        if (kept.contains(k))
+            continue;
+        const QString site = siteOf(k);
+        const double c = needed(k);
+        if (site.isEmpty() || sums.value(site) + c <= budgetOf(site) + kSlack) {
+            sums[site] += c;
+            kept << k;
+        } else {
+            skipped << k;
+        }
+    }
+    if (m_selection)
+        m_selection->replace(kept);
+    return skipped;
 }
 
 } // namespace rl

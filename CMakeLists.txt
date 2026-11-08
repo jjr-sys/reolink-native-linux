@@ -53,6 +53,7 @@ add_library(reolink_core STATIC
     src/ui/SiteMap.h src/ui/SiteMap.cpp
     src/ui/SiteSelection.h src/ui/SiteSelection.cpp
     src/ui/SiteBudget.h src/ui/SiteBudget.cpp
+    src/ui/SavedSelections.h src/ui/SavedSelections.cpp
     src/media/PictureWatch.h
     src/device/DownloadPlan.h src/device/DownloadSource.h src/device/DownloadQueue.h src/device/DownloadQueue.cpp
     src/device/DeviceKind.h src/device/DeviceKind.cpp
@@ -112,7 +113,8 @@ set(APP_QML_FILES
     src/ui/qml/Main.qml
     src/ui/qml/Theme.qml
     src/ui/qml/AudioPrefs.qml
-    src/ui/qml/Mosaics.qml
+    src/ui/qml/PanePrefs.qml
+    src/ui/qml/Saved.qml
     src/ui/qml/Sites.qml
     src/ui/qml/components/SiteTabs.qml
     src/ui/qml/components/DeviceMenus.qml
@@ -154,7 +156,8 @@ foreach(qml_file IN LISTS APP_QML_FILES)
 endforeach()
 set_source_files_properties(src/ui/qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(src/ui/qml/AudioPrefs.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
-set_source_files_properties(src/ui/qml/Mosaics.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(src/ui/qml/PanePrefs.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(src/ui/qml/Saved.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(src/ui/qml/Sites.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(reolink-client
@@ -234,7 +237,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection test_sitebudget)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection test_sitebudget test_savedselections)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})

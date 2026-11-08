@@ -52,7 +52,7 @@ Item {
         budgets: Sites.budgets
         defaultBudget: Sites.defaultBudget
         costs: Sites.costs
-        hd: Mosaics.keysOf("", "hd")
+        hd: PanePrefs.hd
     }
     // Why switching this pane to HD would go over its Site's budget; "" when it fits.
     function hdRefusal(key) {
@@ -104,7 +104,7 @@ Item {
     property var mosaicRectByRow: ({})   // device row -> rect
     property var paneRatios: ({})        // "hostId:channel" -> drawn width/height
 
-    function cameraKey(row) { return Mosaics.cameraKey(row); }
+    function cameraKey(row) { return PanePrefs.cameraKey(row); }
     function rowsByKey() {
         var byKey = ({});
         for (var r = 0; r < Devices.count; ++r)
@@ -142,7 +142,7 @@ Item {
             return;
         mosaicSettle.stop();
         mosaic.panes = mosaicRows().map(r => ({ row: r,
-                                                large: Mosaics.has("", "large", cameraKey(r)),
+                                                large: PanePrefs.has("large", cameraKey(r)),
                                                 ratio: paneRatios[cameraKey(r)] || 16 / 9 }));
     }
     // Shape changes and cameras arriving are gathered for half a second, then re-packed
@@ -272,7 +272,16 @@ Item {
         budget: budget
         menus: page.menus
         ratioOf: (key) => page.cardRatio(key)
-        onCleared: (n) => undoToast.show(qsTr("Cleared %n camera(s) ·", "", n))
+        onCleared: (n) => undoToast.show(n === 1 ? qsTr("Cleared 1 camera ·") : qsTr("Cleared %1 cameras ·").arg(n))
+        showSaved: true
+        // Cameras a recalled selection left out are named.
+        onRecalled: (name, skipped) => {
+            if (skipped.length === 0)
+                return;
+            var byKey = page.rowsByKey();
+            var names = skipped.map(k => byKey[k] !== undefined ? Devices.nameAt(byKey[k]) : k);
+            undoToast.show(qsTr("%1: left out %2 (over the Site budget)").arg(name).arg(names.join(", ")), false);
+        }
 
         leftItems: [
         // Highlights: a camera's panes get a coloured border when it detects a person,
@@ -514,17 +523,17 @@ Item {
                 // Sub stream in the mosaic, main stream when maximised (DESIGN §5.7); a pane
                 // returns to the HD choice remembered for its camera.
                 forceMain: isMaximized
-                restMain: Mosaics.has("", "hd", cameraKey)
+                restMain: PanePrefs.has("hd", cameraKey)
                 hdRefusal: () => page.hdRefusal(cameraKey)
                 watchPicture: true
                 onQualityChosen: (main) => {
                     if (!isMaximized)
-                        Mosaics.setKey("", "hd", cameraKey, main);
+                        PanePrefs.set("hd", cameraKey, main);
                 }
                 showLarge: inMosaic && !isMaximized
-                large: Mosaics.has("", "large", cameraKey)
+                large: PanePrefs.has("large", cameraKey)
                 onLargeToggled: {
-                    Mosaics.toggle("", "large", cameraKey);
+                    PanePrefs.toggle("large", cameraKey);
                     page.rebuildMosaic();
                 }
                 // Drag a pane onto another of the same Site to swap their places.

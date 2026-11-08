@@ -64,6 +64,9 @@ public:
     Q_INVOKABLE bool canAdd(const QString &key) const;
     // Whether this selected pane can switch to HD (true when already HD).
     Q_INVOKABLE bool canHd(const QString &key) const;
+    // Replace the selection with `keys` (a saved selection recalled), adding them in order
+    // and skipping any that would take their Site over its budget. Returns those skipped.
+    Q_INVOKABLE QStringList recall(const QStringList &keys);
 
 signals:
     void changed();
