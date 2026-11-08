@@ -8,10 +8,13 @@ import ReolinkApp.Core
 // translucent drawer of camera cards, over the page below. Tapping a card selects or
 // deselects that camera in `selection`. Right-clicks open the camera and recorder menus.
 // The page puts its own controls in `leftItems` and `rightItems` (Clear all is built in).
+// With a `budget`, a camera that would take its Site over the budget is greyed and can't
+// be added, and the drawer's last line shows the Site's use of its budget.
 Item {
     id: root
 
     property SiteSelection selection
+    property SiteBudget budget: null                // greys cards over a Site's budget
     property var menus: null                       // DeviceMenus
     property var ratioOf: (key) => 16 / 9          // a camera's drawn shape, width/height
     property string openSite: ""
@@ -22,6 +25,16 @@ Item {
     signal cleared(int count)
 
     function close() { openSite = ""; }
+    function mbps(v) { return Number(v).toLocaleString(Qt.locale(), "f", 1); }
+    // Why this camera can't be added; "" when it can.
+    function blockedWhy(key) {
+        if (!budget || budget.canAdd(key))
+            return "";
+        var site = Sites.siteOfKey(key);
+        return qsTr("%1 is at %2 / %3 Mbit/s; this camera needs %4. Deselect a camera or switch one out of HD.")
+                .arg(site).arg(mbps(budget.used(site))).arg(mbps(budget.budgetOf(site)))
+                .arg(mbps(budget.needed(key)));
+    }
 
     implicitHeight: 44
 
@@ -219,6 +232,8 @@ Item {
                             readonly property string key: modelData.key
                             readonly property bool picked: { root.selection ? root.selection.count : 0;
                                                              return !!root.selection && root.selection.contains(key); }
+                            readonly property string blocked: { root.budget ? root.budget.revision : 0;
+                                                                 return picked ? "" : root.blockedWhy(key); }
                             readonly property real ratio: root.ratioOf(key)
                             readonly property string frameUrl: { root.frameRev;
                                 var p = key.split(":");
@@ -230,6 +245,7 @@ Item {
                             color: picked ? Qt.alpha(Theme.accent, 0.12) : cardHover.hovered ? Theme.surfaceAlt : "transparent"
                             border.width: 2
                             border.color: picked ? Theme.accent : "transparent"
+                            opacity: blocked ? 0.35 : 1
 
                             Rectangle {   // the thumbnail box, the picture at its shape inside
                                 id: thumb
@@ -288,10 +304,13 @@ Item {
                                     font.bold: card.picked
                                 }
                             }
-                            HoverHandler { id: cardHover; cursorShape: Qt.PointingHandCursor }
+                            HoverHandler {
+                                id: cardHover
+                                cursorShape: card.blocked ? Qt.ForbiddenCursor : Qt.PointingHandCursor
+                            }
                             TapHandler {
                                 acceptedButtons: Qt.LeftButton
-                                onTapped: root.selection.toggle(card.key)
+                                onTapped: if (!card.blocked) root.selection.toggle(card.key)
                             }
                             TapHandler {
                                 acceptedButtons: Qt.RightButton
@@ -304,7 +323,8 @@ Item {
                                 contentItem: Text {
                                     text: (card.modelData.online ? qsTr("%1 · online") : qsTr("%1 · offline"))
                                               .arg(card.modelData.name) + "\n"
-                                          + (card.picked ? qsTr("Click to remove its pane") : qsTr("Click to add a pane"))
+                                          + (card.blocked ? card.blocked
+                                             : card.picked ? qsTr("Click to remove its pane") : qsTr("Click to add a pane"))
                                     color: Theme.text; font.pixelSize: 11
                                 }
                                 background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
@@ -315,10 +335,16 @@ Item {
             }
 
             Text {
+                readonly property string usedText: { if (!root.budget) return "";
+                                                     root.budget.revision;
+                                                     return root.mbps(root.budget.used(root.openSite)); }
                 readonly property int picked: { if (!root.selection) return 0;
                                                 root.selection.count;
                                                 return root.selection.countIn(root.openSite); }
                 text: drawer.cameras.length === 0 ? qsTr("No cameras at %1 yet").arg(root.openSite)
+                    : root.budget ? qsTr("%1 · %2 / %3 Mbit/s").arg(root.openSite)
+                                        .arg(usedText)
+                                        .arg(root.mbps(root.budget.budgetOf(root.openSite)))
                     : qsTr("%1 · %2 of %3 selected").arg(root.openSite).arg(picked).arg(drawer.cameras.length)
                 color: Theme.textMuted
                 font.pixelSize: 11

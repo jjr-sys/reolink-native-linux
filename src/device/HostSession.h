@@ -108,6 +108,8 @@ struct ChannelResult {
     QString codec;  // empty = unknown; the stream is probed instead of assumed
     QSize mainSize; // GetEnc-declared main/sub resolution (for rotation detection)
     QSize subSize;
+    int mainKbps = 0; // GetEnc-configured bitrates; 0 = unknown
+    int subKbps = 0;
     QString uid;
     api::ChannelCaps caps;
     QString mainRestream; // Frigate: go2rtc stream for HD; empty = the camera's own

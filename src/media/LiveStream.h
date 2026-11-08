@@ -2,6 +2,7 @@
 
 #include "LiveStreamTransport.h"
 #include "core/Backoff.h"
+#include "media/PictureWatch.h"
 #include "device/DeviceManager.h"
 
 #include <QQmlParserStatus>
@@ -27,6 +28,11 @@ class LiveStream : public QObject, public QQmlParserStatus
     Q_PROPERTY(bool recovering READ recovering NOTIFY recoveringChanged)
     Q_PROPERTY(bool hasAudio READ hasAudio NOTIFY hasAudioChanged)
     Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
+    // Watch for a stream that opens but never shows a picture (a silent refusal) and
+    // reopen it at growing intervals; off by default. See PictureWatch.
+    Q_PROPERTY(bool watchPicture READ watchPicture WRITE setWatchPicture NOTIFY watchPictureChanged)
+    // The watch found no picture and is retrying.
+    Q_PROPERTY(bool noPicture READ noPicture NOTIFY noPictureChanged)
 
 public:
     explicit LiveStream(QObject *parent = nullptr);
@@ -61,6 +67,9 @@ public:
     bool recovering() const { return m_recovering; }
     bool hasAudio() const { return m_transport->player.hasAudio(); }
     bool recording() const { return m_transport->player.recording(); }
+    bool watchPicture() const { return m_watchOn; }
+    void setWatchPicture(bool on);
+    bool noPicture() const { return m_watch.noPicture(); }
 
     Q_INVOKABLE void release();
     Q_INVOKABLE bool startRecording() { return m_transport->player.startRecording(); }
@@ -81,6 +90,8 @@ signals:
     void recoveringChanged();
     void hasAudioChanged();
     void recordingChanged();
+    void watchPictureChanged();
+    void noPictureChanged();
     void recordingSaved(const QString &path);
     void recordingFailed(const QString &error);
 
@@ -94,6 +105,10 @@ private:
     void setDegraded(bool degraded);
     void setRecovering(bool recovering);
     void retry(int delayMs);
+    void armWatch();
+    void disarmWatch();
+    void watchTick();
+    void clearWatch();
 
     std::unique_ptr<LiveStreamTransport> m_transport;
     std::unique_ptr<LiveStreamScheduler> m_scheduler;
@@ -114,6 +129,10 @@ private:
     bool m_bcSub = false;
     bool m_terminal = false;
     int m_retries = 0;
+    bool m_watchOn = false;
+    bool m_watchArmed = false;
+    qint64 m_seenFrames = 0;
+    PictureWatch m_watch;
     Backoff m_backoff{BackoffPolicy{1000, 30000}};
     quint64 m_attempt = 0;
     quint64 m_hideEpoch = 0;

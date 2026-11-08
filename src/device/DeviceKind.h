@@ -15,6 +15,11 @@ enum class Kind { Camera, Nvr, Stream, Frigate };
 Kind kindFromString(const QString &text);
 QString kindToString(Kind kind);
 
+// What one live pane of this kind costs against its Site budget, in Mbit/s
+// (wayfinder/site-tabs-redesign). Reolink: the stream's GetEnc bitRate (`kbps`), or 0.5
+// sub / 6 main when not known. Frigate: 0.5 sub / 6 main. A bare stream: 1.
+double streamCostMbps(Kind kind, bool mainStream, int kbps);
+
 // Where a host's detections (motion, person, ...) come from.
 enum class DetectionSource {
     None,                // a bare stream URL raises nothing

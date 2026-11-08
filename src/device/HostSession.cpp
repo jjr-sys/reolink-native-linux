@@ -5,6 +5,7 @@
 #include "protocol/BaichuanChannels.h"
 
 #include <QCoreApplication>
+#include <algorithm>
 #include <QElapsedTimer>
 
 namespace rl::device {
@@ -149,6 +150,12 @@ QSize encStreamSize(const Json &enc, const char *stream)
     return (w > 0 && h > 0) ? QSize(w, h) : QSize();
 }
 
+// Configured bitrate of a GetEnc stream in kbps; 0 if absent.
+int encStreamKbps(const Json &enc, const char *stream)
+{
+    return std::max(0, jsonInt(jsonObj(enc, stream), "bitRate", 0));
+}
+
 // The NVR's cameras as listed by its Baichuan port, for when its HTTP API is not answering.
 // Blocking; call from a worker. Empty on any failure.
 struct BaichuanCameras {
@@ -217,6 +224,7 @@ Validation validateReolinkHost(ReolinkTransport &http, const HostRecord &rec,
     QVector<api::ChannelInfo> channels;
     QString ch0codec = QStringLiteral("h264");
     QSize ch0MainSize, ch0SubSize;
+    int ch0MainKbps = 0, ch0SubKbps = 0;
 
     if (b1.transportOk) {
         for (const api::CommandResult &r : b1.results) {
@@ -233,6 +241,8 @@ Validation validateReolinkHost(ReolinkTransport &http, const HostRecord &rec,
                     jsonStr(jsonObj(enc, "mainStream"), "vType")));
                 ch0MainSize = encStreamSize(enc, "mainStream");
                 ch0SubSize = encStreamSize(enc, "subStream");
+                ch0MainKbps = encStreamKbps(enc, "mainStream");
+                ch0SubKbps = encStreamKbps(enc, "subStream");
             } else if (r.cmd == QLatin1String("GetAbility") && r.ok) {
                 caps = api::parseAbility(r.value);
             } else if (r.cmd == QLatin1String("GetBatteryInfo") && r.ok) {
@@ -290,6 +300,8 @@ Validation validateReolinkHost(ReolinkTransport &http, const HostRecord &rec,
         cr.codec = ch0codec;
         cr.mainSize = ch0MainSize;
         cr.subSize = ch0SubSize;
+        cr.mainKbps = ch0MainKbps;
+        cr.subKbps = ch0SubKbps;
         cr.caps = capsFor(0);
         v.talk = cr.caps.talk;
         v.channels.append(cr);
@@ -304,6 +316,7 @@ Validation validateReolinkHost(ReolinkTransport &http, const HostRecord &rec,
         QHash<int, QString> codecByChannel;
         QHash<int, QSize> mainSizeByChannel;
         QHash<int, QSize> subSizeByChannel;
+        QHash<int, int> mainKbpsByChannel, subKbpsByChannel;
         if (!online.isEmpty()) {
             Json encCmds = Json::array();
             for (const api::ChannelInfo &c : online)
@@ -319,6 +332,8 @@ Validation validateReolinkHost(ReolinkTransport &http, const HostRecord &rec,
                             jsonStr(jsonObj(enc, "mainStream"), "vType")));
                         mainSizeByChannel[ch] = encStreamSize(enc, "mainStream");
                         subSizeByChannel[ch] = encStreamSize(enc, "subStream");
+                        mainKbpsByChannel[ch] = encStreamKbps(enc, "mainStream");
+                        subKbpsByChannel[ch] = encStreamKbps(enc, "subStream");
                     }
         }
         for (const api::ChannelInfo &c : online) {
@@ -329,6 +344,8 @@ Validation validateReolinkHost(ReolinkTransport &http, const HostRecord &rec,
             cr.codec = codecByChannel.value(c.channel, QStringLiteral("h264"));
             cr.mainSize = mainSizeByChannel.value(c.channel);
             cr.subSize = subSizeByChannel.value(c.channel);
+            cr.mainKbps = mainKbpsByChannel.value(c.channel);
+            cr.subKbps = subKbpsByChannel.value(c.channel);
             cr.uid = c.uid;
             cr.caps = capsFor(c.channel);
             v.talk = v.talk || cr.caps.talk;

@@ -913,6 +913,8 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
         e.mainCodec = ch.codec; // may be empty = unknown -> probe
         e.mainSize = ch.mainSize;
         e.subSize = ch.subSize;
+        e.mainKbps = ch.mainKbps;
+        e.subKbps = ch.subKbps;
         e.uid = ch.uid;
         e.mainRestream = ch.mainRestream;
         e.caps = ch.caps;
@@ -2063,6 +2065,20 @@ void DeviceManager::playQuickReply(int row, int clipId)
             this, [this, row, clipId, ok, error] { emit quickReplyPlayed(row, clipId, ok, error); },
             Qt::QueuedConnection);
     }));
+}
+
+QVariantMap DeviceManager::streamCosts() const
+{
+    QVariantMap out;
+    for (const Entry &e : m_entries) {
+        const device::Kind kind = device::kindFromString(e.rec.kind);
+        const bool reolink = kind == device::Kind::Camera || kind == device::Kind::Nvr;
+        out.insert(QStringLiteral("%1:%2").arg(e.rec.id).arg(e.channel),
+                   QVariantMap{{QStringLiteral("sub"), device::streamCostMbps(kind, false, e.subKbps)},
+                               {QStringLiteral("main"), device::streamCostMbps(kind, true, e.mainKbps)},
+                               {QStringLiteral("known"), !reolink || (e.subKbps > 0 && e.mainKbps > 0)}});
+    }
+    return out;
 }
 
 QString DeviceManager::lastFrameUrl(qint64 hostId, int channel) const

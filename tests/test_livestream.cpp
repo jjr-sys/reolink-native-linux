@@ -54,6 +54,8 @@ public:
     struct Open { QVariantMap camera; bool main; Mode mode; quint64 attempt; };
     QVector<Open> opens;
     Description source{true, false, "rtsp://local/camera"};
+    qint64 frames = 0; // pictures decoded by the current connection
+    qint64 framesDecoded() const override { return frames; }
     bool exists = true;
     bool stopped = true;
     quint64 current = 0;
@@ -66,6 +68,7 @@ public:
     void open(const QVariantMap &camera, bool main, Mode mode, quint64 attempt) override
     {
         current = attempt;
+        frames = 0;
         opens.append({camera, main, mode, attempt});
         stopped = false;
         // Packet-source replacement can synchronously publish Stopped.
@@ -145,6 +148,87 @@ private slots:
         QCOMPARE(v.transport->opens.last().mode, Mode::Url);
         QVERIFY(!v.stream.degraded());
         QVERIFY(v.clock->pending.empty());
+    }
+
+    // A silent refusal: the stream opens and no picture ever comes. "No picture" shows
+    // after 8 s and the stream is reopened at 8, 16, 32, then every 60 s.
+    void noPictureReopensAtGrowingIntervals()
+    {
+        View v;
+        v.stream.setWatchPicture(true);
+        v.start();
+        QCOMPARE(v.transport->opens.size(), 1);
+        v.clock->advance(7999);
+        QVERIFY(!v.stream.noPicture());
+        QCOMPARE(v.transport->opens.size(), 1);
+        v.clock->advance(1);
+        QVERIFY(v.stream.noPicture());
+        QCOMPARE(v.transport->opens.size(), 2); // t = 8 s
+        const QVector<int> waits{16000, 32000, 60000, 60000};
+        for (int ms : waits) {
+            v.clock->advance(ms - 1);
+            const int before = int(v.transport->opens.size());
+            v.clock->advance(1);
+            QCOMPARE(int(v.transport->opens.size()), before + 1); // 24, 56, 116, 176 s
+            QVERIFY(v.stream.noPicture());
+        }
+        // A picture: all well, and the next stall waits 8 s again.
+        v.transport->frames = 3;
+        v.clock->advance(1000);
+        QVERIFY(!v.stream.noPicture());
+        const int opened = int(v.transport->opens.size());
+        v.clock->advance(7999);
+        QCOMPARE(int(v.transport->opens.size()), opened);
+        v.clock->advance(1);
+        QCOMPARE(int(v.transport->opens.size()), opened + 1);
+    }
+    // Pictures stop arriving after a while: 8 s after the last one counts too.
+    void noPictureAfterTheLastFrame()
+    {
+        View v;
+        v.stream.setWatchPicture(true);
+        v.start();
+        v.transport->publish(State::Streaming);
+        for (int t = 0; t < 20; ++t) {
+            ++v.transport->frames;
+            v.clock->advance(1000);
+        }
+        QCOMPARE(v.transport->opens.size(), 1);
+        v.clock->advance(8000);
+        QVERIFY(v.stream.noPicture());
+        QCOMPARE(v.transport->opens.size(), 2);
+    }
+    // Hiding the pane, leaving the page or changing the stream on purpose forgets it.
+    void noPictureEndsWithTheView()
+    {
+        View v;
+        v.stream.setWatchPicture(true);
+        v.start();
+        v.clock->advance(8000);
+        QVERIFY(v.stream.noPicture());
+        v.stream.setViewVisible(false);
+        QVERIFY(!v.stream.noPicture());
+        QVERIFY(!v.clock->pending.count(Task::Watch));
+        v.stream.setViewVisible(true);
+        v.clock->advance(7999);
+        QVERIFY(!v.stream.noPicture());
+        v.stream.setMainStream(true);
+        v.clock->advance(7999);
+        QVERIFY(!v.stream.noPicture());
+        v.clock->advance(1);
+        QVERIFY(v.stream.noPicture());
+        v.stream.setActive(false);
+        QVERIFY(!v.stream.noPicture());
+        QVERIFY(!v.clock->pending.count(Task::Watch));
+    }
+    // Off unless asked for: other views keep their own recovery only.
+    void noPictureWatchIsOptIn()
+    {
+        View v;
+        v.start();
+        v.clock->advance(120000);
+        QCOMPARE(v.transport->opens.size(), 1);
+        QVERIFY(!v.stream.noPicture());
     }
 
     void mainRetriesThenFallbackRemainsUntilQualityChanges()

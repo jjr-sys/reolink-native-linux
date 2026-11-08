@@ -152,6 +152,10 @@ public:
     // comparing this against the decoded frame size. Invalid if not yet primed.
     Q_INVOKABLE QSize declaredSize(int row, bool mainStream) const;
     Q_INVOKABLE QString nameAt(int row) const;
+    // What each camera's live pane costs against its Site budget, in Mbit/s:
+    // { "hostId:channel": { sub: Mbit/s, main: Mbit/s, known: bool } } for every row.
+    // `known` is false while the figure is a default (no GetEnc bitrate yet).
+    Q_INVOKABLE QVariantMap streamCosts() const;
     // file: URL of a camera's last-seen live frame, "" when none has been kept.
     Q_INVOKABLE QString lastFrameUrl(qint64 hostId, int channel) const;
     Q_INVOKABLE int rowOfHost(qint64 hostId) const { return rowForHostId(hostId); }
@@ -381,6 +385,8 @@ private:
         QString mainCodec = QStringLiteral("h264"); // sub stream is always h264
         QSize mainSize;                             // GetEnc-declared main resolution
         QSize subSize;                              // GetEnc-declared sub resolution
+        int mainKbps = 0;                           // GetEnc-configured bitrates, 0 = unknown
+        int subKbps = 0;
         QString uid;                                // per-camera UID (Baichuan playback)
         QString mainRestream;                       // Frigate: go2rtc stream for HD ("" = own)
         QString password;                           // in-memory only (keyring at rest)

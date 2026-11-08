@@ -13,22 +13,30 @@ using Task = LiveStreamScheduler::Task;
 // not a backoff; substream and other retries use LiveStream::m_backoff.
 constexpr int kBaichuanMainRetryMs = 1500;
 
+// How often the picture watch looks at the decoded-frame count.
+constexpr int kWatchTickMs = 1000;
+
 class QtLiveStreamScheduler final : public LiveStreamScheduler
 {
 public:
     void schedule(Task task, int delayMs, std::function<void()> callback) override
     {
-        QTimer &timer = task == Task::Retry ? m_retry : m_hide;
+        QTimer &timer = timerFor(task);
         timer.stop();
         QObject::disconnect(&timer, nullptr, nullptr, nullptr);
         timer.setSingleShot(true);
         QObject::connect(&timer, &QTimer::timeout, &timer, std::move(callback));
         timer.start(delayMs);
     }
-    void cancel(Task task) override { (task == Task::Retry ? m_retry : m_hide).stop(); }
+    void cancel(Task task) override { timerFor(task).stop(); }
 private:
+    QTimer &timerFor(Task task)
+    {
+        return task == Task::Retry ? m_retry : task == Task::Hide ? m_hide : m_watch;
+    }
     QTimer m_retry;
     QTimer m_hide;
+    QTimer m_watch;
 };
 
 class DeviceLiveStreamTransport final : public LiveStreamTransport
@@ -183,6 +191,7 @@ void LiveStream::setActive(bool active)
         m_released = false;
         resetPolicy();
     } else {
+        disarmWatch();
         stopConnection();
     }
     updateAudio();
@@ -203,6 +212,7 @@ void LiveStream::setViewVisible(bool visible)
         if (!m_open)
             resetPolicy();
     } else {
+        disarmWatch();
         m_scheduler->cancel(Task::Retry);
         m_retryPending = false;
         setRecovering(false);
@@ -233,6 +243,7 @@ void LiveStream::updateAudio()
 void LiveStream::release()
 {
     m_released = true;
+    disarmWatch();
     stopConnection();
     updateAudio();
 }
@@ -260,6 +271,7 @@ void LiveStream::resetPolicy()
     m_retries = 0;
     m_backoff.reset();
     setDegraded(false);
+    clearWatch();
 }
 
 void LiveStream::refresh()
@@ -299,6 +311,73 @@ void LiveStream::refresh()
     m_key = key;
     setState(State::Connecting);
     m_transport->open(m_camera, m_main, mode, m_attempt);
+    m_seenFrames = 0;
+    m_watch.start();
+    armWatch();
+}
+
+void LiveStream::setWatchPicture(bool on)
+{
+    if (m_watchOn == on)
+        return;
+    m_watchOn = on;
+    if (!on)
+        disarmWatch();
+    else if (m_open)
+        armWatch();
+    emit watchPictureChanged();
+}
+
+// Forget the watch's run of failures, and the "No picture" it may be showing.
+void LiveStream::clearWatch()
+{
+    const bool was = m_watch.noPicture();
+    m_watch.reset();
+    if (was)
+        emit noPictureChanged();
+}
+
+// Runs while the pane is shown, across this watch's own reopens and the stream's other
+// retries; stopped (and forgotten) when the pane hides, the page is left or the stream
+// is changed on purpose.
+void LiveStream::armWatch()
+{
+    if (!m_watchOn || m_watchArmed)
+        return;
+    m_watchArmed = true;
+    m_scheduler->schedule(Task::Watch, kWatchTickMs, [this] { watchTick(); });
+}
+
+void LiveStream::disarmWatch()
+{
+    m_watchArmed = false;
+    m_scheduler->cancel(Task::Watch);
+    clearWatch();
+}
+
+void LiveStream::watchTick()
+{
+    if (!m_watchArmed)
+        return;
+    if (!m_visible || !m_active || m_released || m_terminal) {
+        disarmWatch();
+        return;
+    }
+    const qint64 frames = m_open ? m_transport->framesDecoded() : 0;
+    if (frames > m_seenFrames) {
+        const bool was = m_watch.noPicture();
+        m_watch.frame();
+        if (was)
+            emit noPictureChanged();
+    } else if (const bool was = m_watch.noPicture(); m_watch.advance(kWatchTickMs)) {
+        if (!was)
+            emit noPictureChanged();
+        // This watch owns the retry now: drop any other pending one and reopen.
+        stopConnection();
+        refresh();
+    }
+    m_seenFrames = frames;
+    m_scheduler->schedule(Task::Watch, kWatchTickMs, [this] { watchTick(); });
 }
 
 void LiveStream::retry(int delayMs)

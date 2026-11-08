@@ -5,9 +5,9 @@
 #include <QStringList>
 #include <QVariantList>
 
-namespace rl {
+#include "ui/SiteMap.h"
 
-class SiteMap;
+namespace rl {
 
 // One page's selection of cameras on the Site tabs (wayfinder/site-tabs-redesign): tapping
 // a camera adds or removes its pane. Cameras are keys, "hostId:channel".

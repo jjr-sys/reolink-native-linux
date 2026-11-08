@@ -106,6 +106,11 @@ Rectangle {
     onForceMainChanged: qualityMain = forceMain || restMain
     onRestMainChanged: if (!forceMain) qualityMain = restMain
     signal qualityChosen(bool main) // the SD/HD toggle was used
+    // Why this pane may not switch to HD now ("" = it may), e.g. the Site budget
+    // (wayfinder/site-tabs-redesign). Not asked while maximised: one pane alone goes HD.
+    property var hdRefusal: null
+    // Watch for a stream that opens but shows no picture, and retry it (LiveStream).
+    property bool watchPicture: false
 
     // Mosaic panes can be Normal or Large (about 1.5× the area, from the packer).
     property bool showLarge: false
@@ -178,6 +183,7 @@ Rectangle {
         mainStream: root.effectiveMain
         active: root.pageActive
         viewVisible: root.visible
+        watchPicture: root.watchPicture
         videoSink: video.videoSink
         muted: !(root.audioOn && root.audioAllowed && !talk.active)
     }
@@ -506,11 +512,11 @@ Rectangle {
     Column {
         anchors.centerIn: videoArea
         spacing: Theme.spacing
-        visible: player.state !== StreamPlayer.Streaming && !root.offline
+        visible: (player.state !== StreamPlayer.Streaming || player.noPicture) && !root.offline
 
         BusyIndicator {
             anchors.horizontalCenter: parent.horizontalCenter
-            running: player.state === StreamPlayer.Connecting
+            running: player.state === StreamPlayer.Connecting && !player.noPicture
             visible: running
             width: 32
             height: 32
@@ -524,6 +530,7 @@ Rectangle {
             font.pixelSize: 11
             text: {
                 if (!root.hasSource) return qsTr("No camera");
+                if (player.noPicture) return qsTr("No picture: retrying");
                 switch (player.state) {
                 case StreamPlayer.Connecting: return qsTr("Connecting…");
                 case StreamPlayer.Error: return player.errorString
@@ -533,6 +540,38 @@ Rectangle {
                 }
             }
         }
+    }
+
+    // A short notice over the picture, e.g. why HD was refused.
+    Rectangle {
+        id: paneNotice
+        function show(msg) {
+            noticeText.text = msg;
+            opacity = 1;
+            noticeTimer.restart();
+        }
+        anchors.horizontalCenter: videoArea.horizontalCenter
+        anchors.bottom: videoArea.bottom
+        anchors.bottomMargin: 40
+        z: 60
+        width: Math.min(noticeText.implicitWidth + 20, root.width - 16)
+        height: noticeText.implicitHeight + 12
+        radius: Theme.radius
+        color: Qt.alpha(Theme.surfaceAlt, 0.94)
+        border.color: Theme.border
+        opacity: 0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: 180 } }
+        Text {
+            id: noticeText
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, root.width - 36)
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
+            color: Theme.text
+            font.pixelSize: 11
+        }
+        Timer { id: noticeTimer; interval: 5000; onTriggered: paneNotice.opacity = 0 }
     }
 
     // ---- Talk status ---------------------------------------------------------
@@ -757,6 +796,12 @@ Rectangle {
                     tip: root.qualityMain ? qsTr("Switch to Fluent (SD)") : qsTr("Switch to Clear (HD)")
                     active: root.qualityMain
                     onActivated: {
+                        var why = !root.qualityMain && !root.forceMain && root.hdRefusal
+                                  ? root.hdRefusal() : "";
+                        if (why) {
+                            paneNotice.show(why);
+                            return;
+                        }
                         root.qualityMain = !root.qualityMain;
                         root.qualityChosen(root.qualityMain);
                     }

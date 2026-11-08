@@ -19,6 +19,18 @@ Kind kindFromString(const QString &text)
     return Kind::Camera;
 }
 
+double streamCostMbps(Kind kind, bool mainStream, int kbps)
+{
+    const double fallback = mainStream ? 6.0 : 0.5;
+    switch (kind) {
+    case Kind::Stream: return 1.0;
+    case Kind::Frigate: return fallback;
+    case Kind::Camera:
+    case Kind::Nvr: break;
+    }
+    return kbps > 0 ? kbps / 1000.0 : fallback;
+}
+
 QString kindToString(Kind kind)
 {
     switch (kind) {

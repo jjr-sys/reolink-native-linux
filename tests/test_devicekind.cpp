@@ -14,6 +14,23 @@ class TestDeviceKind : public QObject
     Q_OBJECT
 
 private slots:
+    // A live pane's cost against its Site budget (wayfinder/site-tabs-redesign).
+    void streamCost()
+    {
+        // Reolink: the stream's configured GetEnc bitRate, in kbps.
+        QCOMPARE(streamCostMbps(Kind::Nvr, false, 512), 0.512);
+        QCOMPARE(streamCostMbps(Kind::Camera, true, 6144), 6.144);
+        // Not known (GetEnc missing, or the host listed over Baichuan): 0.5 sub, 6 HD.
+        QCOMPARE(streamCostMbps(Kind::Nvr, false, 0), 0.5);
+        QCOMPARE(streamCostMbps(Kind::Nvr, true, -1), 6.0);
+        // Frigate: fixed defaults, whatever is passed.
+        QCOMPARE(streamCostMbps(Kind::Frigate, false, 2048), 0.5);
+        QCOMPARE(streamCostMbps(Kind::Frigate, true, 0), 6.0);
+        // A bare stream has one quality.
+        QCOMPARE(streamCostMbps(Kind::Stream, false, 0), 1.0);
+        QCOMPARE(streamCostMbps(Kind::Stream, true, 9000), 1.0);
+    }
+
     void kindStringsRoundTrip_data()
     {
         QTest::addColumn<QString>("text");

@@ -24,6 +24,8 @@ public:
     virtual Description describe(const QVariantMap &camera, bool main) = 0;
     virtual void open(const QVariantMap &camera, bool main, Mode mode, quint64 attempt) = 0;
     virtual void stop() = 0;
+    // Pictures decoded by the current connection (restarts at 0 with each one).
+    virtual qint64 framesDecoded() const { return player.framesDecoded(); }
     StreamPlayer player;
 
 signals:
@@ -34,7 +36,7 @@ signals:
 class LiveStreamScheduler
 {
 public:
-    enum class Task { Retry, Hide };
+    enum class Task { Retry, Hide, Watch };
     virtual ~LiveStreamScheduler() = default;
     virtual void schedule(Task task, int delayMs, std::function<void()> callback) = 0;
     virtual void cancel(Task task) = 0;

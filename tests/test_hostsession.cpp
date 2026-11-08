@@ -29,8 +29,8 @@ Json devInfo(const char *name, int channels)
 Json enc(int ch, const char *vtype, int w, int h)
 {
     return Json{{"Enc", {{"channel", ch},
-                         {"mainStream", {{"vType", vtype}, {"width", w}, {"height", h}}},
-                         {"subStream", {{"vType", "h264"}, {"width", 640}, {"height", 360}}}}}};
+                         {"mainStream", {{"vType", vtype}, {"width", w}, {"height", h}, {"bitRate", 6144}}},
+                         {"subStream", {{"vType", "h264"}, {"width", 640}, {"height", 360}, {"bitRate", 512}}}}}};
 }
 } // namespace
 
@@ -187,6 +187,9 @@ private slots:
         QCOMPARE(v.channels[0].codec, QStringLiteral("h265"));
         QCOMPARE(v.channels[0].mainSize, QSize(3840, 2160));
         QCOMPARE(v.channels[0].subSize, QSize(640, 360));
+        // The configured bitrates, for the Site budget.
+        QCOMPARE(v.channels[0].mainKbps, 6144);
+        QCOMPARE(v.channels[0].subKbps, 512);
         QCOMPARE(v.password, QStringLiteral("pw"));
         QCOMPARE(bc.opens, 0); // HTTP answered; Baichuan is never touched
     }
@@ -207,6 +210,8 @@ private slots:
         QCOMPARE(v.channels[0].name, QStringLiteral("Yard"));
         QCOMPARE(v.channels[0].uid, QStringLiteral("U1"));
         QCOMPARE(v.channels[0].codec, QStringLiteral("h264"));
+        QCOMPARE(v.channels[0].subKbps, 512);
+        QCOMPARE(v.channels[0].mainKbps, 6144);
     }
     void nvrWithNoOnlineCamerasKeepsAPlaceholder()
     {

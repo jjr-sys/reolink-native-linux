@@ -41,6 +41,30 @@ Item {
         // A change after Clear all ends its Undo: the toast goes with it.
         onUndoChanged: if (!canUndo) undoToast.dismiss()
     }
+    // ---- The Site budget ----------------------------------------------------------------
+    // Each Site's link carries so many Mbit/s; every pane costs its camera's bitrate, sub or
+    // HD. Live View counts on its own (it stops streaming when hidden). A maximised pane is
+    // one stream alone and always goes HD.
+    SiteBudget {
+        id: budget
+        sites: Sites.map
+        selection: selection
+        budgets: Sites.budgets
+        defaultBudget: Sites.defaultBudget
+        costs: Sites.costs
+        hd: Mosaics.keysOf("", "hd")
+    }
+    function mbps(v) { return Number(v).toLocaleString(Qt.locale(), "f", 1); }
+    // Why switching this pane to HD would go over its Site's budget; "" when it fits.
+    function hdRefusal(key) {
+        if (budget.canHd(key))
+            return "";
+        var site = Sites.siteOfKey(key);
+        return qsTr("%1 is at %2 / %3 Mbit/s; HD needs %4 more. Deselect a camera or switch one out of HD.")
+                .arg(site).arg(mbps(budget.used(site))).arg(mbps(budget.budgetOf(site)))
+                .arg(mbps(budget.hdExtra(key)));
+    }
+
     property bool seedFirstCameras: false
     Settings { id: selStore; category: "liveSelection" }   // keys, migrated
     Settings { id: gridStore; category: "liveGrid" }        // read once, for the migration
@@ -64,7 +88,7 @@ Item {
             return;
         for (var r = 0; r < Devices.count && selection.count < 4; ++r) {
             var k = cameraKey(r);
-            if (k)
+            if (k && budget.canAdd(k))
                 selection.toggle(k);
         }
     }
@@ -246,6 +270,7 @@ Item {
         y: page.tabsShown ? 0 : -height
         Behavior on y { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
         selection: selection
+        budget: budget
         menus: page.menus
         ratioOf: (key) => page.cardRatio(key)
         onCleared: (n) => undoToast.show(qsTr("Cleared %n camera(s) ·", "", n))
@@ -491,6 +516,8 @@ Item {
                 // returns to the HD choice remembered for its camera.
                 forceMain: isMaximized
                 restMain: Mosaics.has("", "hd", cameraKey)
+                hdRefusal: () => page.hdRefusal(cameraKey)
+                watchPicture: true
                 onQualityChosen: (main) => {
                     if (!isMaximized)
                         Mosaics.setKey("", "hd", cameraKey, main);

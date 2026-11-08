@@ -1156,7 +1156,7 @@ Item {
                     Layout.fillWidth: true
                     Text {
                         Layout.fillWidth: true
-                        text: qsTr("Each Site is a tab on Live View. A Site holds one or more recorders; type a Site name to move a recorder, or pick one with ▾. Use ▲ ▼ to order the tabs.")
+                        text: qsTr("Each Site is a tab on Live View. A Site holds one or more recorders; type a Site name to move a recorder, or pick one with ▾. Use ▲ ▼ to order the tabs. The budget is how much video the Site's link carries: a camera that would go over it can't be added.")
                         color: Theme.textMuted; font.pixelSize: 12; wrapMode: Text.WordWrap
                     }
                     SiteBtn { text: qsTr("+ Add device"); accent: true; onTapped: page.addDeviceRequested() }
@@ -1188,6 +1188,28 @@ Item {
                                     color: Theme.text; font.pixelSize: 14; font.bold: true
                                     elide: Text.ElideRight
                                 }
+                                Text { text: qsTr("Budget:"); color: Theme.textMuted; font.pixelSize: 12 }
+                                TextField {
+                                    id: budgetField
+                                    Layout.preferredWidth: 64
+                                    text: Number(Sites.budgetOf(siteCard.modelData)).toLocaleString(Qt.locale(), "f", 1)
+                                    color: Theme.text
+                                    selectByMouse: true
+                                    horizontalAlignment: Text.AlignRight
+                                    validator: DoubleValidator { bottom: 0.1; top: 1000; decimals: 1 }
+                                    background: Rectangle {
+                                        color: Theme.surface
+                                        border.color: budgetField.activeFocus ? Theme.accent : Theme.border
+                                        radius: 4
+                                    }
+                                    onEditingFinished: {
+                                        var v = Number.fromLocaleString(Qt.locale(), text);
+                                        if (v > 0)
+                                            Sites.setBudget(siteCard.modelData, v);
+                                    }
+                                }
+                                Text { text: qsTr("Mbit/s"); color: Theme.textMuted; font.pixelSize: 12 }
+                                Item { width: 8 }
                                 SiteBtn { text: "▲"; enabled: siteCard.index > 0
                                           onTapped: Sites.map.moveSite(siteCard.modelData, -1) }
                                 SiteBtn { text: "▼"; enabled: siteCard.index < Sites.list.length - 1
