@@ -222,6 +222,8 @@ Item {
         if (streamingPanes > 0)
             added.forEach(k => { _resume[k] = true; });
         added.forEach(k => search(k, false));
+        statusText.text = selection.count === 0 ? ""
+                        : qsTr("Synced playback — %n camera(s)", "", selection.count);
         recomputeTimeline();
         scheduleMosaic();
         flushResume();
@@ -486,6 +488,7 @@ Item {
         selDay = now.getDate();
         group.setMonth(selYear, selMonth);
         restoreSelection();
+        pruneTimer.start();   // the device list may be complete already (no rowsInserted)
         if (typeof mockRecordings !== "undefined" && mockRecordings)
             playheadSecs = 32400;
     }

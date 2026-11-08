@@ -105,6 +105,9 @@ Rectangle {
                 root.noPicture = true;
                 root._retries++;
                 root._stillTicks = 0;
+                // Reopen, not a seek in place: a stream "playing" without frames is the
+                // refused one. (_suppressResume stays false, so this state survives the stop.)
+                session.stop();
                 root.playAtSecs(root.playheadSecs, root.epochOf(root.playheadSecs));
             }
         }
