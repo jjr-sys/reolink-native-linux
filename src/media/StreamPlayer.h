@@ -198,6 +198,9 @@ public:
 
     // Save the picture currently on screen as an image file. False if there is none.
     Q_INVOKABLE bool saveSnapshot(const QString &path);
+    // The last decoded frame, scaled to at most `maxWidth` wide, written as a JPEG off the
+    // UI thread (atomically, so a reader never sees half a file). False with no frame.
+    bool saveThumbnail(const QString &path, int maxWidth);
 
     qreal volume() const { return m_volume; }
     void setVolume(qreal volume);

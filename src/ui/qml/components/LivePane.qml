@@ -182,6 +182,18 @@ Rectangle {
         muted: !(root.audioOn && root.audioAllowed && !talk.active)
     }
 
+    // The Site tab drawer shows each camera's last-seen frame: kept a few seconds after
+    // the picture starts, then every 30 s while it plays.
+    property bool keepLastFrame: false
+    Timer {
+        id: lastFrameTimer
+        interval: 3000
+        repeat: true
+        running: root.keepLastFrame && root.visible && player.state === StreamPlayer.Streaming
+        onRunningChanged: interval = 3000
+        onTriggered: { player.saveLastFrame(); interval = 30000; }
+    }
+
     // Microphone -> this camera's speaker.
     TalkSession { id: talk }
 

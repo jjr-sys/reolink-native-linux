@@ -22,7 +22,5 @@ QtObject {
     // How far the pointer must move before a press becomes a drag rather than
     // a click, for dragging cameras between grid cells.
     readonly property int dragThreshold: 8
-    readonly property int sidebarWidth: 240
-    readonly property int sidebarStripWidth: 44   // the collapsed sidebar
     readonly property int navHeight: 48
 }

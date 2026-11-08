@@ -1,4 +1,5 @@
 #include "LiveStream.h"
+#include "core/Paths.h"
 
 #include <QScopedValueRollback>
 
@@ -397,4 +398,17 @@ void LiveStream::setRecovering(bool recovering)
     m_recovering = recovering;
     emit recoveringChanged();
 }
+} // namespace rl
+
+namespace rl {
+
+bool LiveStream::saveLastFrame()
+{
+    const qint64 hostId = m_camera.value(QStringLiteral("hostId")).toLongLong();
+    const int channel = m_camera.value(QStringLiteral("channel"), -1).toInt();
+    if (m_released || m_state != StreamPlayer::State::Streaming || hostId <= 0 || channel < 0)
+        return false;
+    return m_transport->player.saveThumbnail(Paths::lastFrameFile(hostId, channel), 320);
+}
+
 } // namespace rl

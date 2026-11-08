@@ -2065,6 +2065,12 @@ void DeviceManager::playQuickReply(int row, int clipId)
     }));
 }
 
+QString DeviceManager::lastFrameUrl(qint64 hostId, int channel) const
+{
+    const QString path = Paths::lastFrameFile(hostId, channel);
+    return QFileInfo::exists(path) ? QUrl::fromLocalFile(path).toString() : QString();
+}
+
 QVariantMap DeviceManager::hostInfo(qint64 hostId) const
 {
     QVariantMap m;
@@ -2138,6 +2144,7 @@ QVariantMap DeviceManager::cameraInfo(int row) const
     m["capTalk"] = e.talk;
     m["capAutoReply"] = e.caps.autoReply;
     m["rotationOverride"] = e.rotationOverride;
+    m["isFisheye"] = data(index(row), IsFisheyeRole);
     return m;
 }
 

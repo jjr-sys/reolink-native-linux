@@ -44,10 +44,6 @@ ApplicationWindow {
     }
 
     Shortcut {
-        sequence: "Ctrl+B"
-        onActivated: sideBar.compact = !sideBar.compact
-    }
-    Shortcut {
         sequence: "F11"
         onActivated: window.videoFullscreen = !window.videoFullscreen
     }
@@ -65,7 +61,6 @@ ApplicationWindow {
             Layout.fillWidth: true
             visible: !window.videoFullscreen
             onFullscreenRequested: window.videoFullscreen = true
-            onSidebarToggleRequested: sideBar.compact = !sideBar.compact
         }
 
         Rectangle { // divider
@@ -135,62 +130,46 @@ ApplicationWindow {
             }
         }
 
-        RowLayout {
+        StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 0
+            currentIndex: nav.currentIndex
 
-            SideBar {
-                id: sideBar
-                Layout.fillHeight: true
-                visible: !window.videoFullscreen
-                onAddRequested: addDeviceDialog.open()
-                // Clicking a camera jumps to Live View with it full-size.
-                onDeviceClicked: (row) => {
-                    nav.currentIndex = 0;
-                    liveViewPage.showCamera(row);
-                }
-                onOpenSettings: (row) => {
-                    nav.currentIndex = 3;
-                    settingsPage.showDevice(row);
-                }
-                onCameraProperties: (row) => window.showCameraProperties(row)
-                onNvrProperties: (host) => window.showNvrProperties(host)
+            LiveViewPage {
+                id: liveViewPage
+                active: nav.currentIndex === 0
+                menus: deviceMenus
+                audioSuppressed: doorbell.active
+                doorbellCamera: doorbell.active && doorbell.cameraIdentity.hostId !== undefined
+                                ? doorbell.cameraIdentity.hostId + ":" + doorbell.cameraIdentity.channel : ""
+                onEditHighlightRulesRequested: { settingsPage.category = "highlights"; nav.currentIndex = 3; }
+                fullscreen: window.videoFullscreen
+                onFullscreenToggled: window.videoFullscreen = !window.videoFullscreen
+                onPopOut: (row, lbl) => window.openPopout(row, lbl)
+                onOpenBoschTourRequested: nav.currentIndex = 4
             }
-
-            Rectangle { // divider
-                Layout.fillHeight: true
-                width: 1
-                color: Theme.border
-                visible: !window.videoFullscreen
+            PlaybackPage { id: playbackPage; active: nav.currentIndex === 1 }
+            EventsPage {
+                onJumpToPlayback: (hostId, channel, timestamp) =>
+                    window.openEventPlayback(hostId, channel, timestamp)
             }
-
-            StackLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                currentIndex: nav.currentIndex
-
-                LiveViewPage {
-                    id: liveViewPage
-                    active: nav.currentIndex === 0
-                    audioSuppressed: doorbell.active
-                    doorbellCamera: doorbell.active && doorbell.cameraIdentity.hostId !== undefined
-                                    ? doorbell.cameraIdentity.hostId + ":" + doorbell.cameraIdentity.channel : ""
-                    onEditHighlightRulesRequested: { settingsPage.category = "highlights"; nav.currentIndex = 3; }
-                    fullscreen: window.videoFullscreen
-                    onFullscreenToggled: window.videoFullscreen = !window.videoFullscreen
-                    onPopOut: (row, lbl) => window.openPopout(row, lbl)
-                    onOpenBoschTourRequested: nav.currentIndex = 4
-                }
-                PlaybackPage { id: playbackPage; active: nav.currentIndex === 1 }
-                EventsPage {
-                    onJumpToPlayback: (hostId, channel, timestamp) =>
-                        window.openEventPlayback(hostId, channel, timestamp)
-                }
-                DeviceSettingsPage { id: settingsPage }
-                BoschTourPage { id: boschTourPage }
+            DeviceSettingsPage {
+                id: settingsPage
+                onAddDeviceRequested: addDeviceDialog.open()
             }
+            BoschTourPage { id: boschTourPage }
         }
+    }
+
+    // The camera and recorder menus (right-click a camera card or a Site tab).
+    DeviceMenus {
+        id: deviceMenus
+        onOpenSettings: (row) => {
+            nav.currentIndex = 3;
+            settingsPage.showDevice(row);
+        }
+        onCameraProperties: (row) => window.showCameraProperties(row)
+        onNvrProperties: (host) => window.showNvrProperties(host)
     }
 
     // Where a detection's recording plays: a camera whose footage is on a server of its

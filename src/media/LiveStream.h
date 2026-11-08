@@ -65,6 +65,8 @@ public:
     Q_INVOKABLE void release();
     Q_INVOKABLE bool startRecording() { return m_transport->player.startRecording(); }
     Q_INVOKABLE void stopRecording() { m_transport->player.stopRecording(); }
+    // Keep the frame showing as this camera's last-seen frame (Paths::lastFrameFile).
+    Q_INVOKABLE bool saveLastFrame();
 
 signals:
     void devicesChanged();

@@ -50,6 +50,8 @@ add_library(reolink_core STATIC
     src/ui/MosaicPacker.h src/ui/MosaicPacker.cpp
     src/ui/MosaicLayout.h src/ui/MosaicLayout.cpp
     src/ui/LiveArrangement.h src/ui/LiveArrangement.cpp
+    src/ui/SiteMap.h src/ui/SiteMap.cpp
+    src/ui/SiteSelection.h src/ui/SiteSelection.cpp
     src/device/DownloadPlan.h src/device/DownloadSource.h src/device/DownloadQueue.h src/device/DownloadQueue.cpp
     src/device/DeviceKind.h src/device/DeviceKind.cpp
     src/device/HostSession.h src/device/HostSession.cpp
@@ -109,7 +111,10 @@ set(APP_QML_FILES
     src/ui/qml/Theme.qml
     src/ui/qml/AudioPrefs.qml
     src/ui/qml/Mosaics.qml
-    src/ui/qml/components/SideBar.qml
+    src/ui/qml/Sites.qml
+    src/ui/qml/components/SiteTabs.qml
+    src/ui/qml/components/DeviceMenus.qml
+    src/ui/qml/components/UndoToast.qml
     src/ui/qml/components/NavBar.qml
     src/ui/qml/components/ThemedMenu.qml
     src/ui/qml/components/ThemedMenuItem.qml
@@ -134,7 +139,6 @@ set(APP_QML_FILES
     src/ui/qml/dialogs/PropertiesDialog.qml
     src/ui/qml/dialogs/UserEditDialog.qml
     src/ui/qml/dialogs/ConfirmDialog.qml
-    src/ui/qml/dialogs/MosaicEditorDialog.qml
     src/ui/qml/dialogs/DetectionZoneDialog.qml
     src/ui/qml/dialogs/ScheduleDialog.qml
     src/ui/qml/dialogs/DownloadDialog.qml
@@ -149,6 +153,7 @@ endforeach()
 set_source_files_properties(src/ui/qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(src/ui/qml/AudioPrefs.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(src/ui/qml/Mosaics.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(src/ui/qml/Sites.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(reolink-client
     URI ReolinkApp
@@ -227,7 +232,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})

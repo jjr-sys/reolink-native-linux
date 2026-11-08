@@ -12,9 +12,10 @@ Item {
     id: page
 
     property int deviceRow: -1
+    signal addDeviceRequested()
     property string category: "system"
     // App-level sections, above the camera picker; they ignore the chosen camera.
-    readonly property bool appCategory: category === "mosaics" || category === "highlights"
+    readonly property bool appCategory: category === "sites" || category === "highlights"
     Component.onCompleted: {
         if (typeof initialSettingsCategory !== "undefined" && initialSettingsCategory)
             category = initialSettingsCategory;
@@ -239,18 +240,18 @@ Item {
                     Layout.fillWidth: true
                     height: 34
                     radius: 4
-                    color: page.category === "mosaics" ? Theme.accentDim
-                         : mosaicsHover.hovered ? Theme.surfaceAlt : "transparent"
+                    color: page.category === "sites" ? Theme.accentDim
+                         : sitesHover.hovered ? Theme.surfaceAlt : "transparent"
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         anchors.left: parent.left
                         anchors.leftMargin: 10
-                        text: qsTr("Mosaics")
-                        color: page.category === "mosaics" ? Theme.text : Theme.textMuted
+                        text: qsTr("Sites and devices")
+                        color: page.category === "sites" ? Theme.text : Theme.textMuted
                         font.pixelSize: 13
                     }
-                    HoverHandler { id: mosaicsHover }
-                    TapHandler { onTapped: page.category = "mosaics" }
+                    HoverHandler { id: sitesHover }
+                    TapHandler { onTapped: page.category = "sites" }
                 }
                 Rectangle {
                     Layout.fillWidth: true
@@ -334,8 +335,8 @@ Item {
                     Layout.fillWidth: true
                     Text {
                         text: {
-                            if (page.category === "mosaics")
-                                return qsTr("Mosaics");
+                            if (page.category === "sites")
+                                return qsTr("Sites and devices");
                             if (page.category === "highlights")
                                 return qsTr("Detection highlights");
                             for (var i = 0; i < page.categories.length; i++)
@@ -360,7 +361,7 @@ Item {
                     Layout.fillHeight: true
                     sourceComponent: {
                         switch (page.category) {
-                        case "mosaics": return mosaicsPanel;
+                        case "sites": return sitesPanel;
                         case "highlights": return highlightsPanel;
                         case "image": return imagePanel;
                         case "encoding": return encodingPanel;
@@ -399,13 +400,6 @@ Item {
         confirmDialog.confirmLabel = qsTr("Format disk");
         confirmDialog.payload = { action: "format", id: diskId };
         confirmDialog.open();
-    }
-    MosaicEditorDialog { id: mosaicEditor }
-    ConfirmDialog {
-        id: mosaicDelete
-        confirmLabel: qsTr("Delete")
-        detail: qsTr("Your cameras and the grid are not affected.")
-        onConfirmed: (id) => Mosaics.remove(id)
     }
 
     function openUserDialog(mode, name) {
@@ -1128,82 +1122,148 @@ Item {
         HighlightRulesPanel {}
     }
 
-    // Named mosaics, shown as tabs after the Mosaic switch in Live View.
+    // Sites (wayfinder/site-tabs-redesign): which recorders make up each Site tab, and the
+    // tabs' order. + Add device lives here since the Devices sidebar went.
     Component {
-        id: mosaicsPanel
-        ColumnLayout {
-            spacing: Theme.spacing
+        id: sitesPanel
+        Flickable {
+            id: sitesFlick
+            contentHeight: sitesCol.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {}
 
-            component MosaicBtn: Rectangle {
+            component SiteBtn: Rectangle {
                 property string text
-                property bool danger: false
+                property bool accent: false
                 signal tapped()
-                implicitWidth: Math.max(28, miniTxt.implicitWidth + 16); implicitHeight: 26; radius: 4
-                color: miniHover.hovered && enabled ? (danger ? Theme.danger : Theme.surfaceAlt) : "transparent"
-                border.color: danger ? Theme.danger : Theme.border
+                implicitWidth: Math.max(28, sbTxt.implicitWidth + 16); implicitHeight: 26; radius: 4
+                color: sbHover.hovered && enabled ? (accent ? Theme.accent : Theme.surfaceAlt)
+                     : accent ? Theme.accentDim : "transparent"
+                border.color: accent ? Theme.accent : Theme.border
                 opacity: enabled ? 1 : 0.35
-                Text { id: miniTxt; anchors.centerIn: parent; text: parent.text; color: Theme.text; font.pixelSize: 12 }
-                HoverHandler { id: miniHover }
+                Text { id: sbTxt; anchors.centerIn: parent; text: parent.text; color: Theme.text; font.pixelSize: 12 }
+                HoverHandler { id: sbHover; cursorShape: Qt.PointingHandCursor }
                 TapHandler { onTapped: parent.tapped() }
             }
 
-            Text {
-                Layout.fillWidth: true
-                text: qsTr("Each mosaic is a tab after the Mosaic switch in Live View. It shows all its cameras, packed at their own shapes, whatever the grid size.")
-                color: Theme.textMuted; font.pixelSize: 12; wrapMode: Text.WordWrap
-            }
-            Text {
-                visible: Mosaics.list.length === 0
-                text: qsTr("No mosaics yet.")
-                color: Theme.textMuted; font.pixelSize: 13
-            }
-            Repeater {
-                model: Mosaics.list
-                Rectangle {
-                    id: mrow
-                    required property var modelData
-                    required property int index
+            ColumnLayout {
+                id: sitesCol
+                width: sitesFlick.width - 12
+                spacing: Theme.spacing
+
+                RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 44
-                    radius: Theme.radius
-                    color: Theme.surfaceAlt
-                    border.color: Theme.border
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 8
-                        spacing: 6
-                        Text { text: mrow.modelData.name; color: Theme.text; font.pixelSize: 13 }
-                        Text {
-                            Layout.fillWidth: true
-                            text: (mrow.modelData.cameras.length === 1 ? qsTr("1 camera")
-                                   : qsTr("%1 cameras").arg(mrow.modelData.cameras.length)) + " · "
-                                  + (mrow.modelData.grouping === "site" ? qsTr("by Site")
-                                     : mrow.modelData.grouping === "shape" ? qsTr("by shape") : qsTr("your order"))
-                            color: Theme.textMuted; font.pixelSize: 12
-                            elide: Text.ElideRight
-                        }
-                        MosaicBtn { text: "▲"; enabled: mrow.index > 0; onTapped: Mosaics.move(mrow.modelData.id, -1) }
-                        MosaicBtn {
-                            text: "▼"
-                            enabled: mrow.index < Mosaics.list.length - 1
-                            onTapped: Mosaics.move(mrow.modelData.id, 1)
-                        }
-                        MosaicBtn { text: qsTr("Edit…"); onTapped: mosaicEditor.openEdit(mrow.modelData.id) }
-                        MosaicBtn {
-                            text: qsTr("Delete")
-                            danger: true
-                            onTapped: {
-                                mosaicDelete.message = qsTr("Delete the mosaic \"%1\"?").arg(mrow.modelData.name);
-                                mosaicDelete.payload = mrow.modelData.id;
-                                mosaicDelete.open();
+                    Text {
+                        Layout.fillWidth: true
+                        text: qsTr("Each Site is a tab on Live View. A Site holds one or more recorders; type a Site name to move a recorder, or pick one with ▾. Use ▲ ▼ to order the tabs.")
+                        color: Theme.textMuted; font.pixelSize: 12; wrapMode: Text.WordWrap
+                    }
+                    SiteBtn { text: qsTr("+ Add device"); accent: true; onTapped: page.addDeviceRequested() }
+                }
+
+                Repeater {
+                    model: Sites.list
+                    Rectangle {
+                        id: siteCard
+                        required property string modelData
+                        required property int index
+                        readonly property var hosts: { Sites.revision; return Sites.hostsOf(modelData); }
+                        Layout.fillWidth: true
+                        implicitHeight: siteInner.implicitHeight + 20
+                        radius: Theme.radius
+                        color: Theme.surfaceAlt
+                        border.color: Theme.border
+
+                        ColumnLayout {
+                            id: siteInner
+                            x: 12; y: 10
+                            width: parent.width - 24
+                            spacing: 6
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: siteCard.modelData
+                                    color: Theme.text; font.pixelSize: 14; font.bold: true
+                                    elide: Text.ElideRight
+                                }
+                                SiteBtn { text: "▲"; enabled: siteCard.index > 0
+                                          onTapped: Sites.map.moveSite(siteCard.modelData, -1) }
+                                SiteBtn { text: "▼"; enabled: siteCard.index < Sites.list.length - 1
+                                          onTapped: Sites.map.moveSite(siteCard.modelData, 1) }
+                            }
+                            Repeater {
+                                model: siteCard.hosts
+                                RowLayout {
+                                    id: hostRow
+                                    required property var modelData
+                                    readonly property var info: { Sites.revision; return Devices.hostInfo(modelData); }
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    Text {
+                                        Layout.preferredWidth: 220
+                                        text: hostRow.info.name || ""
+                                        color: Theme.text; font.pixelSize: 13
+                                        elide: Text.ElideRight
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: hostRow.info.frigateApi ? qsTr("Frigate server")
+                                            : hostRow.info.multiChannel ? qsTr("NVR · %1").arg(hostRow.info.model || "")
+                                            : (hostRow.info.model || qsTr("Camera"))
+                                        color: Theme.textMuted; font.pixelSize: 12
+                                        elide: Text.ElideRight
+                                    }
+                                    Text { text: qsTr("Site:"); color: Theme.textMuted; font.pixelSize: 12 }
+                                    TextField {
+                                        id: siteField
+                                        Layout.preferredWidth: 160
+                                        text: siteCard.modelData
+                                        color: Theme.text
+                                        selectByMouse: true
+                                        background: Rectangle {
+                                            color: Theme.surface
+                                            border.color: siteField.activeFocus ? Theme.accent : Theme.border
+                                            radius: 4
+                                        }
+                                        onEditingFinished: if (text.trim() !== siteCard.modelData)
+                                                               Sites.map.setSite(hostRow.modelData, text)
+                                    }
+                                    SiteBtn {
+                                        text: "▾"
+                                        enabled: Sites.list.length > 1
+                                        onTapped: moveMenu.popup(0, height + 2)
+                                        ThemedMenu {
+                                            id: moveMenu
+                                            Instantiator {
+                                                model: Sites.list.filter(x => x !== siteCard.modelData)
+                                                delegate: ThemedMenuItem {
+                                                    required property string modelData
+                                                    text: qsTr("Move to %1").arg(modelData)
+                                                    onTriggered: Sites.map.setSite(hostRow.modelData, modelData)
+                                                }
+                                                onObjectAdded: (i, item) => moveMenu.insertItem(i, item)
+                                                onObjectRemoved: (i, item) => moveMenu.removeItem(item)
+                                            }
+                                            ThemedMenuSeparator {}
+                                            ThemedMenuItem {
+                                                text: qsTr("Own Site (%1)").arg(hostRow.info.name || "")
+                                                onTriggered: Sites.map.setSite(hostRow.modelData, "")
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
+                Text {
+                    visible: Sites.list.length === 0
+                    text: qsTr("No devices yet. Use + Add device.")
+                    color: Theme.textMuted; font.pixelSize: 13
+                }
             }
-            MosaicBtn { text: qsTr("New mosaic…"); onTapped: mosaicEditor.openNew([]) }
-            Item { Layout.fillHeight: true }
         }
     }
 }

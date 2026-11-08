@@ -152,6 +152,8 @@ public:
     // comparing this against the decoded frame size. Invalid if not yet primed.
     Q_INVOKABLE QSize declaredSize(int row, bool mainStream) const;
     Q_INVOKABLE QString nameAt(int row) const;
+    // file: URL of a camera's last-seen live frame, "" when none has been kept.
+    Q_INVOKABLE QString lastFrameUrl(qint64 hostId, int channel) const;
     Q_INVOKABLE int rowOfHost(qint64 hostId) const { return rowForHostId(hostId); }
     // The exact camera row for a host+channel (an NVR shares a host across cameras).
     Q_INVOKABLE int rowOfHostChannel(qint64 hostId, int channel) const

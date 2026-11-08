@@ -9,6 +9,8 @@
 #include "core/Paths.h"
 
 #include <QRegularExpression>
+#include <QSaveFile>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QDateTime>
 #include <QDeadlineTimer>
 #include <QThread>
@@ -1228,6 +1230,30 @@ bool StreamPlayer::saveSnapshot(const QString &path)
         return false;
     const QImage img = frame.toImage();
     return !img.isNull() && img.save(path);
+}
+
+bool StreamPlayer::saveThumbnail(const QString &path, int maxWidth)
+{
+    if (!m_session)
+        return false;
+    QVideoFrame frame;
+    {
+        QMutexLocker lock(&m_session->lastFrameMutex);
+        frame = m_session->lastFrame;
+    }
+    if (!frame.isValid())
+        return false;
+    QImage img = frame.toImage();
+    if (img.isNull())
+        return false;
+    (void)QtConcurrent::run([img = std::move(img), path, maxWidth]() {
+        const QImage small = img.width() > maxWidth
+            ? img.scaledToWidth(maxWidth, Qt::SmoothTransformation) : img;
+        QSaveFile f(path);
+        if (f.open(QIODevice::WriteOnly) && small.save(&f, "JPG", 80))
+            f.commit();
+    });
+    return true;
 }
 
 void StreamPlayer::setVolume(qreal volume)
