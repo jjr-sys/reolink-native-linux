@@ -398,9 +398,6 @@ void LiveStream::setRecovering(bool recovering)
     m_recovering = recovering;
     emit recoveringChanged();
 }
-} // namespace rl
-
-namespace rl {
 
 bool LiveStream::saveLastFrame()
 {

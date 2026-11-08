@@ -1198,7 +1198,15 @@ Item {
                                 RowLayout {
                                     id: hostRow
                                     required property var modelData
-                                    readonly property var info: { Sites.revision; return Devices.hostInfo(modelData); }
+                                    // hostInfo() is a plain call: re-read on every device model change.
+                                    property int rev: 0
+                                    Connections {
+                                        target: Devices
+                                        function onDataChanged() { hostRow.rev++; }
+                                        function onModelReset() { hostRow.rev++; }
+                                    }
+                                    readonly property var info: { Sites.revision; hostRow.rev;
+                                                                  return Devices.hostInfo(modelData); }
                                     Layout.fillWidth: true
                                     spacing: 6
                                     Text {

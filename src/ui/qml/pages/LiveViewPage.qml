@@ -38,6 +38,8 @@ Item {
                 page.maximizedKey = "";
             page.rebuildMosaic();
         }
+        // A change after Clear all ends its Undo: the toast goes with it.
+        onUndoChanged: if (!canUndo) undoToast.dismiss()
     }
     property bool seedFirstCameras: false
     Settings { id: selStore; category: "liveSelection" }   // keys, migrated
@@ -178,12 +180,19 @@ Item {
         mosaicRectByRow = m;
     }
 
-    // ← / →: a maximised pane steps to its neighbour in pane order, wrapping.
+    // ← / →: a maximised pane steps to its neighbour in pane order, wrapping, over any
+    // selected camera whose recorder has not answered yet.
     function step(dir) {
-        var k = selection.neighbour(maximizedKey, dir);
-        if (k !== "") {
-            maximizedKey = k;
-            selectedKey = k;
+        var byKey = rowsByKey(), k = maximizedKey;
+        for (var i = 0; i < selection.count; ++i) {
+            k = selection.neighbour(k, dir);
+            if (k === "" || k === maximizedKey)
+                return;
+            if (byKey[k] !== undefined) {
+                maximizedKey = k;
+                selectedKey = k;
+                return;
+            }
         }
     }
     readonly property bool canStep: maximizedKey !== "" && selection.count > 1
@@ -212,7 +221,11 @@ Item {
     Connections {
         target: Devices
         function onRowsRemoved() { page.scheduleMosaic(); pruneTimer.restart(); }
-        function onRowsInserted() { page.scheduleMosaic(); }
+        function onRowsInserted() {
+            page.scheduleMosaic();
+            if (page.mosaicWaitOver)
+                page.seedIfNeeded();   // no cameras had arrived when the wait ended
+        }
         function onModelReset() { page.scheduleMosaic(); }
     }
 
@@ -235,7 +248,7 @@ Item {
         selection: selection
         menus: page.menus
         ratioOf: (key) => page.cardRatio(key)
-        onCleared: (n) => undoToast.show(qsTr("Cleared %n camera(s)", "", n))
+        onCleared: (n) => undoToast.show(qsTr("Cleared %n camera(s) ·", "", n))
 
         leftItems: [
         // Highlights: a camera's panes get a coloured border when it detects a person,

@@ -302,9 +302,9 @@ Item {
                                 delay: 600
                                 y: parent.height + 4
                                 contentItem: Text {
-                                    text: card.modelData.name + " · "
-                                          + (card.modelData.online ? qsTr("online") : qsTr("offline"))
-                                          + "\n" + (card.picked ? qsTr("Click to remove its pane") : qsTr("Click to add a pane"))
+                                    text: (card.modelData.online ? qsTr("%1 · online") : qsTr("%1 · offline"))
+                                              .arg(card.modelData.name) + "\n"
+                                          + (card.picked ? qsTr("Click to remove its pane") : qsTr("Click to add a pane"))
                                     color: Theme.text; font.pixelSize: 11
                                 }
                                 background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }

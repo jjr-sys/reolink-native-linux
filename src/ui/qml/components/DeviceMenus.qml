@@ -57,7 +57,7 @@ Item {
         // A ceiling-mounted 180° lens: enables the view modes (panorama, quad…) in the
         // pane's toolbar.
         ThemedMenuItem {
-            text: (camMenu.info.isFisheye ? "✓  " : "     ") + qsTr("Fisheye lens")
+            text: camMenu.info.isFisheye ? qsTr("✓  Fisheye lens") : qsTr("     Fisheye lens")
             onTriggered: Devices.setFisheye(camMenu.row, !camMenu.info.isFisheye)
         }
         // For cameras the rotation heuristics can't know (issue #3): each click turns the

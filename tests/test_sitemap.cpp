@@ -157,5 +157,5 @@ private slots:
     }
 };
 
-QTEST_MAIN(TestSiteMap)
+QTEST_GUILESS_MAIN(TestSiteMap)
 #include "test_sitemap.moc"

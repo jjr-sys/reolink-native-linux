@@ -196,5 +196,5 @@ private slots:
     }
 };
 
-QTEST_MAIN(TestSiteSelection)
+QTEST_GUILESS_MAIN(TestSiteSelection)
 #include "test_siteselection.moc"
