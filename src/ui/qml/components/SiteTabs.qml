@@ -556,7 +556,7 @@ Item {
                     border.color: nameField.activeFocus ? Theme.accent : Theme.border
                     radius: 4
                 }
-                onAccepted: nameDialog.accept()
+                onAccepted: if (text.trim() !== "") nameDialog.accept()
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -571,12 +571,14 @@ Item {
                 }
                 Rectangle {
                     implicitWidth: ndOk.implicitWidth + 24; implicitHeight: 32; radius: Theme.radius
-                    color: ndOkHover.hovered ? Theme.accent : Theme.accentDim
+                    readonly property bool usable: nameField.text.trim() !== ""
+                    opacity: usable ? 1 : 0.5
+                    color: ndOkHover.hovered && usable ? Theme.accent : Theme.accentDim
                     border.color: Theme.accent
                     Text { id: ndOk; anchors.centerIn: parent; text: nameDialog.entryId ? qsTr("Rename") : qsTr("Save")
                            color: Theme.text; font.pixelSize: 12 }
                     HoverHandler { id: ndOkHover }
-                    TapHandler { onTapped: nameDialog.accept() }
+                    TapHandler { onTapped: if (parent.usable) nameDialog.accept() }
                 }
             }
         }
