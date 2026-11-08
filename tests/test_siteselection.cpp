@@ -194,6 +194,15 @@ private slots:
         // An unknown preset falls back to the default 4.
         QCOMPARE(SiteSelection::fromGrid(QStringLiteral("1:0,1:1,1:2,1:3,1:4"), 7).size(), 4);
     }
+    // Playback's first launch takes its 4-pane grid ([playback] gridArrangement), the
+    // panes in order, a camera placed twice once.
+    void playbackMigrationTakesTheGrid()
+    {
+        QCOMPARE(SiteSelection::fromGrid(QStringLiteral("2:2,2:6,2:0,2:8"), 4),
+                 QStringList({"2:2", "2:6", "2:0", "2:8"}));
+        QCOMPARE(SiteSelection::fromGrid(QStringLiteral("2:2,-,2:2,1:0"), 4),
+                 QStringList({"2:2", "1:0"}));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestSiteSelection)

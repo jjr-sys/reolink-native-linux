@@ -22,6 +22,7 @@
 #include "ui/SiteSelection.h"
 #include "ui/SiteBudget.h"
 #include "ui/SavedSelections.h"
+#include "ui/PlaybackGroup.h"
 #include "ui/MosaicLayout.h"
 
 #include <QApplication>
@@ -195,6 +196,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::SiteSelection>("ReolinkApp.Core", 1, 0, "SiteSelection");
     qmlRegisterType<rl::SiteBudget>("ReolinkApp.Core", 1, 0, "SiteBudget");
     qmlRegisterType<rl::SavedSelections>("ReolinkApp.Core", 1, 0, "SavedSelections");
+    qmlRegisterType<rl::PlaybackGroup>("ReolinkApp.Core", 1, 0, "PlaybackGroup");
     qmlRegisterType<rl::MosaicLayout>("ReolinkApp.Core", 1, 0, "MosaicLayout");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);
@@ -228,8 +230,6 @@ int main(int argc, char *argv[])
         QStringLiteral("openClipTarget"), qEnvironmentVariable("RL_OPEN_CLIP"));
     engine.rootContext()->setContextProperty(
         QStringLiteral("playbackAutoplay"), qEnvironmentVariableIsSet("RL_PLAYBACK_AUTOPLAY"));
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("playbackGrid"), qEnvironmentVariableIsSet("RL_PLAYBACK_GRID"));
     engine.rootContext()->setContextProperty(QStringLiteral("startHidden"),
                                              parser.isSet(hiddenOption) && tray.available());
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,

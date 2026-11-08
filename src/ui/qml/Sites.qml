@@ -74,6 +74,16 @@ QtObject {
     }
     property Timer costTimer: Timer { interval: 500; onTriggered: root.refreshCosts() }
 
+    // ---- Playback ----------------------------------------------------------------------
+    // A bare stream has no recordings of its own. Where a recorder records the same camera,
+    // Playback offers that camera instead: "hostId:channel" of the stream -> of the recorder.
+    // The Farm Hikvision stream (host 4) is Farm NVR channel 8.
+    readonly property var playbackInstead: ({ "4:0": "2:8" })
+    function isBareStream(key) {
+        var info = Devices.hostInfo(parseInt(String(key).split(":")[0]));
+        return !!info && info.kind === "stream";
+    }
+
     function siteOf(hostId) { return map.siteOf(hostId); }
     function siteOfKey(key) { return map.siteOfKey(key); }
     function hostsOf(site) { return map.hostsOf(site); }

@@ -135,6 +135,26 @@ private slots:
         QVERIFY(f.budget.canHd(QStringLiteral("9:0")));
     }
 
+    // Live View and Playback each have their own selection and budget: one page's panes
+    // never count against the other's.
+    void eachPageCountsOnItsOwn()
+    {
+        Fixture live;
+        SiteSelection playbackSel;
+        playbackSel.setSites(&live.map);
+        SiteBudget playback;
+        playback.setSites(&live.map);
+        playback.setSelection(&playbackSel);
+        playback.setBudgets(live.budget.budgets());
+        playback.setCosts(live.budget.costs());
+        live.selection.setSaved(QStringLiteral("2:0,2:1,2:2"));   // Farm 3.0 of 5
+        QCOMPARE(playback.used(QStringLiteral("Farm")), 0.0);
+        QVERIFY(playback.canAdd(QStringLiteral("2:0")));
+        playbackSel.setSaved(QStringLiteral("2:0,2:1"));
+        QCOMPARE(playback.used(QStringLiteral("Farm")), 2.5);
+        QCOMPARE(live.budget.used(QStringLiteral("Farm")), 3.0);
+    }
+
     void revisionFollowsEveryInput()
     {
         Fixture f;

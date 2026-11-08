@@ -148,7 +148,7 @@ ApplicationWindow {
                 onPopOut: (row, lbl) => window.openPopout(row, lbl)
                 onOpenBoschTourRequested: nav.currentIndex = 4
             }
-            PlaybackPage { id: playbackPage; active: nav.currentIndex === 1 }
+            PlaybackPage { id: playbackPage; active: nav.currentIndex === 1; menus: deviceMenus }
             EventsPage {
                 onJumpToPlayback: (hostId, channel, timestamp) =>
                     window.openEventPlayback(hostId, channel, timestamp)

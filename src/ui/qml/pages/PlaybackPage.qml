@@ -2,449 +2,340 @@ import QtCore
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtMultimedia
 import ReolinkApp
 import ReolinkApp.Core
 
-// Playback: pick a device + date, search the day's recordings, scrub the
-// two-tone timeline, and play a segment. Frame-accurate in-file seeking is a
-// follow-up (needs seek support in StreamPlayer); clicking a segment plays it.
+// Playback on Site tabs (wayfinder/site-tabs-redesign, step 4): the panes are exactly the
+// selected cameras, from any Sites, packed as a mosaic. One calendar and one playhead drive
+// every pane; the calendar marks the days any selected camera recorded. Panes play low
+// quality; the selected pane (clicked last, outlined) is the one HD, sound, Export and
+// Download range act on. Speed applies to all panes. The Site budget applies, counted on
+// its own (separately from Live View).
 Item {
     id: page
 
-    property int deviceRow: -1
+    property bool active: true      // false when Playback isn't on screen: every pane stops
+    property var menus: null        // DeviceMenus, for the right-click menus on the Site tabs
+
     property int selYear: 2026
     property int selMonth: 7
     property int selDay: 9
-
-    // Default the date to today.
-    Component.onCompleted: {
-        var now = new Date();
-        selYear = now.getFullYear();
-        selMonth = now.getMonth() + 1;
-        selDay = now.getDate();
-    }
-
-    property var recordingDays: []
-    property real playheadSecs: 0    // playhead position (seconds into the day)
-    // Manual view-rotation for the single-pane camera (grid panes carry their own).
-    property int camRotation: 0
-    function refreshRotation() {
-        var i = Devices.cameraInfo(page.deviceRow);
-        camRotation = i && i.rotationOverride ? i.rotationOverride : 0;
-    }
+    property real playheadSecs: 0   // seconds into the selected day
+    property string maximizedKey: ""
     property bool _autoplayed: false // test hook guard
-    // HD mode streams the full-resolution main stream over native Baichuan; off =
-    // light sub-stream (FLV) scrubbing.
-    property bool hdMode: false
-    // Transport choice and seek-or-reopen for the single pane; the grid panes own theirs.
-    PlaybackSession {
-        id: session
-        devices: Devices
-        player: player
-        deviceRow: page.deviceRow
-        hd: page.hdMode
-        speed: page.speed
-        onReopenNeeded: page.playAt(page.playheadSecs)
+
+    // ---- The selection ---------------------------------------------------------------
+    // Stored in [playbackSelection]. On the first launch it is taken from the old 4-pane
+    // grid ([playback] gridArrangement, left in place for one release).
+    SiteSelection {
+        id: selection
+        sites: Sites.map
+        onSaveRequested: (text) => selStore.setValue("keys", text)
+        onChanged: page.selectionChanged()
+        onUndoChanged: if (!canUndo) undoToast.dismiss()
     }
-
-    // ---- Synced multi-camera playback ---------------------------------------
-    // Like the official client: up to 4 panes, one calendar and one timeline
-    // driving all of them, forced to the sub stream (the device's published
-    // budget is 10 sub + 2 main, and its spec caps synchronous playback at 4).
-    // Sync is one shared playhead asking every camera for the same wall-clock
-    // moment — the protocol has no cross-stream sync mechanism.
-    property int paneCount: 1
-    property var gridRows: [-1, -1, -1, -1]   // pane -> device row
-    property var gridSegs: ({})               // device row -> that day's segments
-    property int streamingPanes: 0            // recount kept by the panes
-    // Double-clicked pane, expanded OVER the grid rather than instead of it —
-    // the covered panes keep playing, so restoring reconnects nothing and the
-    // grid comes back still in sync. (Hiding them would stop their streams.)
-    property int maximizedRow: -1
-
-    // Stored as hostId:channel — rows shift when devices are added or removed.
-    Settings {
-        id: pbStore
-        category: "playback"
-        property string gridArrangement: ""
-    }
-    // Grid: the one pane you hear (device row), -1 = none. Clicking it again deselects.
-    property int audioRow: -1
-    readonly property bool audioAvailable: paneCount === 4
-        ? (audioRow >= 0 && !!gridPane(audioRow) && gridPane(audioRow).hasAudio)
-        : player.hasAudio
-
-    // Panes are per-CAMERA (model: Devices), so these iterate device rows —
-    // paneRepeater.itemAt(row) is that camera's pane wherever it sits.
-    function gridPane(row) { return paneRepeater.itemAt(row); }
-    function stopAllPanes() {
-        for (var i = 0; i < paneRepeater.count; i++) {
-            var p = gridPane(i);
-            if (p) p.stopPlayback();
+    Settings { id: selStore; category: "playbackSelection" }   // keys, migrated
+    Settings { id: gridStore; category: "playback" }           // read once, for the migration
+    function restoreSelection() {
+        if (String(selStore.value("migrated", false)) === "true") {
+            selection.saved = String(selStore.value("keys", ""));
+            return;
         }
+        var keys = selection.fromGrid(String(gridStore.value("gridArrangement", "")), 4);
+        selection.saved = keys.join(",");
+        selStore.setValue("keys", keys.join(","));
+        selStore.setValue("migrated", true);
     }
+    // Keys of a recorder that has been removed are dropped once the device list settles.
+    Timer { id: pruneTimer; interval: 8000; onTriggered: if (Devices.count > 0) selection.pruneHosts(Devices.hostIds()) }
+
+    // The calendar union, the selected pane and the speed.
+    PlaybackGroup {
+        id: group
+        selection: selection
+    }
+    readonly property string selectedKey: group.selectedKey
+    readonly property int selectedRow: { Devices.count; selection.count;
+                                         var r = rowsByKey()[selectedKey];
+                                         return r === undefined ? -1 : r; }
+
+    // ---- The Site budget ---------------------------------------------------------------
+    // Playback's own count. HD is chosen per pane on this page only and not kept: Playback
+    // opens low quality.
+    property var hdKeys: []
+    SiteBudget {
+        id: budget
+        sites: Sites.map
+        selection: selection
+        budgets: Sites.budgets
+        defaultBudget: Sites.defaultBudget
+        costs: Sites.costs
+        hd: page.hdKeys
+    }
+    function hdRefusal(key) {
+        if (budget.canHd(key))
+            return "";
+        var site = Sites.siteOfKey(key);
+        return qsTr("%1 is at %2 / %3 Mbit/s; HD needs %4 more.")
+                .arg(site).arg(Sites.mbps(budget.used(site))).arg(Sites.mbps(budget.budgetOf(site)))
+                .arg(Sites.mbps(budget.hdExtra(key))) + " " + Sites.overBudgetAdvice;
+    }
+    function toggleHd(key) {
+        if (!key)
+            return;
+        var i = hdKeys.indexOf(key);
+        if (i >= 0) {
+            hdKeys = hdKeys.filter(k => k !== key);
+            return;
+        }
+        var why = hdRefusal(key);
+        if (why !== "") {
+            undoToast.show(why, false);
+            return;
+        }
+        hdKeys = hdKeys.concat([key]);
+    }
+
+    // A bare stream has no recordings; its card is greyed, naming the recorder's copy.
+    function unavailable(key) {
+        if (!Sites.isBareStream(key))
+            return "";
+        var instead = Sites.playbackInstead[key];
+        var row = instead ? rowsByKey()[instead] : undefined;
+        if (row === undefined)
+            return qsTr("A bare stream has no recordings of its own.");
+        return qsTr("No recordings of its own. Play %1 › %2 instead (click).")
+                .arg(Sites.siteOfKey(instead)).arg(Devices.nameAt(row));
+    }
+    // Add a camera to the selection if the budget allows; else say why. Returns whether
+    // it is selected now.
+    function addCamera(key) {
+        if (selection.contains(key))
+            return true;
+        if (!budget.canAdd(key)) {
+            var site = Sites.siteOfKey(key);
+            undoToast.show(qsTr("%1 is at %2 / %3 Mbit/s; this camera needs %4.")
+                .arg(site).arg(Sites.mbps(budget.used(site))).arg(Sites.mbps(budget.budgetOf(site)))
+                .arg(Sites.mbps(budget.needed(key))) + " " + Sites.overBudgetAdvice, false);
+            return false;
+        }
+        selection.toggle(key);
+        return true;
+    }
+
+    // ---- Cameras and rows ------------------------------------------------------------
+    function cameraKey(row) { return PanePrefs.cameraKey(row); }
+    function rowsByKey() {
+        var byKey = ({});
+        for (var r = 0; r < Devices.count; ++r)
+            byKey[cameraKey(r)] = r;
+        return byKey;
+    }
+    function paneOf(key) {
+        var r = rowsByKey()[key];
+        return r === undefined ? null : paneRepeater.itemAt(r);
+    }
+
+    // ---- Recordings ------------------------------------------------------------------
+    // Each selected camera's segments for the selected day ("hostId:channel" -> list), set
+    // as its recorder answers. A camera not answered yet has no entry.
+    property var segsByKey: ({})
+    property var _asked: ({})       // key -> ms of the last search for this day
+    function search(key, force) {
+        var row = rowsByKey()[key];
+        if (row === undefined)
+            return;
+        var now = Date.now();
+        if (!force && (segsByKey[key] !== undefined || now - (_asked[key] || 0) < 10000))
+            return;
+        _asked[key] = now;
+        if (typeof mockRecordings !== "undefined" && mockRecordings) {
+            Qt.callLater(() => page.mockAnswer(key, row));
+            return;
+        }
+        Devices.searchRecordings(row, selYear, selMonth, selDay);
+    }
+    // Ask for every selected camera's day (the searches queue per recorder).
+    function refresh() {
+        segsByKey = ({});
+        _asked = ({});
+        selection.keys.forEach(k => search(k, true));
+        recomputeTimeline();
+    }
+    function searchMissing() { selection.keys.forEach(k => search(k, false)); }
+    // The timeline: one lane per pane (who has footage where), and their union to scrub.
+    function recomputeTimeline() {
+        var lanes = [], union = [];
+        var byKey = rowsByKey();
+        selection.paneOrder.forEach(k => {
+            var segs = segsByKey[k] || [];
+            var r = byKey[k];
+            lanes.push({ name: r !== undefined ? Devices.nameAt(r) : k, segments: segs });
+            union = union.concat(segs);
+        });
+        timeline.lanes = lanes.length > 1 ? lanes : [];
+        timeline.segments = union;
+        var row = page.selectedRow;
+        var info = row >= 0 ? Devices.cameraInfo(row) : null;
+        timeline.alarmTicks = info && info.hostId !== undefined
+            ? Events.eventTimesFor(info.hostId, info.channel, page.dayStartEpoch) : [];
+    }
+    onSelectedRowChanged: recomputeTimeline()
+    function mockAnswer(key, row) {
+        var i = selection.paneOrder.indexOf(key);
+        var base = [{ start: 3600, end: 12600, type: "timer" }, { start: 14400, end: 15000, type: "alarm" },
+                    { start: 28800, end: 43200, type: "timer" }, { start: 45000, end: 45600, type: "alarm" },
+                    { start: 61200, end: 79200, type: "timer" }];
+        var segs = base.map(s => ({ start: Math.min(86399, s.start + i * 1800),
+                                    end: Math.min(86399, s.end + i * 1800), type: s.type }));
+        gotSegments(row, segs);
+        group.setDays(key, selYear, selMonth, [1, 3, 4, 8 + i, selDay]);
+    }
+
+    // ---- The selection changes -------------------------------------------------------
+    property var _known: []      // keys selected at the last change
+    function selectionChanged() {
+        if (maximizedKey !== "" && !selection.contains(maximizedKey))
+            maximizedKey = "";
+        hdKeys = hdKeys.filter(k => selection.contains(k));
+        var added = selection.keys.filter(k => _known.indexOf(k) < 0);
+        _known = selection.keys.slice();
+        // A camera added while others play starts at the playhead once its day is known.
+        if (streamingPanes > 0)
+            added.forEach(k => { _resume[k] = true; });
+        added.forEach(k => search(k, false));
+        recomputeTimeline();
+        scheduleMosaic();
+        flushResume();
+    }
+
+    // ---- Playing ---------------------------------------------------------------------
+    property int streamingPanes: 0
     function countStreaming() {
         var n = 0;
         for (var i = 0; i < paneRepeater.count; i++) {
-            var p = gridPane(i);
-            if (p && p.streaming) n++;
+            var p = paneRepeater.itemAt(i);
+            if (p && p.visible && p.streaming) n++;
         }
-        page.streamingPanes = n;
+        streamingPanes = n;
     }
-
-    // The union track lets you scrub to anything any pane has; each lane shows
-    // who actually has footage where. Overlapping segments simply overdraw on
-    // the union track, so no interval merging is needed.
-    function recomputeGrid() {
-        var lanes = [];
-        var union = [];
-        for (var i = 0; i < 4; i++) {
-            var r = page.gridRows[i];
-            if (r === undefined || r < 0)
+    function stopAllPanes() {
+        _resume = ({});
+        for (var i = 0; i < paneRepeater.count; i++) {
+            var p = paneRepeater.itemAt(i);
+            if (p) p.stopPlayback();
+        }
+    }
+    // Panes waiting to start at the playhead: their day isn't known yet, or their pane
+    // isn't on screen yet.
+    property var _resume: ({})
+    function flushResume() {
+        for (var k in _resume) {
+            if (!selection.contains(k)) { delete _resume[k]; continue; }
+            var p = paneOf(k);
+            if (!p || !p.visible || segsByKey[k] === undefined)
                 continue;
-            var segs = page.gridSegs[r] || [];
-            var info = Devices.cameraInfo(r);
-            lanes.push({ name: info && info.name ? info.name : qsTr("Camera %1").arg(i + 1),
-                         segments: segs });
-            union = union.concat(segs);
-        }
-        timeline.lanes = lanes;
-        timeline.segments = union;
-        statusText.text = qsTr("Synced playback — %n camera(s)", "", lanes.length);
-    }
-
-    function saveGridLayout() {
-        var out = [];
-        for (var i = 0; i < 4; i++) {
-            var r = page.gridRows[i];
-            if (r === undefined || r < 0) { out.push("-"); continue; }
-            var c = Devices.cameraInfo(r);
-            out.push(c && c.hostId !== undefined ? c.hostId + ":" + c.channel : "-");
-        }
-        pbStore.gridArrangement = out.join(",");
-    }
-
-    // Fill the panes: the saved arrangement where it still matches a device,
-    // else the first cameras in sidebar order.
-    function initGridRows() {
-        var byKey = ({});
-        for (var r = 0; r < Devices.count; ++r) {
-            var c = Devices.cameraInfo(r);
-            if (c && c.hostId !== undefined)
-                byKey[c.hostId + ":" + c.channel] = r;
-        }
-        var parts = pbStore.gridArrangement.split(",");
-        var g = [];
-        var used = ({});
-        for (var i = 0; i < 4; i++) {
-            var key = i < parts.length ? parts[i] : "-";
-            var row = (key !== "-" && byKey[key] !== undefined) ? byKey[key] : -1;
-            if (row >= 0 && used[row]) row = -1;
-            if (row >= 0) used[row] = true;
-            g.push(row);
-        }
-        var free = [];
-        for (r = 0; r < Devices.count; ++r)
-            if (!used[r]) free.push(r);
-        for (i = 0; i < 4 && free.length > 0; i++)
-            if (g[i] < 0) { g[i] = free.shift(); }
-        page.gridRows = g;
-    }
-
-    // When a NEW camera joins mid-playback, resume just that camera's pane at
-    // the watched moment once its day loads — the panes already playing carry
-    // their streams with them and are never touched.
-    property int _resumeRow: -1
-    property real _gridResumeSecs: -1
-
-    function resumePaneIfPending(row) {
-        if (page._resumeRow !== row || page._gridResumeSecs < 0)
-            return;
-        var sec = page._gridResumeSecs;
-        page._resumeRow = -1;
-        page._gridResumeSecs = -1;
-        var p = gridPane(row);
-        if (p && p.slot >= 0)
-            p.playAtSecs(sec, epochAt(sec));
-    }
-
-    // A pane was pointed at a camera (combo pick or drag-drop). If it's already
-    // on the grid the panes swap, so a choice never silently drops a camera.
-    function assignGridPane(pane, row) {
-        if (pane < 0 || row < 0 || page.gridRows[pane] === row)
-            return;
-        var g = page.gridRows.slice();
-        var prev = g.indexOf(row);
-        var displaced = g[pane];
-        g[pane] = row;
-        if (prev >= 0)
-            g[prev] = displaced;
-        page.gridRows = g;
-        saveGridLayout();
-        // If the maximized camera just left the grid, drop the maximize.
-        if (page.maximizedRow >= 0 && g.indexOf(page.maximizedRow) < 0)
-            page.maximizedRow = -1;
-        if (prev >= 0) {
-            // Pure rearrangement: the panes slide to their new cells with their
-            // running streams. Only the lane order needs recomputing.
-            recomputeGrid();
-            return;
-        }
-        // A camera new to the grid (the displaced one stops itself as its pane
-        // loses its slot). Fetch its day if unknown; resume only THIS pane.
-        if (page.streamingPanes > 0) {
-            page._resumeRow = row;
-            page._gridResumeSecs = page.playheadSecs;
-        }
-        if (page.gridSegs[row] === undefined) {
-            Devices.searchRecordings(row, page.selYear, page.selMonth, page.selDay);
-        } else {
-            recomputeGrid();
-            resumePaneIfPending(row);
+            delete _resume[k];
+            p.playAtSecs(playheadSecs, epochAt(playheadSecs));
         }
     }
-
-    function setPaneCount(n) {
-        if (n === page.paneCount)
-            return;
-        page.maximizedRow = -1;
-        if (n === 4) {
-            player.stop();
-            page.paneCount = 4;
-            page.initGridRows();
-            // Mock hook: seed staggered segments per pane so the grid + lanes
-            // render without an NVR (RL_MOCK_RECORDINGS + RL_PLAYBACK_GRID).
-            if (typeof mockRecordings !== "undefined" && mockRecordings) {
-                var base = timeline.segments.length > 0 ? timeline.segments : [];
-                var s = ({});
-                for (var i = 0; i < 4; i++) {
-                    var r = page.gridRows[i];
-                    if (r === undefined || r < 0) continue;
-                    s[r] = base.map(function (seg) {
-                        return { start: Math.min(86399, seg.start + i * 1800),
-                                 end: Math.min(86399, seg.end + i * 1800),
-                                 type: seg.type };
-                    });
-                }
-                page.gridSegs = s;
-                page.recomputeGrid();
-            } else {
-                page.refresh();
-            }
-        } else {
-            stopAllPanes();
-            page.paneCount = 1;
-            timeline.lanes = [];
-            timeline.segments = [];
-            page.refresh();
-        }
+    // Move the playhead and play every pane from that moment; each answers from its own
+    // footage (play, or "no footage").
+    function playAt(sec) {
+        playheadSecs = sec;
+        _resume = ({});
+        selection.keys.forEach(k => { _resume[k] = true; });
+        flushResume();
     }
-
-    // False when the Playback page isn't on screen — stop streaming so a Baichuan
-    // session (or FLV stream) isn't left running on the connection-limited NVR.
-    property bool active: true
-    onActiveChanged: if (!active) { _suppressResume = true; player.stop(); stopAllPanes(); }
-
-    // Advance the playhead in realtime while streaming, so the timeline cursor
-    // tracks the current position (and play/pause resumes from where you are).
+    // Advance the playhead in real time while streaming.
     Timer {
         interval: 1000; repeat: true
-        running: player.state === StreamPlayer.Streaming || page.streamingPanes > 0
-        onTriggered: if (page.playheadSecs < 86399) page.playheadSecs = Math.min(86399, page.playheadSecs + page.speed)
+        running: page.streamingPanes > 0
+        onTriggered: if (page.playheadSecs < 86399) page.playheadSecs = Math.min(86399, page.playheadSecs + group.speed)
     }
+    onActiveChanged: if (!active) stopAllPanes()
 
-    function refresh() {
-        if (page.paneCount === 4) {
-            // One Search per distinct grid camera. These queue behind the
-            // per-device request lock in ReolinkHttpClient rather than racing —
-            // concurrent api.cgi commands are what 502 the NVR's web server.
-            var done = ({});
-            for (var i = 0; i < 4; i++) {
-                var r = page.gridRows[i];
-                if (r === undefined || r < 0 || done[r]) continue;
-                done[r] = true;
-                Devices.searchRecordings(r, page.selYear, page.selMonth, page.selDay);
-            }
-            return;
-        }
-        if (page.deviceRow >= 0)
-            Devices.searchRecordings(page.deviceRow, page.selYear, page.selMonth, page.selDay);
-    }
-
-    // Unix epoch (local time) at a given second into the selected day.
     function epochAt(sec) {
-        var d = new Date(page.selYear, page.selMonth - 1, page.selDay, 0, 0, 0);
+        var d = new Date(selYear, selMonth - 1, selDay, 0, 0, 0);
         return Math.floor(d.getTime() / 1000) + Math.floor(sec);
     }
-    function inRecording(sec) {
-        for (var i = 0; i < timeline.segments.length; i++) {
-            var s = timeline.segments[i];
-            if (sec >= s.start && sec <= s.end) return true;
-        }
-        return false;
-    }
-    // The NVR's FLV endpoint streams ONE recording file per connection, and
-    // motion events are stored as separate files — so continuous footage ends
-    // in an EOF exactly at each event boundary, killing playback right at the
-    // red marker. When the stream ends but footage continues past the playhead,
-    // reopen at the next second instead of giving up.
-    property real _lastAutoResume: -10
-    property bool _suppressResume: false   // a user Stop must stay stopped
-
-    Connections {
-        target: player
-        function onStateChanged() {
-            if (player.state !== StreamPlayer.Stopped)
-                return;
-            // Deferred: stop() fires synchronously inside playAt()'s own
-            // stop-then-start sequence, and re-entering playAt from here
-            // would start the stream twice.
-            Qt.callLater(function () {
-                if (player.state !== StreamPlayer.Stopped || !page.active
-                    || page.paneCount !== 1 || page._suppressResume)
-                    return;
-                // The +1 nudge lands inside the NEXT file — replaying the exact
-                // boundary second would resolve to the file that just ended.
-                if (!page.inRecording(page.playheadSecs + 1))
-                    return;
-                // Loop guard: if we keep EOFing at the same spot, stay stopped.
-                if (page.playheadSecs <= page._lastAutoResume + 2)
-                    return;
-                page._lastAutoResume = page.playheadSecs;
-                page.playAt(page.playheadSecs + 1);
-            });
-        }
-    }
-
-    // Move the playhead and, if a recording covers that moment, play from it.
-    function playAt(sec) {
-        page._suppressResume = false;
-        page.playheadSecs = sec;
-        if (page.paneCount === 4) {
-            // One commit fans out to every placed pane at the same wall-clock
-            // moment; each answers from its own footage (play, or "no footage").
-            var epoch = epochAt(sec);
-            for (var i = 0; i < paneRepeater.count; i++) {
-                var p = gridPane(i);
-                if (p && p.slot >= 0) p.playAtSecs(sec, epoch);
-            }
-            return;
-        }
-        if (!inRecording(sec)) {
-            page.holdFrame = false;
-            session.playAt(epochAt(sec), false);
-            return;
-        }
-        // Transport (HTTP sub / Baichuan HD / Baichuan fast sub) and seek-or-reopen
-        // are PlaybackSession's decision.
-        session.playAt(epochAt(sec));
-        if (session.route === PlaybackSession.BaichuanMain)
-            statusText.text = qsTr("HD");
-    }
-
-    property real _pendingPlayEpoch: 0  // play this once the day's search returns
-    property real _pendingPlaySecs: -1  // resume here after a camera switch
-
-    // Called when an event is clicked in the Events inbox: jump to that exact
-    // camera, date, and moment. Runs ONE search, then plays when it returns —
-    // firing search+search+playback at once overwhelms a connection-limited NVR.
-    // Export a clip starting at the playhead (NVR downloads run below
-    // realtime, so longer clips take a while — the button shows progress).
-    function exportClip(secs) {
-        var epoch = page.dayStartEpoch + Math.floor(page.playheadSecs);
-        if (Downloads.enqueue(page.deviceRow, epoch, epoch + secs) >= 0)
-            statusText.text = qsTr("Clip queued — see Downloads");
-    }
-
-    // Unix seconds at 00:00 of the day being watched.
-    readonly property real dayStartEpoch:
-        new Date(page.selYear, page.selMonth - 1, page.selDay).getTime() / 1000
-    // Playback speed (1 = real time), shared by every pane.
-    property real speed: 1.0
-    // A Frigate camera: its footage plays from the server as one stream at normal speed.
-    // No HD stream, faster speeds, exporting or the NVR downloads manager.
-    readonly property bool directRow: page.deviceRow >= 0 && Devices.isDirectAt(page.deviceRow)
+    readonly property real dayStartEpoch: new Date(selYear, selMonth - 1, selDay).getTime() / 1000
     function speedText(v) { return (v === 0.25 ? "0.25" : v === 0.5 ? "0.5" : String(v)) + "×"; }
-    // Jump the playhead by `secs` and carry on playing from there.
+    // Jump the playhead by `secs`, keeping each pane's last picture until its new one.
     function skip(secs) {
-        var to = Math.max(0, Math.min(86399, page.playheadSecs + secs));
-        // Keep the last picture on screen until the new position's first picture arrives.
-        page.holdFrame = true;
-        holdTimer.restart();
+        var to = Math.max(0, Math.min(86399, playheadSecs + secs));
         for (var i = 0; i < paneRepeater.count; i++) {
-            var p = page.gridPane(i);
+            var p = paneRepeater.itemAt(i);
             if (p) p.freeze();
         }
-        page.playAt(to);
+        playAt(to);
     }
-    property bool holdFrame: false
-    // Never leave a picture frozen for long: an in-place seek does not change state.
-    Timer { id: holdTimer; interval: 6000; onTriggered: page.holdFrame = false }
-    // Save a JPEG of the picture on screen: the one pane, or every playing pane in the grid.
+    // Save a JPEG of every playing pane.
     function snapshot() {
-        var epoch = page.dayStartEpoch + Math.floor(page.playheadSecs);
+        var epoch = dayStartEpoch + Math.floor(playheadSecs);
         var saved = [];
-        if (page.paneCount === 1) {
-            var path = Downloads.snapshotPath(page.deviceRow, epoch);
-            if (path !== "" && player.saveSnapshot(path))
-                saved.push(path);
-        } else {
-            for (var i = 0; i < paneRepeater.count; i++) {
-                var p = page.gridPane(i);
-                var f = p && p.visible ? p.snapshot(epoch) : "";
-                if (f !== "")
-                    saved.push(f);
-            }
+        for (var i = 0; i < paneRepeater.count; i++) {
+            var p = paneRepeater.itemAt(i);
+            var f = p && p.visible ? p.snapshot(epoch) : "";
+            if (f !== "")
+                saved.push(f);
         }
         statusText.text = saved.length === 0 ? qsTr("Nothing to save: no picture yet")
             : saved.length === 1 ? qsTr("Snapshot saved: %1").arg(saved[0].split("/").pop())
             : qsTr("%1 snapshots saved to %2").arg(saved.length).arg(Downloads.folder);
     }
 
-    // Range for "Download range": marked on the timeline, in seconds into the day (-1 = unset).
+    // ---- The selected pane's tools ---------------------------------------------------
+    readonly property bool selectedDirect: selectedRow >= 0 && Devices.isDirectAt(selectedRow)
+    readonly property bool anyNvr: { Devices.count;
+        return selection.keys.some(k => { var r = rowsByKey()[k]; return r !== undefined && !Devices.isDirectAt(r); }); }
+    readonly property bool audioAvailable: { var p = selectedRow >= 0 ? paneRepeater.itemAt(selectedRow) : null;
+                                             return !!p && p.hasAudio; }
+    // Export a clip of the selected pane starting at the playhead.
+    function exportClip(secs) {
+        if (selectedRow < 0)
+            return;
+        var epoch = dayStartEpoch + Math.floor(playheadSecs);
+        if (Downloads.enqueue(selectedRow, epoch, epoch + secs) >= 0)
+            statusText.text = qsTr("Clip queued — see Downloads");
+    }
+    // Range for "Download range": marked on the timeline, seconds into the day (-1 = unset).
     property real markStart: -1
     property real markEnd: -1
-    property bool rangeArmed: false   // the record button has marked a start and awaits the end
+    property bool rangeArmed: false
     onDayStartEpochChanged: { markStart = -1; markEnd = -1; rangeArmed = false; }
     function toggleRange() {
-        var now = Math.floor(page.playheadSecs);
-        if (!page.rangeArmed) {
-            page.markStart = now;
-            page.markEnd = -1;
-            page.rangeArmed = true;
-            statusText.text = qsTr("Range started at %1 — press stop to mark the end").arg(page.clockText(now));
+        var now = Math.floor(playheadSecs);
+        if (!rangeArmed) {
+            markStart = now;
+            markEnd = -1;
+            rangeArmed = true;
+            statusText.text = qsTr("Range started at %1 — press stop to mark the end").arg(clockText(now));
             return;
         }
-        page.rangeArmed = false;
-        var s = page.markStart, e = now;
-        if (e < s) { var t = s; s = e; e = t; }   // playhead moved back: use the earlier one first
+        rangeArmed = false;
+        var s = markStart, e = now;
+        if (e < s) { var t = s; s = e; e = t; }
         if (e - s < 2) {
-            page.markStart = -1; page.markEnd = -1;
+            markStart = -1; markEnd = -1;
             statusText.text = qsTr("Range too short: nothing marked");
             return;
         }
-        page.markStart = s;
-        page.markEnd = e;
-        page.openDownloadDialog();
+        markStart = s;
+        markEnd = e;
+        openDownloadDialog();
     }
-    // The camera whose site the range dialog opens for: the one on screen, or in a grid
-    // the selected pane (else the first).
-    readonly property int downloadRow: page.paneCount === 1 ? page.deviceRow
-        : (page.audioRow >= 0 ? page.audioRow
-           : (page.gridRows.find(function (r) { return r >= 0; }) ?? -1))
     function openDownloadDialog() {
-        if (page.downloadRow < 0)
+        if (selectedRow < 0)
             return;
-        var s = page.markStart >= 0 ? page.markStart : Math.floor(page.playheadSecs);
-        var e = page.markEnd > s ? page.markEnd : s + 120;
-        dlDialog.openFor(page.downloadRow, page.dayStartEpoch, s, e);
+        var s = markStart >= 0 ? markStart : Math.floor(playheadSecs);
+        var e = markEnd > s ? markEnd : s + 120;
+        dlDialog.openFor(selectedRow, dayStartEpoch, s, e);
     }
     function clockText(s) {
         var v = Math.floor(s), pad = function (n) { return (n < 10 ? "0" : "") + n; };
         return pad(Math.floor(v / 3600)) + ":" + pad(Math.floor(v / 60) % 60) + ":" + pad(v % 60);
     }
-
     DownloadDialog { id: dlDialog; onAccepted: dlPanel.open() }
     Connections {
         target: Downloads
@@ -455,458 +346,275 @@ Item {
         }
     }
 
+    // ---- From Events: "View ›" -------------------------------------------------------
+    // Adds the camera to the selection (if the budget allows) and plays every pane from a
+    // few seconds before the event: detection timestamps mark when the alarm fired.
+    property string _eventKey: ""
     function openAt(hostId, channel, timestamp) {
-        // Event jump targets one specific camera and moment — single-pane flow.
-        setPaneCount(1);
-        // Start a few seconds BEFORE the event: detection timestamps mark when
-        // the alarm fired, so the moment of interest is at (or just before) the
-        // timestamp — starting exactly on it plays only the aftermath.
-        var preroll = 5;
-        var d = new Date((timestamp - preroll) * 1000);
-        page.selYear = d.getFullYear();
-        page.selMonth = d.getMonth() + 1;
-        page.selDay = d.getDate();
-        page.playheadSecs = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
-        page._pendingPlayEpoch = timestamp - preroll;
-        var row = Devices.rowOfHostChannel(hostId, channel);
-        if (row < 0)
-            return;
-        if (deviceCombo.currentIndex !== row)
-            deviceCombo.currentIndex = row; // triggers the (single) refresh
+        var key = hostId + ":" + channel;
+        if (unavailable(key) !== "" && Sites.playbackInstead[key])
+            key = Sites.playbackInstead[key];
+        var d = new Date((timestamp - 5) * 1000);
+        var dayChanged = d.getFullYear() !== selYear || d.getMonth() + 1 !== selMonth || d.getDate() !== selDay;
+        stopAllPanes();
+        selYear = d.getFullYear();
+        selMonth = d.getMonth() + 1;
+        selDay = d.getDate();
+        playheadSecs = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
+        if (addCamera(key)) {
+            group.select(key);
+            _eventKey = key;
+        }
+        if (dayChanged)
+            refresh();
         else
-            page.refresh();
+            searchMissing();
+        playAt(playheadSecs);
     }
 
     Connections {
         target: Devices
-        function onClipExported(row, path) {
-            if (row !== page.deviceRow) return;
-            exportBtn.busy = false;
-            statusText.text = qsTr("Clip saved: %1").arg(path);
-        }
-        function onClipExportFailed(row, error) {
-            if (row !== page.deviceRow) return;
-            exportBtn.busy = false;
-            statusText.text = qsTr("Export failed: %1").arg(error);
-        }
-        function onRecordingsFound(row, segments) {
-            if (page.paneCount === 4) {
-                if (page.gridRows.indexOf(row) < 0)
-                    return;
-                var s = Object.assign({}, page.gridSegs);
-                s[row] = segments;
-                page.gridSegs = s;   // wholesale reassign so pane bindings re-evaluate
-                page.recomputeGrid();
-                // If this camera just joined mid-playback, start it (alone) at
-                // the watched moment — the other panes never stopped.
-                page.resumePaneIfPending(row);
+        function onRecordingsFound(row, segments) { page.gotSegments(row, segments); }
+        function onRecordingsFailed(row, error) {
+            var key = page.cameraKey(row);
+            if (!selection.contains(key))
                 return;
-            }
-            if (row === page.deviceRow) {
-                timeline.segments = segments;
-                statusText.text = segments.length + qsTr(" recordings");
-                // Overlay this day's detection events as timeline markers.
-                var info = Devices.cameraInfo(page.deviceRow);
-                if (info && info.hostId !== undefined) {
-                    var dayStart = new Date(page.selYear, page.selMonth - 1, page.selDay).getTime() / 1000;
-                    timeline.alarmTicks = Events.eventTimesFor(info.hostId, info.channel, dayStart);
-                }
-                // Event jump: play the requested moment now that recordings loaded.
-                if (page._pendingPlayEpoch > 0) {
-                    var ep = page._pendingPlayEpoch;
-                    page._pendingPlayEpoch = 0;
-                    page._pendingPlaySecs = -1;
-                    page._suppressResume = false; // event playback crosses file boundaries too
-                    session.playSubAt(ep); // sub stream, whatever HD says
-                } else if (page._pendingPlaySecs >= 0) {
-                    // Camera switch: resume at the same playhead moment (playAt
-                    // respects SD/HD mode and stops if no recording covers it).
-                    var sec = page._pendingPlaySecs;
-                    page._pendingPlaySecs = -1;
-                    page.playAt(sec);
-                }
-                // Test hook: auto-play the first recording ONCE to verify the video path.
-                if (typeof playbackAutoplay !== "undefined" && playbackAutoplay
-                    && segments.length > 0 && !page._autoplayed) {
-                    page._autoplayed = true;
-                    page.playAt(segments[0].start); // exact segment start
-                }
-            }
+            // An empty lane is the honest render of a failed search; the status says why.
+            page.gotSegments(row, []);
+            statusText.text = error;
         }
         function onRecordingDaysFound(row, year, month, days) {
-            // In grid mode the calendar follows the first pane's camera.
-            var calRow = page.paneCount === 4 ? page.gridRows[0] : page.deviceRow;
-            if (row === calRow && year === page.selYear && month === page.selMonth)
-                page.recordingDays = days;
+            var key = page.cameraKey(row);
+            if (key)
+                group.setDays(key, year, month, days);
         }
-        function onRecordingsFailed(row, error) {
-            if (page.paneCount === 4) {
-                if (page.gridRows.indexOf(row) < 0)
-                    return;
-                // An empty lane is the honest render of a failed search; the
-                // status line carries the reason.
-                var s = Object.assign({}, page.gridSegs);
-                s[row] = [];
-                page.gridSegs = s;
-                page.recomputeGrid();
-                statusText.text = error;
+        // A selected camera's recorder connected (its first search may have come back
+        // empty): ask again for the cameras still unanswered.
+        function onDataChanged() { page.searchMissing(); }
+        function onRowsInserted() { page.searchMissing(); page.scheduleMosaic(); pruneTimer.restart(); }
+        function onRowsRemoved() { page.scheduleMosaic(); pruneTimer.restart(); }
+        function onModelReset() { page.scheduleMosaic(); }
+    }
+    function gotSegments(row, segments) {
+        var key = cameraKey(row);
+        if (!key || !selection.contains(key))
+            return;
+        var s = Object.assign({}, segsByKey);
+        s[key] = segments;
+        segsByKey = s;   // reassigned so pane bindings re-read it
+        recomputeTimeline();
+        statusText.text = selection.count === 1 ? qsTr("%n recording(s)", "", segments.length)
+                                                : qsTr("Synced playback — %n camera(s)", "", selection.count);
+        if (key === _eventKey) {
+            _eventKey = "";
+            statusText.text = qsTr("Event at %1").arg(clockText(playheadSecs + 5));
+        }
+        flushResume();
+        // Test hook: play the first recording once to check the video path.
+        if (typeof playbackAutoplay !== "undefined" && playbackAutoplay && segments.length > 0 && !_autoplayed) {
+            _autoplayed = true;
+            playAt(segments[0].start);
+        }
+    }
+
+    // ---- Mosaic ------------------------------------------------------------------------
+    property bool mosaicAnimate: false
+    property var mosaicRectByRow: ({})
+    Settings { id: shapeStore; category: "mosaicShapes" }   // Live View keeps each camera's shape
+    function paneRatio(row) {
+        var c = Devices.cameraInfo(row);
+        var f = parseFloat(shapeStore.value(cameraKey(row), 0));
+        var r = f > 0 ? f : 16 / 9;
+        return c && (c.rotationOverride || 0) % 180 !== 0 ? 1 / r : r;
+    }
+    function cardRatio(key) {
+        var row = rowsByKey()[key];
+        return row === undefined ? 16 / 9 : paneRatio(row);
+    }
+    function rebuildMosaic() {
+        mosaicSettle.stop();
+        var byKey = rowsByKey(), panes = [];
+        selection.paneOrder.forEach(k => {
+            if (byKey[k] !== undefined)
+                panes.push({ row: byKey[k], large: false, ratio: paneRatio(byKey[k]) });
+        });
+        mosaic.panes = panes;
+    }
+    function scheduleMosaic() { if (!mosaicSettle.running) mosaicSettle.start(); }
+    Timer { id: mosaicSettle; interval: 300; onTriggered: page.rebuildMosaic() }
+    Timer { id: mosaicAnimateEnd; interval: 300; onTriggered: page.mosaicAnimate = false }
+    function mapMosaicRects() {
+        var m = ({});
+        var p = mosaic.layoutPanes, r = mosaic.rects;
+        for (var i = 0; i < p.length && i < r.length; ++i)
+            m[p[i].row] = r[i];
+        mosaicRectByRow = m;
+        Qt.callLater(flushResume);   // panes just shown can start
+    }
+
+    Component.onCompleted: {
+        var now = new Date();
+        selYear = now.getFullYear();
+        selMonth = now.getMonth() + 1;
+        selDay = now.getDate();
+        group.setMonth(selYear, selMonth);
+        restoreSelection();
+        if (typeof mockRecordings !== "undefined" && mockRecordings)
+            playheadSecs = 32400;
+    }
+    // The calendar pages through months itself (which ends its bindings); a date set here
+    // (from Events) brings it back. Its dots are the month it shows.
+    function showMonth() {
+        cal.year = selYear;
+        cal.month = selMonth;
+        group.setMonth(selYear, selMonth);
+    }
+    onSelMonthChanged: showMonth()
+    onSelYearChanged: showMonth()
+
+    // ---- Site tabs ---------------------------------------------------------------------
+    SiteTabs {
+        id: tabs
+        z: 10
+        width: parent.width
+        height: implicitHeight
+        selection: selection
+        budget: budget
+        menus: page.menus
+        ratioOf: (key) => page.cardRatio(key)
+        showSaved: true
+        unavailable: (key) => page.unavailable(key)
+        onUnavailableTapped: (key) => {
+            var instead = Sites.playbackInstead[key];
+            if (instead && page.rowsByKey()[instead] !== undefined && page.addCamera(instead))
+                group.select(instead);
+        }
+        onCleared: (n) => undoToast.show(n === 1 ? qsTr("Cleared 1 camera ·") : qsTr("Cleared %1 cameras ·").arg(n))
+        onRecalled: (name, skipped) => {
+            if (skipped.length === 0)
                 return;
-            }
-            if (row === page.deviceRow) {
-                timeline.segments = [];
-                statusText.text = error;
-            }
-        }
-        // Re-fetch once the selected device finishes connecting (its client
-        // isn't primed at page-load time, so the initial fetch returns empty).
-        function onDataChanged(topLeft, bottomRight) {
-            if (page.deviceRow >= topLeft.row && page.deviceRow <= bottomRight.row)
-                page.refreshRotation();
-            if (page.paneCount === 4) {
-                for (var i = 0; i < 4; i++) {
-                    var r = page.gridRows[i];
-                    if (r >= topLeft.row && r <= bottomRight.row
-                        && page.gridSegs[r] === undefined) {
-                        page.refresh();
-                        return;
-                    }
-                }
-                return;
-            }
-            if (page.deviceRow >= topLeft.row && page.deviceRow <= bottomRight.row
-                && timeline.segments.length === 0)
-                page.refresh();
-        }
-        // Rows shift when devices come or go; the arrangement tracks cameras,
-        // not indices, so rebuild it from the store rather than patching.
-        function onRowsRemoved() {
-            if (page.paneCount === 4) { page.gridSegs = ({}); page.initGridRows(); page.refresh(); }
-        }
-        function onRowsInserted() {
-            if (page.paneCount === 4) { page.gridSegs = ({}); page.initGridRows(); page.refresh(); }
+            var byKey = page.rowsByKey();
+            var names = skipped.map(k => byKey[k] !== undefined ? Devices.nameAt(byKey[k]) : k);
+            undoToast.show(qsTr("%1: left out %2 (over the Site budget or no recordings)").arg(name).arg(names.join(", ")), false);
         }
     }
 
     RowLayout {
         anchors.fill: parent
-        anchors.margins: Theme.spacing
+        anchors.topMargin: tabs.height + Theme.spacing
+        anchors.leftMargin: Theme.spacing
+        anchors.rightMargin: Theme.spacing
+        anchors.bottomMargin: Theme.spacing
         spacing: Theme.spacing
 
-        // ---- Main: device bar + video + timeline + controls ----
+        // ---- Main: panes + timeline + controls ----
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: Theme.spacing
 
-            RowLayout {
-                Layout.fillWidth: true
-                Text { visible: page.paneCount === 1
-                       text: qsTr("Camera:"); color: Theme.textMuted; font.pixelSize: 12 }
-                CameraComboBox {
-                    id: deviceCombo
-                    visible: page.paneCount === 1   // each grid pane has its own
-                    Layout.preferredWidth: 240
-                    onCurrentIndexChanged: {
-                        // Switching cameras keeps the date and playhead: once the new
-                        // camera's recordings load, resume playing at this same moment
-                        // (the event-jump flow drives its own epoch instead).
-                        var resume = page.deviceRow >= 0 && page.playheadSecs > 0
-                                     && page._pendingPlayEpoch <= 0;
-                        page.deviceRow = currentIndex;
-                        page.refreshRotation();
-                        if (resume)
-                            page._pendingPlaySecs = page.playheadSecs;
-                        page.refresh();
-                    }
-                }
-                // 1 / 4 pane layout — like the official client's split playback.
-                Repeater {
-                    model: [1, 4]
-                    Rectangle {
-                        required property int modelData
-                        width: 34; height: 26; radius: Theme.radius
-                        color: page.paneCount === modelData ? Theme.accentDim
-                             : pcHover.hovered ? Theme.surfaceAlt : Theme.surface
-                        border.color: Theme.border
-                        Text {
-                            anchors.centerIn: parent
-                            text: parent.modelData
-                            color: page.paneCount === parent.modelData ? Theme.text : Theme.textMuted
-                            font.pixelSize: 12
-                        }
-                        HoverHandler { id: pcHover }
-                        TapHandler { onTapped: page.setPaneCount(parent.modelData) }
-                        ToolTip {
-                            visible: pcHover.hovered
-                            delay: 500
-                            x: (parent.width - width) / 2
-                            y: parent.height + 6
-                            contentItem: Text {
-                                text: modelData === 1 ? qsTr("Single camera")
-                                    : qsTr("Synced 4-camera grid")
-                                color: Theme.text; font.pixelSize: 11
-                            }
-                            background: Rectangle { color: Theme.surfaceAlt
-                                                    border.color: Theme.border; radius: 4 }
-                        }
-                    }
-                }
-                Item { Layout.fillWidth: true }
-                Text {
-                    id: statusText
-                    text: qsTr("Select a date")
-                    color: Theme.textMuted
-                    font.pixelSize: 12
-                }
-            }
-
-            Rectangle {
-                id: videoBox
-                visible: page.paneCount === 1
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                color: Theme.paneBackground
-                border.color: Theme.border
-
-                // Sidebar drops work in single-pane mode too: switch to that
-                // camera (through the combo, so the resume-at-playhead path in
-                // its change handler runs exactly as if it had been picked).
-                property bool dropTarget: false
-                DropArea {
-                    anchors.fill: parent
-                    keys: ["reolink/camera"]
-                    onEntered: videoBox.dropTarget = true
-                    onExited: videoBox.dropTarget = false
-                    onDropped: (drop) => {
-                        videoBox.dropTarget = false;
-                        if (drop.source && drop.source.deviceRow >= 0)
-                            deviceCombo.currentIndex = drop.source.deviceRow;
-                    }
-                }
-                Rectangle {
-                    anchors.fill: parent
-                    visible: videoBox.dropTarget
-                    color: Theme.accent
-                    opacity: 0.18
-                    border.color: Theme.accent
-                    border.width: 2
-                    z: 50
-                }
-
-                // Digital zoom on the footage: wheel to zoom, drag to pan when
-                // zoomed — the same interaction as a live pane's video.
-                property real zoom: 1.0
-                property real panX: 0
-                property real panY: 0
-
-                Item {
-                    anchors.fill: parent
-                    anchors.margins: 1
-                    clip: true
-
-                    VideoOutput {
-                        id: video
-                        anchors.fill: parent
-                        fillMode: VideoOutput.PreserveAspectFit
-                        visible: player.state === StreamPlayer.Streaming || page.holdFrame
-                        orientation: page.camRotation
-                        transform: [
-                            Scale {
-                                origin.x: video.width / 2
-                                origin.y: video.height / 2
-                                xScale: videoBox.zoom
-                                yScale: videoBox.zoom
-                            },
-                            Translate { x: videoBox.panX; y: videoBox.panY }
-                        ]
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.LeftButton
-                        property real lastX: 0
-                        property real lastY: 0
-                        cursorShape: videoBox.zoom > 1.0 ? Qt.OpenHandCursor : Qt.ArrowCursor
-                        // Pin the zoomed footage to the viewport edges (no panning
-                        // it off into empty space; zooming out reels it back in).
-                        function clampPan() {
-                            var mx = Math.max(0, (video.contentRect.width * videoBox.zoom - video.width) / 2);
-                            var my = Math.max(0, (video.contentRect.height * videoBox.zoom - video.height) / 2);
-                            videoBox.panX = Math.max(-mx, Math.min(mx, videoBox.panX));
-                            videoBox.panY = Math.max(-my, Math.min(my, videoBox.panY));
-                        }
-                        onPressed: (m) => { lastX = m.x; lastY = m.y; }
-                        onPositionChanged: (m) => {
-                            if (videoBox.zoom > 1.0 && (m.buttons & Qt.LeftButton)) {
-                                videoBox.panX += (m.x - lastX);
-                                videoBox.panY += (m.y - lastY);
-                                lastX = m.x; lastY = m.y;
-                                clampPan();
-                            }
-                        }
-                        onWheel: (w) => {
-                            var z = videoBox.zoom * (w.angleDelta.y > 0 ? 1.15 : 0.87);
-                            videoBox.zoom = Math.max(1.0, Math.min(8.0, z));
-                            if (videoBox.zoom <= 1.0) { videoBox.panX = 0; videoBox.panY = 0; }
-                            else clampPan();
-                        }
-                    }
-                }
-
-                // Zoom badge
-                Rectangle {
-                    visible: videoBox.zoom > 1.01 && player.state === StreamPlayer.Streaming
-                    anchors.top: parent.top; anchors.left: parent.left; anchors.margins: 6
-                    radius: 3; color: "#80000000"
-                    width: zoomBadge.implicitWidth + 12; height: zoomBadge.implicitHeight + 6
-                    Text {
-                        id: zoomBadge; anchors.centerIn: parent
-                        text: videoBox.zoom.toFixed(1) + "×"
-                        color: Theme.accent; font.pixelSize: 11
-                    }
-                }
-
-                // Retry on connection error: NVRs are connection-limited and may
-                // momentarily refuse the playback stream.
-                StreamPlayer {
-                    id: player
-                    videoSink: video.videoSink
-                    retryOnError: true
-                    playback: true
-                    speed: page.speed
-                    muted: AudioPrefs.playbackMuted || !page.active || page.paneCount !== 1
-                }
-
-                Connections {
-                    target: player
-                    function onStateChanged() { if (player.state === StreamPlayer.Streaming) page.holdFrame = false; }
-                }
-                Column {
-                    anchors.centerIn: parent
-                    spacing: Theme.spacing
-                    visible: player.state !== StreamPlayer.Streaming && !page.holdFrame
-                    BusyIndicator {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        running: player.state === StreamPlayer.Connecting
-                        visible: running; width: 32; height: 32
-                    }
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        color: player.state === StreamPlayer.Error ? Theme.danger : Theme.textMuted
-                        font.pixelSize: 12
-                        text: player.state === StreamPlayer.Error ? player.errorString
-                            : qsTr("Click a recording on the timeline to play")
-                    }
-                }
-            }
-
-            // ---- Synced 4-camera grid (paneCount === 4) --------------------
-            // A pane belongs to a CAMERA and is positioned by its slot — the
-            // same architecture as the live grid. Rearranging moves the pane,
-            // stream and all; a swap of two playing cameras reconnects nothing.
-            // Only a camera newly entering the grid opens a stream (and the one
-            // it displaces stops via the visibility handler in PlaybackPane).
             Item {
-                id: gridBox
-                visible: page.paneCount === 4
+                id: gridArea
                 Layout.fillWidth: true
                 Layout.fillHeight: true
 
-                readonly property real cw: (width - 4) / 2
-                readonly property real ch: (height - 4) / 2
-                function slotX(s) { return (s % 2) * (cw + 4); }
-                function slotY(s) { return Math.floor(s / 2) * (ch + 4); }
+                Text {
+                    anchors.centerIn: parent
+                    visible: page.maximizedKey === "" && mosaic.layoutPanes.length === 0
+                    horizontalAlignment: Text.AlignHCenter
+                    text: selection.count === 0 ? qsTr("Pick cameras from a Site tab above to play them back here.")
+                                                : qsTr("Loading cameras…")
+                    color: Theme.textMuted
+                    font.pixelSize: 13
+                }
 
-                // Empty cells: drop targets for slots no camera occupies.
-                Repeater {
-                    model: 4
-                    PlaybackPane {
-                        required property int index
-                        visible: page.gridRows[index] === undefined || page.gridRows[index] < 0
-                        width: gridBox.cw
-                        height: gridBox.ch
-                        x: gridBox.slotX(index)
-                        y: gridBox.slotY(index)
-                        deviceRow: -1
-                        paneIndex: index
-                        playheadSecs: page.playheadSecs
-                        onCameraRequested: (row) => page.assignGridPane(index, row)
-                        onCameraDropped: (pane, row) => page.assignGridPane(pane, row)
+                MosaicLayout {
+                    id: mosaic
+                    width: gridArea.width
+                    height: gridArea.height
+                    gap: 4
+                    onLayoutPanesChanged: {
+                        page.mosaicAnimate = true;
+                        mosaicAnimateEnd.restart();
+                        page.mapMosaicRects();
+                    }
+                    onRectsChanged: page.mapMosaicRects()
+                    onSettled: {
+                        page.mosaicAnimate = true;
+                        mosaicAnimateEnd.restart();
                     }
                 }
 
+                // A pane per camera (model: Devices); only the selected ones are shown, and
+                // only shown panes stream.
                 Repeater {
                     id: paneRepeater
                     model: Devices
                     PlaybackPane {
                         id: pbPane
                         required property int index
+                        required property var hostId
+                        required property int channel
                         required property string name
                         required property int rotationOverride
-                        readonly property int slot: page.gridRows.indexOf(index)
-                        readonly property bool isMax: page.maximizedRow === index
-                        visible: slot >= 0
-                        width: isMax ? gridBox.width : gridBox.cw
-                        height: isMax ? gridBox.height : gridBox.ch
-                        x: isMax ? 0 : (slot >= 0 ? gridBox.slotX(slot) : 0)
-                        y: isMax ? 0 : (slot >= 0 ? gridBox.slotY(slot) : 0)
-                        z: isMax ? 10 : 0
-                        deviceRow: index      // fixed: the pane follows its camera
-                        selected: page.audioRow === index
-                        audioMuted: AudioPrefs.playbackMuted
-                        speed: page.speed
-                        audioActive: page.active && page.paneCount === 4 && selected
-                        onClicked: page.audioRow = (page.audioRow === index ? -1 : index)
-                        paneIndex: slot
+                        readonly property string cameraKey: hostId + ":" + channel
+                        readonly property bool isMax: page.maximizedKey === cameraKey
+                        readonly property var mrect: page.mosaicRectByRow[index]
+                        readonly property bool inMosaic: mrect !== undefined && selection.contains(cameraKey)
+                        visible: page.active && (isMax || (page.maximizedKey === "" && inMosaic))
+                        width: isMax ? gridArea.width : inMosaic ? mrect.width : 0
+                        height: isMax ? gridArea.height : inMosaic ? mrect.height : 0
+                        x: isMax || !inMosaic ? 0 : mrect.x
+                        y: isMax || !inMosaic ? 0 : mrect.y
+                        deviceRow: index
+                        paneIndex: selection.paneOrder.indexOf(cameraKey)
                         label: name
                         viewRotation: rotationOverride
-                        segments: page.gridSegs[index] || []
+                        selected: page.selectedKey === cameraKey
+                        audioMuted: AudioPrefs.playbackMuted
+                        audioActive: page.active && selected
+                        speed: group.speed
+                        hdActive: page.hdKeys.indexOf(cameraKey) >= 0
+                        segments: page.segsByKey[cameraKey] || []
                         playheadSecs: page.playheadSecs
-                        // HD only while maximized; restoring forces SD (the pane
-                        // handles the switch-back itself when this goes false).
-                        showHdToggle: isMax
-                        dayEpoch: new Date(page.selYear, page.selMonth - 1,
-                                           page.selDay, 0, 0, 0).getTime() / 1000
+                        dayEpoch: page.dayStartEpoch
                         onStreamingChanged: page.countStreaming()
-                        onDoubleClicked: page.maximizedRow = isMax ? -1 : index
-                        onCameraRequested: (row) => page.assignGridPane(slot, row)
-                        onCameraDropped: (pane, row) => page.assignGridPane(pane, row)
-                        // Slide to the new cell (or grow to full size) so the
-                        // change reads as movement.
-                        Behavior on x { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-                        Behavior on y { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-                        Behavior on width { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-                        Behavior on height { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
+                        onVisibleChanged: page.countStreaming()
+                        onClicked: group.select(cameraKey)
+                        onDoubleClicked: {
+                            page.maximizedKey = isMax ? "" : cameraKey;
+                            group.select(cameraKey);
+                        }
+                        // Drag a pane onto another of the same Site to swap their places.
+                        dropFilter: (src => selection.sameSite(cameraKey, page.cameraKey(src)))
+                        onCameraDropped: (target, row) => selection.swap(cameraKey, page.cameraKey(row))
+                        readonly property bool slides: !isMax && page.mosaicAnimate
+                        Behavior on x { enabled: pbPane.slides; NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+                        Behavior on y { enabled: pbPane.slides; NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+                        Behavior on width { enabled: pbPane.slides; NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+                        Behavior on height { enabled: pbPane.slides; NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
                     }
                 }
-            }
 
-            // Test hook: RL_MOCK_RECORDINGS seeds the timeline so its two-tone
-            // rendering can be verified without a real NVR.
-            Component.onCompleted: {
-                if (typeof playbackGrid !== "undefined" && playbackGrid)
-                    Qt.callLater(function () { page.setPaneCount(4); });
-                if (typeof mockRecordings !== "undefined" && mockRecordings) {
-                    timeline.segments = [
-                        { start: 3600, end: 12600, type: "timer", name: "a" },
-                        { start: 14400, end: 15000, type: "alarm", name: "b" },
-                        { start: 28800, end: 43200, type: "timer", name: "c" },
-                        { start: 45000, end: 45600, type: "alarm", name: "d" },
-                        { start: 61200, end: 79200, type: "timer", name: "e" }
-                    ];
-                    page.playheadSecs = 32400;
-                    statusText.text = "5 recordings (mock)";
+                // Tapping the video while a drawer is open only closes the drawer.
+                MouseArea {
+                    anchors.fill: parent
+                    z: 5
+                    visible: tabs.drawerOpen
+                    onPressed: tabs.close()
                 }
             }
 
             Timeline {
                 id: timeline
                 Layout.fillWidth: true
+                // Its lanes add height below the track; a layout reads preferredHeight, not height.
+                Layout.preferredHeight: trackHeight + lanesHeight
                 position: page.playheadSecs
                 markStart: page.markStart
                 markEnd: page.rangeArmed ? page.playheadSecs : page.markEnd
-                onSeek: (seconds) => page.playheadSecs = seconds  // move playhead only
-                onCommit: (seconds) => page.playAt(seconds)       // start playback on release
+                onSeek: (seconds) => page.playheadSecs = seconds  // move the playhead only
+                onCommit: (seconds) => page.playAt(seconds)       // play from there on release
             }
 
             RowLayout {
@@ -944,94 +652,81 @@ Item {
                     }
                     TapHandler { onTapped: parent.activated() }
                 }
-                // Play/pause resumes at the current playhead in the active quality
-                // (a StreamPlayer session is one-shot, so "play" re-opens the stream).
-                // In grid mode the one control drives every pane.
+                // Play/pause drives every pane (a stream is one-shot, so play re-opens it).
                 Ctl {
-                    readonly property bool playing: page.paneCount === 4
-                        ? page.streamingPanes > 0
-                        : player.state === StreamPlayer.Streaming
+                    readonly property bool playing: page.streamingPanes > 0
                     glyph: playing ? "⏸" : "▶"
                     tip: playing ? qsTr("Pause") : qsTr("Play")
-                    onActivated: {
-                        if (playing) {
-                            page._suppressResume = true;
-                            if (page.paneCount === 4) page.stopAllPanes();
-                            else player.stop();
-                        } else {
-                            page.playAt(page.playheadSecs);
-                        }
-                    }
+                    onActivated: playing ? page.stopAllPanes() : page.playAt(page.playheadSecs)
                 }
-                // Sound: mute toggle. Shown once the playing stream has an audio
-                // track; in the grid it applies to the selected pane only.
+                // Sound: the selected pane's, once its stream has an audio track.
                 Ctl {
                     visible: page.audioAvailable
                     glyph: AudioPrefs.playbackMuted ? "🔇" : "🔊"
-                    tip: AudioPrefs.playbackMuted ? qsTr("Unmute") : qsTr("Mute")
+                    tip: AudioPrefs.playbackMuted ? qsTr("Unmute the selected pane") : qsTr("Mute")
                     onActivated: AudioPrefs.playbackMuted = !AudioPrefs.playbackMuted
                 }
-                // Skip back/forward 10 s, and playback speed. There is no reverse play: the
-                // camera streams only run forwards, so back means jumping back.
-                Ctl { glyph: "\u23ea"; caption: qsTr("-10s"); tip: qsTr("Back 10 seconds"); onActivated: page.skip(-10) }
-                Ctl { glyph: "\u23e9"; caption: qsTr("+10s"); tip: qsTr("Forward 10 seconds"); onActivated: page.skip(10) }
+                // Skip back/forward 10 s. There is no reverse play: back means jumping back.
+                Ctl { glyph: "⏪"; caption: qsTr("-10s"); tip: qsTr("Back 10 seconds"); onActivated: page.skip(-10) }
+                Ctl { glyph: "⏩"; caption: qsTr("+10s"); tip: qsTr("Forward 10 seconds"); onActivated: page.skip(10) }
+                // Speed, for every pane (Frigate footage plays at 1×).
                 Rectangle {
-                    visible: !page.directRow
+                    visible: page.anyNvr
                     width: 52; height: 30; radius: Theme.radius
                     color: spdHover.hovered ? Theme.surfaceAlt : Theme.surface
-                    border.color: page.speed !== 1 ? Theme.accent : Theme.border
-                    Text { anchors.centerIn: parent; text: page.speedText(page.speed)
-                           color: page.speed !== 1 ? Theme.accent : Theme.text; font.pixelSize: 12 }
+                    border.color: group.speed !== 1 ? Theme.accent : Theme.border
+                    Text { anchors.centerIn: parent; text: page.speedText(group.speed)
+                           color: group.speed !== 1 ? Theme.accent : Theme.text; font.pixelSize: 12 }
                     HoverHandler { id: spdHover }
                     ToolTip {
                         visible: spdHover.hovered
                         delay: 500
                         x: (parent.width - width) / 2
                         y: -height - 8
-                        contentItem: Text { text: qsTr("Playback speed (sound only plays at 1×)")
+                        contentItem: Text { text: qsTr("Playback speed for every pane (sound only plays at 1×)")
                                             color: Theme.text; font.pixelSize: 11 }
                         background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
                     }
                     TapHandler { onTapped: speedMenu.popup() }
                     ThemedMenu {
                         id: speedMenu
-                        ThemedMenuItem { text: page.speedText(0.25); onTriggered: page.speed = 0.25 }
-                        ThemedMenuItem { text: page.speedText(0.5);  onTriggered: page.speed = 0.5 }
-                        ThemedMenuItem { text: page.speedText(1);    onTriggered: page.speed = 1 }
-                        ThemedMenuItem { text: page.speedText(2);    onTriggered: page.speed = 2 }
-                        ThemedMenuItem { text: page.speedText(4);    onTriggered: page.speed = 4 }
-                        ThemedMenuItem { text: page.speedText(8);    onTriggered: page.speed = 8 }
+                        ThemedMenuItem { text: page.speedText(0.25); onTriggered: group.speed = 0.25 }
+                        ThemedMenuItem { text: page.speedText(0.5);  onTriggered: group.speed = 0.5 }
+                        ThemedMenuItem { text: page.speedText(1);    onTriggered: group.speed = 1 }
+                        ThemedMenuItem { text: page.speedText(2);    onTriggered: group.speed = 2 }
+                        ThemedMenuItem { text: page.speedText(4);    onTriggered: group.speed = 4 }
+                        ThemedMenuItem { text: page.speedText(8);    onTriggered: group.speed = 8 }
                     }
                 }
-                Ctl { glyph: "\ud83d\udcf7"; tip: qsTr("Save a snapshot of this moment")
+                Ctl { glyph: "📷"; tip: qsTr("Save a snapshot of every pane")
                       onActivated: page.snapshot() }
-                Ctl { glyph: "⏹"; tip: qsTr("Stop")
-                      onActivated: { page._suppressResume = true;
-                                     player.stop(); page.stopAllPanes(); } }
-                // Export: save a main-stream MP4 of the moment at the playhead.
-                // Single-pane only — it targets THE camera, and grid mode has four.
+                Ctl { glyph: "⏹"; tip: qsTr("Stop"); onActivated: page.stopAllPanes() }
+                // Export: a clip of the selected pane from the playhead.
                 Rectangle {
                     id: exportBtn
-                    visible: page.paneCount === 1 && !page.directRow
-                    property bool busy: false
+                    visible: page.selectedRow >= 0 && !page.selectedDirect
                     width: expRow.implicitWidth + 18; height: 30; radius: Theme.radius
-                    color: expHover.hovered && !busy ? Theme.surfaceAlt : Theme.surface
+                    color: expHover.hovered ? Theme.surfaceAlt : Theme.surface
                     border.color: Theme.border
                     Row {
                         id: expRow
                         anchors.centerIn: parent
                         spacing: 5
-                        BusyIndicator { visible: exportBtn.busy; running: visible
-                                        width: 14; height: 14
-                                        anchors.verticalCenter: parent.verticalCenter }
-                        Text { text: exportBtn.busy ? qsTr("Exporting…") : qsTr("Export clip")
-                               color: Theme.text; font.pixelSize: 12
+                        Text { text: qsTr("Export clip"); color: Theme.text; font.pixelSize: 12
                                anchors.verticalCenter: parent.verticalCenter }
-                        Text { visible: !exportBtn.busy; text: "\u25be"; color: Theme.textMuted
+                        Text { text: "▾"; color: Theme.textMuted
                                font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
                     }
                     HoverHandler { id: expHover }
-                    TapHandler { onTapped: if (!exportBtn.busy) exportMenu.popup() }
+                    ToolTip {
+                        visible: expHover.hovered
+                        delay: 500
+                        y: -height - 8
+                        contentItem: Text { text: qsTr("A clip of the selected pane from the playhead")
+                                            color: Theme.text; font.pixelSize: 11 }
+                        background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                    }
+                    TapHandler { onTapped: exportMenu.popup() }
                     ThemedMenu {
                         id: exportMenu
                         ThemedMenuItem { text: qsTr("15 seconds"); onTriggered: page.exportClip(15) }
@@ -1040,13 +735,11 @@ Item {
                         ThemedMenuItem { text: qsTr("2 minutes"); onTriggered: page.exportClip(120) }
                     }
                 }
-                // Range: mark a start and an end on the timeline, then download it (for one
-                // camera or several at this site).
-                // One button for the range: press to mark the start, press again to mark the end
-                // (then the download dialog opens).
+                // Range: press to mark the start, again to mark the end (then the download
+                // dialog opens for the selected pane's camera).
                 Ctl {
-                    visible: !page.directRow
-                    glyph: page.rangeArmed ? "\u25a0" : "\u25cf"
+                    visible: page.selectedRow >= 0 && !page.selectedDirect
+                    glyph: page.rangeArmed ? "■" : "●"
                     glyphColor: "#ff4d4d"
                     tip: page.rangeArmed ? qsTr("Stop: mark the end of the range here")
                                          : qsTr("Record: mark the start of a range here")
@@ -1054,16 +747,16 @@ Item {
                 }
                 Text {
                     visible: page.markStart >= 0
-                    text: page.rangeArmed ? qsTr("\u25cf from %1").arg(page.clockText(page.markStart))
+                    text: page.rangeArmed ? qsTr("● from %1").arg(page.clockText(page.markStart))
                         : page.markEnd > page.markStart
-                        ? page.clockText(page.markStart) + " \u2013 " + page.clockText(page.markEnd)
+                        ? page.clockText(page.markStart) + " – " + page.clockText(page.markEnd)
                         : qsTr("from %1").arg(page.clockText(page.markStart))
                     color: page.rangeArmed ? "#ff4d4d" : Theme.accent; font.pixelSize: 12
                     Layout.alignment: Qt.AlignVCenter
                     TapHandler { onTapped: { page.markStart = -1; page.markEnd = -1; page.rangeArmed = false; } }
                 }
                 Rectangle {
-                    visible: !page.directRow
+                    visible: page.selectedRow >= 0 && !page.selectedDirect
                     width: dlRow.implicitWidth + 18; height: 30; radius: Theme.radius
                     color: dlHover.hovered ? Theme.surfaceAlt : Theme.surface
                     border.color: Theme.border
@@ -1074,32 +767,39 @@ Item {
                 }
                 Rectangle {
                     id: dlBtn
-                    visible: !page.directRow
+                    visible: page.anyNvr
                     width: dlBtnText.implicitWidth + 18; height: 30; radius: Theme.radius
                     color: dlBtnHover.hovered ? Theme.surfaceAlt : Theme.surface
                     border.color: Downloads.activeCount > 0 ? Theme.accent : Theme.border
                     Text { id: dlBtnText; anchors.centerIn: parent
-                           text: Downloads.activeCount > 0 ? qsTr("\u2b07 Downloads (%1)").arg(Downloads.activeCount)
-                                                           : qsTr("\u2b07 Downloads")
+                           text: Downloads.activeCount > 0 ? qsTr("⬇ Downloads (%1)").arg(Downloads.activeCount)
+                                                           : qsTr("⬇ Downloads")
                            color: Theme.text; font.pixelSize: 12 }
                     HoverHandler { id: dlBtnHover }
                     TapHandler { onTapped: dlPanel.opened ? dlPanel.close() : dlPanel.open() }
                     DownloadsPanel { id: dlPanel; x: 0; y: -height - 8 }
                 }
                 Item { Layout.fillWidth: true }
-                // Quality toggle: SD = light sub-stream (FLV) scrubbing; HD = full-res
-                // main stream over native Baichuan. Grid mode is forced to the sub
-                // stream (as in the official client): the device budget allows only
-                // 2 concurrent main streams, and a 4-pane grid would blow past it.
+                Text {
+                    id: statusText
+                    text: ""
+                    color: Theme.textMuted
+                    font.pixelSize: 12
+                    elide: Text.ElideRight
+                    Layout.maximumWidth: 320
+                }
+                // Quality of the selected pane: low by default; HD only within the Site budget.
                 Rectangle {
-                    visible: page.paneCount === 1 && !page.directRow
+                    id: hdBtn
+                    readonly property bool on: page.hdKeys.indexOf(page.selectedKey) >= 0
+                    visible: page.selectedRow >= 0 && !page.selectedDirect
                     width: 52; height: 30; radius: Theme.radius
-                    color: page.hdMode ? Theme.accent : (hdHover.hovered ? Theme.surfaceAlt : Theme.surface)
-                    border.color: page.hdMode ? Theme.accent : Theme.border
+                    color: on ? Theme.accent : (hdHover.hovered ? Theme.surfaceAlt : Theme.surface)
+                    border.color: on ? Theme.accent : Theme.border
                     Text {
                         anchors.centerIn: parent
-                        text: page.hdMode ? qsTr("HD") : qsTr("SD")
-                        color: page.hdMode ? Theme.window : Theme.text
+                        text: parent.on ? qsTr("HD") : qsTr("SD")
+                        color: parent.on ? Theme.window : Theme.text
                         font.pixelSize: 12; font.bold: true
                     }
                     HoverHandler { id: hdHover }
@@ -1109,18 +809,13 @@ Item {
                         x: (parent.width - width) / 2
                         y: -height - 8
                         contentItem: Text {
-                            text: page.hdMode ? qsTr("Switch to SD (light scrubbing)")
-                                              : qsTr("Switch to HD (full resolution)")
+                            text: hdBtn.on ? qsTr("Switch the selected pane to SD")
+                                                   : qsTr("Switch the selected pane to HD (full resolution)")
                             color: Theme.text; font.pixelSize: 11
                         }
                         background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
                     }
-                    TapHandler {
-                        onTapped: {
-                            // The session replays the current moment if the transport changes.
-                            page.hdMode = !page.hdMode;
-                        }
-                    }
+                    TapHandler { onTapped: page.toggleHd(page.selectedKey) }
                 }
             }
         }
@@ -1134,22 +829,28 @@ Item {
             radius: Theme.radius
 
             MonthCalendar {
+                id: cal
+                onMonthChanged: group.setMonth(year, month)
+                onYearChanged: group.setMonth(year, month)
                 anchors.top: parent.top
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.topMargin: Theme.spacing
                 year: page.selYear
                 month: page.selMonth
                 selDay: page.selDay
-                markedDays: page.recordingDays
+                markedDays: group.recordingDays
                 onDateSelected: (y, m, d) => {
+                    page.stopAllPanes();
                     page.selYear = y; page.selMonth = m; page.selDay = d;
-                    // Cached per-camera days are for the OLD date; a stale entry
-                    // would make assignGridPane skip the search for a camera
-                    // re-entering the grid and play the wrong day.
-                    page.gridSegs = ({});
                     page.refresh();
                 }
             }
         }
+    }
+
+    UndoToast {
+        id: undoToast
+        onUndo: selection.undo()
+        onExpired: selection.dropUndo()
     }
 }

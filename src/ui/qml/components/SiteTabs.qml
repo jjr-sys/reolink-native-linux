@@ -26,7 +26,12 @@ Item {
     signal cleared(int count)
     // ☆ Saved: save the selection under a name, recall one (skipping cameras over the budget).
     property bool showSaved: false
-    signal recalled(string name, var skipped)   // skipped: keys left out over the budget
+    signal recalled(string name, var skipped)   // skipped: keys left out (budget or unavailable)
+    // Why a camera can't be picked on this page at all, whatever the budget (Playback: a
+    // bare stream has no recordings); "" when it can. Such a card is greyed and a tap on it
+    // emits unavailableTapped instead.
+    property var unavailable: (key) => ""
+    signal unavailableTapped(string key)
 
     function close() { openSite = ""; }
     // Show a saved selection: it replaces this page's selection, cameras over a Site's
@@ -34,14 +39,19 @@ Item {
     function recall(entry) {
         if (!selection || !entry)
             return;
-        var skipped = budget ? budget.recall(entry.cameras) : [];
+        var cameras = entry.cameras.filter(k => unavailable(k) === "");
+        var skipped = entry.cameras.filter(k => unavailable(k) !== "");
+        skipped = skipped.concat(budget ? budget.recall(cameras) : []);
         if (!budget)
-            selection.replace(entry.cameras);
+            selection.replace(cameras);
         close();
         recalled(entry.name, skipped);
     }
     // Why this camera can't be added; "" when it can.
     function blockedWhy(key) {
+        var why = unavailable(key);
+        if (why !== "")
+            return why;
         if (!budget || budget.canAdd(key))
             return "";
         var site = Sites.siteOfKey(key);
@@ -451,11 +461,16 @@ Item {
                             }
                             HoverHandler {
                                 id: cardHover
-                                cursorShape: card.blocked ? Qt.ForbiddenCursor : Qt.PointingHandCursor
+                                cursorShape: card.blocked && root.unavailable(card.key) === "" ? Qt.ForbiddenCursor : Qt.PointingHandCursor
                             }
                             TapHandler {
                                 acceptedButtons: Qt.LeftButton
-                                onTapped: if (!card.blocked) root.selection.toggle(card.key)
+                                onTapped: {
+                                    if (!card.blocked)
+                                        root.selection.toggle(card.key);
+                                    else if (root.unavailable(card.key) !== "")
+                                        root.unavailableTapped(card.key);
+                                }
                             }
                             TapHandler {
                                 acceptedButtons: Qt.RightButton

@@ -5,13 +5,11 @@ import QtMultimedia
 import ReolinkApp
 import ReolinkApp.Core
 
-// One cell of the synced playback grid: sub-stream FLV video for a single
-// camera, its own recordings for the selected day, and an honest per-camera
-// answer when the shared playhead sits where THIS camera has no footage.
-// The page owns the playhead and drives every pane from one timeline; sync
-// comes from asking each camera for the same wall-clock start time — the
-// protocol has no cross-stream sync mechanism, and the official client does
-// exactly this (its multi-pane playback is likewise forced to the sub stream).
+// One pane of Playback's synced mosaic: one camera's footage, its own recordings for the
+// selected day, and an honest per-camera answer when the shared playhead sits where THIS
+// camera has no footage. The page owns the playhead and drives every pane from one
+// timeline; sync comes from asking each camera for the same wall-clock start time (the
+// protocol has no cross-stream sync mechanism). Low quality unless the page sets hdActive.
 Rectangle {
     id: root
     color: Theme.paneBackground
@@ -20,7 +18,7 @@ Rectangle {
     clip: true
 
     property int deviceRow: -1
-    property int paneIndex: -1     // cell in the playback grid
+    property int paneIndex: -1     // place in the mosaic's pane order
     // Manual per-camera view rotation (matches the live pane's).
     property int viewRotation: 0
     property string label: ""
@@ -52,12 +50,13 @@ Rectangle {
     signal clicked()
     // Double-click toggles maximize (the page owns which pane is maximized).
     signal doubleClicked()
-    // The pane's hover combo picked a different camera; the page reassigns,
-    // re-searches, and replays (the pane can't do that alone — the day's
-    // segments and the union track live above it).
-    signal cameraRequested(int row)
-    // A camera was dropped onto this pane — from the sidebar or another pane.
+    // A pane was dropped onto this one (to swap places).
     signal cameraDropped(int pane, int row)
+    // Optional (deviceRow) => bool: whether a camera may be dropped here at all.
+    property var dropFilter: null
+    function dropAllowed(drag) {
+        return !root.dropFilter || !drag.source || root.dropFilter(drag.source.deviceRow);
+    }
 
     // True while a drag hovers this pane.
     property bool dropTarget: false
@@ -65,13 +64,36 @@ Rectangle {
     readonly property bool hasSource: deviceRow >= 0
     readonly property bool streaming: player.state === StreamPlayer.Streaming
 
-    // ---- Maximized-pane HD ------------------------------------------------
-    // Full-resolution main stream over native Baichuan, exactly like the
-    // single-pane page's HD mode. The page enables the toggle only on the
-    // maximized pane: the device allows just 2 concurrent main streams, and
-    // DeviceManager's in-place-seek slot holds one playback session — one HD
-    // pane at a time is the constraint, not a style choice.
-    property bool showHdToggle: false
+    // ---- No picture ---------------------------------------------------------
+    // Recorders refuse streams over their budget silently: the stream stays connecting, or
+    // "streams" without a frame. With footage at the playhead and no new frame for 8 s,
+    // the pane says so (the 8MP-plays-alone rule is not enforced; this shows it failing).
+    property bool noPicture: false
+    property real _lastFrames: -1
+    property int _stillTicks: 0
+    Timer {
+        interval: 2000
+        repeat: true
+        running: root.visible && root.hasSource && !root._suppressResume
+                 && (player.state === StreamPlayer.Connecting || player.state === StreamPlayer.Streaming)
+                 && root.covered(root.playheadSecs)
+        onRunningChanged: {
+            root._stillTicks = 0;
+            root._lastFrames = -1;
+            if (!running)
+                root.noPicture = false;
+        }
+        onTriggered: {
+            var f = player.framesDecoded;
+            root._stillTicks = f === root._lastFrames ? root._stillTicks + 1 : 0;
+            root._lastFrames = f;
+            root.noPicture = root._stillTicks >= 4;
+        }
+    }
+
+    // ---- HD ---------------------------------------------------------------
+    // Full-resolution main stream over native Baichuan. The page decides: the selected
+    // pane's HD choice, under the Site budget.
     property bool hdActive: false
     // Epoch at 00:00 of the selected day, so the pane can turn playhead
     // seconds into wall-clock time without reaching into the page.
@@ -79,8 +101,7 @@ Rectangle {
 
     function epochOf(sec) { return Math.floor(dayEpoch + sec); }
 
-    // Transport and seek-or-reopen live in PlaybackSession (HD only while maximized,
-    // enforced by the page via showHdToggle).
+    // Transport and seek-or-reopen live in PlaybackSession.
     PlaybackSession {
         id: session
         devices: Devices
@@ -90,15 +111,6 @@ Rectangle {
         speed: root.speed
         onReopenNeeded: root.playAtSecs(root.playheadSecs, root.epochOf(root.playheadSecs))
     }
-
-    function setHd(on) {
-        if (hdActive === on)
-            return;
-        hdActive = on; // the session replays the moment if the transport changes
-    }
-    // Restoring the grid (or losing maximize any other way) drops back to the
-    // sub stream — a grid cell must not keep holding a main-stream session.
-    onShowHdToggleChanged: if (!showHdToggle && hdActive) setHd(false)
 
     function covered(sec) {
         for (var i = 0; i < segments.length; i++)
@@ -207,6 +219,7 @@ Rectangle {
             anchors.centerIn: parent
             spacing: 6
             Text { text: root.label; color: "white"; font.pixelSize: 11 }
+            Text { visible: root.hdActive; text: qsTr("HD"); color: Theme.accent; font.pixelSize: 11; font.bold: true }
             Text {
                 visible: root.zoom > 1.01
                 text: root.zoom.toFixed(1) + "×"
@@ -220,7 +233,7 @@ Rectangle {
     Column {
         anchors.centerIn: parent
         spacing: Theme.spacing
-        visible: !root.streaming && !root.holding
+        visible: (!root.streaming && !root.holding) || root.noPicture
         BusyIndicator {
             anchors.horizontalCenter: parent.horizontalCenter
             running: player.state === StreamPlayer.Connecting
@@ -235,6 +248,7 @@ Rectangle {
             font.pixelSize: 11
             text: {
                 if (!root.hasSource) return qsTr("No camera");
+                if (root.noPicture) return qsTr("No picture: the recorder may be refusing more streams");
                 if (player.state === StreamPlayer.Connecting) return qsTr("Connecting…");
                 if (player.state === StreamPlayer.Error) return player.errorString;
                 if (!root.covered(root.playheadSecs))
@@ -244,19 +258,22 @@ Rectangle {
         }
     }
 
-    // ---- Drag and drop (mirrors the live grid) ----------------------------
-    // Dropping re-points this cell; the page swaps if the camera is already
-    // placed, so a drag can never silently knock a camera off the grid.
+    // ---- Drag and drop (mirrors Live View) ---------------------------------
+    // Dropping a pane on another of the same Site swaps their places.
     DropArea {
         anchors.fill: parent
         keys: ["reolink/camera"]
         onEntered: (drag) => {
+            if (!root.dropAllowed(drag)) {
+                drag.accepted = false;   // refused: no highlight, no drop
+                return;
+            }
             root.dropTarget = !(drag.source && drag.source.sourcePane === root.paneIndex);
         }
         onExited: root.dropTarget = false
         onDropped: (drop) => {
             root.dropTarget = false;
-            if (drop.source && drop.source.deviceRow >= 0)
+            if (drop.source && drop.source.deviceRow >= 0 && root.dropAllowed(drop))
                 root.cameraDropped(root.paneIndex, drop.source.deviceRow);
         }
     }
@@ -304,51 +321,8 @@ Rectangle {
         }
     }
 
-    // Quality toggle, maximized pane only.
-    Rectangle {
-        visible: root.showHdToggle
-        anchors.bottom: parent.bottom
-        anchors.right: parent.right
-        anchors.margins: 10
-        width: 48
-        height: 28
-        radius: Theme.radius
-        color: root.hdActive ? Theme.accent : (hdHover.hovered ? Theme.surfaceAlt : "#cc0d141b")
-        border.color: root.hdActive ? Theme.accent : Theme.border
-        z: 60
-        Text {
-            anchors.centerIn: parent
-            text: root.hdActive ? qsTr("HD") : qsTr("SD")
-            color: root.hdActive ? Theme.window : Theme.text
-            font.pixelSize: 12
-            font.bold: true
-        }
-        HoverHandler { id: hdHover }
-        // ReleaseWithinBounds takes an exclusive grab on press so the pane's
-        // own MouseArea can't read the tap as a click or a drag start.
-        TapHandler {
-            gesturePolicy: TapHandler.ReleaseWithinBounds
-            onTapped: root.setHd(!root.hdActive)
-        }
-        ToolTip {
-            visible: hdHover.hovered
-            delay: 500
-            x: (parent.width - width) / 2
-            y: -height - 8
-            contentItem: Text {
-                text: root.hdActive ? qsTr("Switch to SD (light scrubbing)")
-                                    : qsTr("Switch to HD (full resolution)")
-                color: Theme.text
-                font.pixelSize: 11
-            }
-            background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
-        }
-    }
-
-    HoverHandler { id: paneHover }
     MouseArea {
         anchors.fill: parent
-        // Let the combo above receive its own clicks.
         z: -1
 
         property real pressX: 0
@@ -423,22 +397,4 @@ Rectangle {
             else clampPan();
         }
     }
-
-    // Hover camera selector, top-right — how a pane is re-pointed at another
-    // camera (the playback grid has no sidebar drag; this mirrors the official
-    // client's per-pane camera choice).
-    CameraComboBox {
-        id: paneCombo
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.margins: 6
-        width: Math.min(170, root.width - 12)
-        implicitHeight: 26
-        visible: paneHover.hovered || popup.visible
-        onActivated: (index) => { if (index !== root.deviceRow) root.cameraRequested(index); }
-    }
-    // Imperative sync, not a binding: the ComboBox writes currentIndex itself on
-    // user interaction, which would sever a declarative binding the first time.
-    onDeviceRowChanged: if (deviceRow >= 0) paneCombo.currentIndex = deviceRow
-    Component.onCompleted: if (deviceRow >= 0) paneCombo.currentIndex = deviceRow
 }
