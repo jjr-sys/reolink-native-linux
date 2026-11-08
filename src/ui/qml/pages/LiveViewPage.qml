@@ -54,15 +54,14 @@ Item {
         costs: Sites.costs
         hd: Mosaics.keysOf("", "hd")
     }
-    function mbps(v) { return Number(v).toLocaleString(Qt.locale(), "f", 1); }
     // Why switching this pane to HD would go over its Site's budget; "" when it fits.
     function hdRefusal(key) {
         if (budget.canHd(key))
             return "";
         var site = Sites.siteOfKey(key);
-        return qsTr("%1 is at %2 / %3 Mbit/s; HD needs %4 more. Deselect a camera or switch one out of HD.")
-                .arg(site).arg(mbps(budget.used(site))).arg(mbps(budget.budgetOf(site)))
-                .arg(mbps(budget.hdExtra(key)));
+        return qsTr("%1 is at %2 / %3 Mbit/s; HD needs %4 more.")
+                .arg(site).arg(Sites.mbps(budget.used(site))).arg(Sites.mbps(budget.budgetOf(site)))
+                .arg(Sites.mbps(budget.hdExtra(key))) + " " + Sites.overBudgetAdvice;
     }
 
     property bool seedFirstCameras: false

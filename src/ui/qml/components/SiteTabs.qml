@@ -25,15 +25,14 @@ Item {
     signal cleared(int count)
 
     function close() { openSite = ""; }
-    function mbps(v) { return Number(v).toLocaleString(Qt.locale(), "f", 1); }
     // Why this camera can't be added; "" when it can.
     function blockedWhy(key) {
         if (!budget || budget.canAdd(key))
             return "";
         var site = Sites.siteOfKey(key);
-        return qsTr("%1 is at %2 / %3 Mbit/s; this camera needs %4. Deselect a camera or switch one out of HD.")
-                .arg(site).arg(mbps(budget.used(site))).arg(mbps(budget.budgetOf(site)))
-                .arg(mbps(budget.needed(key)));
+        return qsTr("%1 is at %2 / %3 Mbit/s; this camera needs %4.")
+                .arg(site).arg(Sites.mbps(budget.used(site))).arg(Sites.mbps(budget.budgetOf(site)))
+                .arg(Sites.mbps(budget.needed(key))) + " " + Sites.overBudgetAdvice;
     }
 
     implicitHeight: 44
@@ -335,16 +334,16 @@ Item {
             }
 
             Text {
-                readonly property string usedText: { if (!root.budget) return "";
-                                                     root.budget.revision;
-                                                     return root.mbps(root.budget.used(root.openSite)); }
+                readonly property string usage: { if (!root.budget) return "";
+                                                  root.budget.revision;
+                                                  return qsTr("%1 · %2 / %3 Mbit/s").arg(root.openSite)
+                                                      .arg(Sites.mbps(root.budget.used(root.openSite)))
+                                                      .arg(Sites.mbps(root.budget.budgetOf(root.openSite))); }
                 readonly property int picked: { if (!root.selection) return 0;
                                                 root.selection.count;
                                                 return root.selection.countIn(root.openSite); }
                 text: drawer.cameras.length === 0 ? qsTr("No cameras at %1 yet").arg(root.openSite)
-                    : root.budget ? qsTr("%1 · %2 / %3 Mbit/s").arg(root.openSite)
-                                        .arg(usedText)
-                                        .arg(root.mbps(root.budget.budgetOf(root.openSite)))
+                    : root.budget ? usage
                     : qsTr("%1 · %2 of %3 selected").arg(root.openSite).arg(picked).arg(drawer.cameras.length)
                 color: Theme.textMuted
                 font.pixelSize: 11

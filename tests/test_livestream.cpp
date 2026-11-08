@@ -197,6 +197,11 @@ private slots:
         v.clock->advance(8000);
         QVERIFY(v.stream.noPicture());
         QCOMPARE(v.transport->opens.size(), 2);
+        // The reopened connection counts its own pictures from 0: its first one clears it.
+        v.transport->frames = 1;
+        v.clock->advance(1000);
+        QVERIFY(!v.stream.noPicture());
+        QCOMPARE(v.transport->opens.size(), 2);
     }
     // Hiding the pane, leaving the page or changing the stream on purpose forgets it.
     void noPictureEndsWithTheView()
@@ -221,6 +226,35 @@ private slots:
         QVERIFY(!v.stream.noPicture());
         QVERIFY(!v.clock->pending.count(Task::Watch));
     }
+    // Shown again within the 5 s grace, the same connection is kept, and watched again.
+    void noPictureWatchResumesAfterAShortHide()
+    {
+        View v;
+        v.stream.setWatchPicture(true);
+        v.start();
+        v.clock->advance(2000);
+        v.stream.setViewVisible(false);
+        v.clock->advance(2000);
+        v.stream.setViewVisible(true);
+        QCOMPARE(v.transport->opens.size(), 1);
+        v.clock->advance(8000);
+        QVERIFY(v.stream.noPicture());
+        QCOMPARE(v.transport->opens.size(), 2);
+    }
+    // A camera that is gone or still waiting for its recorder says so, not "No picture".
+    void noPictureLeavesUnavailableAlone()
+    {
+        View v;
+        v.stream.setWatchPicture(true);
+        v.start();
+        v.transport->exists = false;
+        v.transport->update();
+        v.clock->advance(120000);
+        QVERIFY(!v.stream.noPicture());
+        QCOMPARE(v.transport->opens.size(), 1);
+        QCOMPARE(v.stream.state(), State::Stopped);
+    }
+
     // Off unless asked for: other views keep their own recovery only.
     void noPictureWatchIsOptIn()
     {

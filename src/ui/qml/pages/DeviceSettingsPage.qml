@@ -1192,7 +1192,7 @@ Item {
                                 TextField {
                                     id: budgetField
                                     Layout.preferredWidth: 64
-                                    text: Number(Sites.budgetOf(siteCard.modelData)).toLocaleString(Qt.locale(), "f", 1)
+                                    text: Sites.mbps(Sites.budgetOf(siteCard.modelData))
                                     color: Theme.text
                                     selectByMouse: true
                                     horizontalAlignment: Text.AlignRight

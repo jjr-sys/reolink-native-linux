@@ -209,8 +209,13 @@ void LiveStream::setViewVisible(bool visible)
     m_hidePending = false;
     updateAudio();
     if (visible) {
-        if (!m_open)
+        if (!m_open) {
             resetPolicy();
+        } else {
+            // Back within the grace: the same connection, watched afresh.
+            m_seenFrames = m_transport->framesDecoded();
+            restartWatch();
+        }
     } else {
         disarmWatch();
         m_scheduler->cancel(Task::Retry);
@@ -312,8 +317,7 @@ void LiveStream::refresh()
     setState(State::Connecting);
     m_transport->open(m_camera, m_main, mode, m_attempt);
     m_seenFrames = 0;
-    m_watch.start();
-    armWatch();
+    restartWatch();
 }
 
 void LiveStream::setWatchPicture(bool on)
@@ -348,6 +352,16 @@ void LiveStream::armWatch()
     m_scheduler->schedule(Task::Watch, kWatchTickMs, [this] { watchTick(); });
 }
 
+// The wait starts again now: a full tick from here, so it lasts exactly its window.
+void LiveStream::restartWatch()
+{
+    m_watch.start();
+    if (!m_watchOn)
+        return;
+    m_watchArmed = true;
+    m_scheduler->schedule(Task::Watch, kWatchTickMs, [this] { watchTick(); });
+}
+
 void LiveStream::disarmWatch()
 {
     m_watchArmed = false;
@@ -363,8 +377,14 @@ void LiveStream::watchTick()
         disarmWatch();
         return;
     }
+    m_scheduler->schedule(Task::Watch, kWatchTickMs, [this] { watchTick(); });
+    // Only a stream that is open, or between its own retries, can be missing its picture;
+    // a camera that is gone or waiting for its recorder shows that instead.
+    if (!m_open && !m_retryPending)
+        return;
     const qint64 frames = m_open ? m_transport->framesDecoded() : 0;
     if (frames > m_seenFrames) {
+        m_seenFrames = frames;
         const bool was = m_watch.noPicture();
         m_watch.frame();
         if (was)
@@ -372,12 +392,13 @@ void LiveStream::watchTick()
     } else if (const bool was = m_watch.noPicture(); m_watch.advance(kWatchTickMs)) {
         if (!was)
             emit noPictureChanged();
-        // This watch owns the retry now: drop any other pending one and reopen.
+        // This watch owns the retry now: drop any other pending one and reopen. The new
+        // connection counts its pictures from 0 (refresh() resets m_seenFrames).
         stopConnection();
         refresh();
+    } else {
+        m_seenFrames = frames;
     }
-    m_seenFrames = frames;
-    m_scheduler->schedule(Task::Watch, kWatchTickMs, [this] { watchTick(); });
 }
 
 void LiveStream::retry(int delayMs)

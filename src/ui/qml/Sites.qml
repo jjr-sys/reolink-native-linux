@@ -21,6 +21,13 @@ QtObject {
     // starts at 5. Seeded once by name, then edited in Settings → Sites.
     readonly property real defaultBudget: 5
     property var budgets: ({})
+    // Mbit/s as people write it: one decimal, none when whole ("4.6", "5").
+    function mbps(v) {
+        var r = Math.round(Number(v) * 10) / 10;
+        return r.toLocaleString(Qt.locale(), "f", r % 1 === 0 ? 0 : 1);
+    }
+    // The advice that ends every refusal over a budget.
+    readonly property string overBudgetAdvice: qsTr("Deselect a camera or switch one out of HD.")
     function budgetOf(site) { return budgets[site] > 0 ? budgets[site] : defaultBudget; }
     function setBudget(site, mbps) {
         var v = Number(mbps);

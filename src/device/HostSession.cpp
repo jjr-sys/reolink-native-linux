@@ -5,8 +5,9 @@
 #include "protocol/BaichuanChannels.h"
 
 #include <QCoreApplication>
-#include <algorithm>
 #include <QElapsedTimer>
+
+#include <algorithm>
 
 namespace rl::device {
 

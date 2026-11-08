@@ -106,6 +106,7 @@ private:
     void setRecovering(bool recovering);
     void retry(int delayMs);
     void armWatch();
+    void restartWatch();
     void disarmWatch();
     void watchTick();
     void clearWatch();
