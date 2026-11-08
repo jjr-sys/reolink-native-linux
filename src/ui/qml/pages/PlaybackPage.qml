@@ -22,6 +22,14 @@ Item {
     property int selDay: 9
     property real playheadSecs: 0   // seconds into the selected day
     property string maximizedKey: ""
+    // Leaving a maximised pane: the panes it covered stopped while hidden; those with
+    // footage start again at the playhead once shown.
+    onMaximizedKeyChanged: {
+        if (maximizedKey !== "" || streamingPanes === 0)
+            return;
+        selection.keys.forEach(k => { var p = paneOf(k); if (!p || !p.streaming) _resume[k] = true; });
+        Qt.callLater(flushResume);
+    }
     property bool _autoplayed: false // test hook guard
 
     // ---- The selection ---------------------------------------------------------------
@@ -267,11 +275,20 @@ Item {
         selection.keys.forEach(k => { _resume[k] = true; });
         flushResume();
     }
-    // Advance the playhead in real time while streaming.
+    // Advance the playhead in real time while streaming, from the first picture on (the
+    // panes keep in step with it). Measured, not counted, so timer jitter doesn't add up.
+    property real _tickWall: 0
     Timer {
-        interval: 1000; repeat: true
+        interval: 250; repeat: true
         running: page.streamingPanes > 0
-        onTriggered: if (page.playheadSecs < 86399) page.playheadSecs = Math.min(86399, page.playheadSecs + group.speed)
+        onRunningChanged: page._tickWall = Date.now()
+        onTriggered: {
+            var now = Date.now();
+            var dt = (now - page._tickWall) / 1000;
+            page._tickWall = now;
+            if (page.playheadSecs < 86399)
+                page.playheadSecs = Math.min(86399, page.playheadSecs + dt * group.speed);
+        }
     }
     onActiveChanged: if (!active) stopAllPanes()
 

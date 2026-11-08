@@ -31,7 +31,7 @@ Rectangle {
     property bool holding: false
     function freeze() { if (streaming) { holding = true; holdTimer.restart(); } }
     Timer { id: holdTimer; interval: 6000; onTriggered: root.holding = false }
-    onStreamingChanged: if (streaming) holding = false
+    onStreamingChanged: if (streaming) { holding = false; _align(); }
     property real speed: 1.0
     // Save the picture on screen as a JPEG named for this camera and the recorded
     // moment; returns the path, or "" if there is no picture yet.
@@ -171,10 +171,42 @@ Rectangle {
     // Play this camera from the given moment (epoch = wall-clock seconds).
     // A gap is a normal outcome, not an error: stop and let the overlay say so.
     function playAtSecs(sec, epoch) {
+        _syncTries = 0;
+        _open(sec, epoch);
+    }
+    function _open(sec, epoch) {
         if (!hasSource)
-            return;
+            return -1;
         _suppressResume = false;
-        session.playAt(epoch, covered(sec));
+        _openSec = sec;
+        _openWall = Date.now();
+        return session.playAt(epoch, covered(sec));
+    }
+
+    // ---- Keeping in step with the playhead -------------------------------------
+    // Each recorder takes its own time to send a first picture, so panes asked for the
+    // same moment start at different wall-clock times, and the late ones lag the shared
+    // playhead by their delay. When a pane's first picture comes, it compares where it is
+    // with the playhead; more than `syncTolerance` seconds out, it reopens ahead by its own
+    // measured delay (or seeks in place to the playhead, when its session allows), twice
+    // at most per start.
+    property real syncTolerance: 0.8
+    property real _openSec: 0
+    property real _openWall: 0
+    property int _syncTries: 0
+    function _align() {
+        if (_syncTries >= 2 || !covered(playheadSecs))
+            return;
+        var drift = _openSec - playheadSecs;       // + ahead of the playhead, - behind
+        if (Math.abs(drift) <= syncTolerance)
+            return;
+        _syncTries++;
+        var delay = (Date.now() - _openWall) / 1000 * speed;
+        var target = Math.min(86399, playheadSecs + delay);
+        if (_open(target, epochOf(target)) === PlaybackSession.SeekedInPlace) {
+            // A seek in place is near-instant: aim at the playhead itself.
+            _open(playheadSecs + 0.3, epochOf(playheadSecs + 0.3));
+        }
     }
 
     function stopPlayback() {
