@@ -31,7 +31,7 @@ Item {
         id: selection
         sites: Sites.map
         onSaveRequested: (text) => selStore.setValue("keys", text)
-        onChanged: page.selectionChanged()
+        onChanged: page.followSelection()
         onUndoChanged: if (!canUndo) undoToast.dismiss()
     }
     Settings { id: selStore; category: "playbackSelection" }   // keys, migrated
@@ -47,7 +47,22 @@ Item {
         selStore.setValue("migrated", true);
     }
     // Keys of a recorder that has been removed are dropped once the device list settles.
-    Timer { id: pruneTimer; interval: 8000; onTriggered: if (Devices.count > 0) selection.pruneHosts(Devices.hostIds()) }
+    // A bare stream (migrated, or picked before) is swapped for the recorder's copy, or dropped.
+    Timer {
+        id: pruneTimer
+        interval: 8000
+        onTriggered: {
+            if (Devices.count === 0)
+                return;
+            selection.pruneHosts(Devices.hostIds());
+            selection.keys.filter(k => Sites.isBareStream(k)).forEach(k => {
+                selection.toggle(k);
+                var instead = Sites.playbackKey(k);
+                if (instead && page.rowsByKey()[instead] !== undefined)
+                    page.addCamera(instead);
+            });
+        }
+    }
 
     // The calendar union, the selected pane and the speed.
     PlaybackGroup {
@@ -100,7 +115,7 @@ Item {
     function unavailable(key) {
         if (!Sites.isBareStream(key))
             return "";
-        var instead = Sites.playbackInstead[key];
+        var instead = Sites.playbackKey(key);
         var row = instead ? rowsByKey()[instead] : undefined;
         if (row === undefined)
             return qsTr("A bare stream has no recordings of its own.");
@@ -140,15 +155,18 @@ Item {
     // Each selected camera's segments for the selected day ("hostId:channel" -> list), set
     // as its recorder answers. A camera not answered yet has no entry.
     property var segsByKey: ({})
-    property var _asked: ({})       // key -> ms of the last search for this day
+    property var _asked: ({})       // key -> { at: ms of the last search, n: searches } for this day
+    // A recorder that has just connected may answer its first search empty: an empty day is
+    // asked again (at most 3 times, 10 s apart) as the device list changes.
     function search(key, force) {
         var row = rowsByKey()[key];
         if (row === undefined)
             return;
-        var now = Date.now();
-        if (!force && (segsByKey[key] !== undefined || now - (_asked[key] || 0) < 10000))
+        var now = Date.now(), a = _asked[key] || { at: 0, n: 0 };
+        var known = segsByKey[key] !== undefined;
+        if (!force && ((known && (segsByKey[key].length > 0 || a.n >= 3)) || now - a.at < 10000))
             return;
-        _asked[key] = now;
+        _asked[key] = { at: now, n: a.n + 1 };
         if (typeof mockRecordings !== "undefined" && mockRecordings) {
             Qt.callLater(() => page.mockAnswer(key, row));
             return;
@@ -194,7 +212,7 @@ Item {
 
     // ---- The selection changes -------------------------------------------------------
     property var _known: []      // keys selected at the last change
-    function selectionChanged() {
+    function followSelection() {
         if (maximizedKey !== "" && !selection.contains(maximizedKey))
             maximizedKey = "";
         hdKeys = hdKeys.filter(k => selection.contains(k));
@@ -287,9 +305,10 @@ Item {
 
     // ---- The selected pane's tools ---------------------------------------------------
     readonly property bool selectedDirect: selectedRow >= 0 && Devices.isDirectAt(selectedRow)
-    readonly property bool anyNvr: { Devices.count;
+    readonly property bool anyReolink: { Devices.count;
         return selection.keys.some(k => { var r = rowsByKey()[k]; return r !== undefined && !Devices.isDirectAt(r); }); }
-    readonly property bool audioAvailable: { var p = selectedRow >= 0 ? paneRepeater.itemAt(selectedRow) : null;
+    readonly property bool audioAvailable: { paneRepeater.count;
+                                             var p = selectedRow >= 0 ? paneRepeater.itemAt(selectedRow) : null;
                                              return !!p && p.hasAudio; }
     // Export a clip of the selected pane starting at the playhead.
     function exportClip(secs) {
@@ -351,9 +370,7 @@ Item {
     // few seconds before the event: detection timestamps mark when the alarm fired.
     property string _eventKey: ""
     function openAt(hostId, channel, timestamp) {
-        var key = hostId + ":" + channel;
-        if (unavailable(key) !== "" && Sites.playbackInstead[key])
-            key = Sites.playbackInstead[key];
+        var key = Sites.playbackKey(hostId + ":" + channel);
         var d = new Date((timestamp - 5) * 1000);
         var dayChanged = d.getFullYear() !== selYear || d.getMonth() + 1 !== selMonth || d.getDate() !== selDay;
         stopAllPanes();
@@ -361,7 +378,9 @@ Item {
         selMonth = d.getMonth() + 1;
         selDay = d.getDate();
         playheadSecs = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
-        if (addCamera(key)) {
+        if (key === "")
+            undoToast.show(qsTr("A bare stream has no recordings of its own."), false);
+        else if (addCamera(key)) {
             group.select(key);
             _eventKey = key;
         }
@@ -391,9 +410,17 @@ Item {
         // A selected camera's recorder connected (its first search may have come back
         // empty): ask again for the cameras still unanswered.
         function onDataChanged() { page.searchMissing(); }
-        function onRowsInserted() { page.searchMissing(); page.scheduleMosaic(); pruneTimer.restart(); }
-        function onRowsRemoved() { page.scheduleMosaic(); pruneTimer.restart(); }
+        function onRowsInserted() { page.rowsShifted(); page.searchMissing(); }
+        function onRowsRemoved() { page.rowsShifted(); }
         function onModelReset() { page.scheduleMosaic(); }
+    }
+    // Panes follow device rows: when rows shift, panes after them hide (and stop) until the
+    // mosaic is rebuilt. Those playing start again at the playhead once shown.
+    function rowsShifted() {
+        if (streamingPanes > 0)
+            selection.keys.forEach(k => { _resume[k] = true; });
+        scheduleMosaic();
+        pruneTimer.restart();
     }
     function gotSegments(row, segments) {
         var key = cameraKey(row);
@@ -485,7 +512,7 @@ Item {
         showSaved: true
         unavailable: (key) => page.unavailable(key)
         onUnavailableTapped: (key) => {
-            var instead = Sites.playbackInstead[key];
+            var instead = Sites.playbackKey(key);
             if (instead && page.rowsByKey()[instead] !== undefined && page.addCamera(instead))
                 group.select(instead);
         }
@@ -514,7 +541,7 @@ Item {
             spacing: Theme.spacing
 
             Item {
-                id: gridArea
+                id: mosaicArea
                 Layout.fillWidth: true
                 Layout.fillHeight: true
 
@@ -530,8 +557,8 @@ Item {
 
                 MosaicLayout {
                     id: mosaic
-                    width: gridArea.width
-                    height: gridArea.height
+                    width: mosaicArea.width
+                    height: mosaicArea.height
                     gap: 4
                     onLayoutPanesChanged: {
                         page.mosaicAnimate = true;
@@ -562,8 +589,8 @@ Item {
                         readonly property var mrect: page.mosaicRectByRow[index]
                         readonly property bool inMosaic: mrect !== undefined && selection.contains(cameraKey)
                         visible: page.active && (isMax || (page.maximizedKey === "" && inMosaic))
-                        width: isMax ? gridArea.width : inMosaic ? mrect.width : 0
-                        height: isMax ? gridArea.height : inMosaic ? mrect.height : 0
+                        width: isMax ? mosaicArea.width : inMosaic ? mrect.width : 0
+                        height: isMax ? mosaicArea.height : inMosaic ? mrect.height : 0
                         x: isMax || !inMosaic ? 0 : mrect.x
                         y: isMax || !inMosaic ? 0 : mrect.y
                         deviceRow: index
@@ -671,7 +698,7 @@ Item {
                 Ctl { glyph: "⏩"; caption: qsTr("+10s"); tip: qsTr("Forward 10 seconds"); onActivated: page.skip(10) }
                 // Speed, for every pane (Frigate footage plays at 1×).
                 Rectangle {
-                    visible: page.anyNvr
+                    visible: page.anyReolink
                     width: 52; height: 30; radius: Theme.radius
                     color: spdHover.hovered ? Theme.surfaceAlt : Theme.surface
                     border.color: group.speed !== 1 ? Theme.accent : Theme.border
@@ -767,7 +794,7 @@ Item {
                 }
                 Rectangle {
                     id: dlBtn
-                    visible: page.anyNvr
+                    visible: page.anyReolink
                     width: dlBtnText.implicitWidth + 18; height: 30; radius: Theme.radius
                     color: dlBtnHover.hovered ? Theme.surfaceAlt : Theme.surface
                     border.color: Downloads.activeCount > 0 ? Theme.accent : Theme.border

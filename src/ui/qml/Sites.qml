@@ -79,9 +79,14 @@ QtObject {
     // Playback offers that camera instead: "hostId:channel" of the stream -> of the recorder.
     // The Farm Hikvision stream (host 4) is Farm NVR channel 8.
     readonly property var playbackInstead: ({ "4:0": "2:8" })
+    // The camera to play for `key`: itself, or the recorder's copy of a bare stream ("" for
+    // a bare stream with none).
+    function playbackKey(key) {
+        return !isBareStream(key) ? key : playbackInstead[key] || "";
+    }
     function isBareStream(key) {
         var info = Devices.hostInfo(parseInt(String(key).split(":")[0]));
-        return !!info && info.kind === "stream";
+        return !!info && info.hasRecordings === false;
     }
 
     function siteOf(hostId) { return map.siteOf(hostId); }

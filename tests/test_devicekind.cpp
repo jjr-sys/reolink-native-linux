@@ -97,6 +97,17 @@ private slots:
         QCOMPARE(m.value("reolinkProtocol").toBool(), false);
     }
 
+    // Playback: a bare stream has no recordings of its own; every recorder kind does.
+    void onlyBareStreamsHaveNoRecordings()
+    {
+        QVERIFY(capabilities(Kind::Camera).hasRecordings);
+        QVERIFY(capabilities(Kind::Nvr).hasRecordings);
+        QVERIFY(capabilities(Kind::Frigate).hasRecordings);
+        QVERIFY(!capabilities(Kind::Stream).hasRecordings);
+        QCOMPARE(capabilityMap(Kind::Stream).value("hasRecordings").toBool(), false);
+        QCOMPARE(capabilityMap(Kind::Nvr).value("hasRecordings").toBool(), true);
+    }
+
     void boschFeedIsRecognisedByName()
     {
         QVERIFY(looksLikeBoschFeed(QStringLiteral("Bosch Camera")));

@@ -24,7 +24,7 @@ Rectangle {
     property string label: ""
     property bool selected: false
     // Sound: the page owns the mute choice and says whether THIS pane is the one
-    // to hear (in the 4-pane grid only the selected pane is audible).
+    // to hear (only the selected pane is audible).
     property bool audioMuted: true
     property bool audioActive: true
     // Keep the last picture up while a skip re-opens the stream (see PlaybackPage.skip).
@@ -66,11 +66,15 @@ Rectangle {
 
     // ---- No picture ---------------------------------------------------------
     // Recorders refuse streams over their budget silently: the stream stays connecting, or
-    // "streams" without a frame. With footage at the playhead and no new frame for 8 s,
-    // the pane says so (the 8MP-plays-alone rule is not enforced; this shows it failing).
+    // "streams" without a frame. With footage at the playhead and no new frame for 8 s, the
+    // pane says "No picture: retrying" and reopens at the playhead, again after 16 s, 32 s,
+    // then every 60 s, until a frame comes (the 8MP-plays-alone rule is not enforced; this
+    // shows it failing).
     property bool noPicture: false
     property real _lastFrames: -1
     property int _stillTicks: 0
+    property int _retries: 0
+    readonly property var _retryTicks: [4, 8, 16, 30]   // 2 s ticks: 8, 16, 32, 60 s
     Timer {
         interval: 2000
         repeat: true
@@ -80,14 +84,29 @@ Rectangle {
         onRunningChanged: {
             root._stillTicks = 0;
             root._lastFrames = -1;
-            if (!running)
+            // A retry reopens the stream (stopping it for a moment): the state stays. A stop,
+            // a gap or the pane leaving ends it.
+            if (!running && (root._suppressResume || !root.visible || !root.covered(root.playheadSecs))) {
                 root.noPicture = false;
+                root._retries = 0;
+            }
         }
         onTriggered: {
             var f = player.framesDecoded;
-            root._stillTicks = f === root._lastFrames ? root._stillTicks + 1 : 0;
+            if (root._lastFrames >= 0 && f !== root._lastFrames) {
+                root._stillTicks = 0;
+                root.noPicture = false;
+                root._retries = 0;
+            } else {
+                root._stillTicks++;
+            }
             root._lastFrames = f;
-            root.noPicture = root._stillTicks >= 4;
+            if (root._stillTicks >= root._retryTicks[Math.min(root._retries, 3)]) {
+                root.noPicture = true;
+                root._retries++;
+                root._stillTicks = 0;
+                root.playAtSecs(root.playheadSecs, root.epochOf(root.playheadSecs));
+            }
         }
     }
 
@@ -160,7 +179,7 @@ Rectangle {
         player.stop();
     }
 
-    // A pane that leaves the layout (loses its slot, or its page/grid hides)
+    // A pane that leaves the mosaic (deselected, or its page hides)
     // must not keep a playback stream open on the connection-limited NVR.
     onVisibleChanged: if (!visible) { _suppressResume = true; player.stop(); }
 
@@ -248,7 +267,7 @@ Rectangle {
             font.pixelSize: 11
             text: {
                 if (!root.hasSource) return qsTr("No camera");
-                if (root.noPicture) return qsTr("No picture: the recorder may be refusing more streams");
+                if (root.noPicture) return qsTr("No picture: retrying");
                 if (player.state === StreamPlayer.Connecting) return qsTr("Connecting…");
                 if (player.state === StreamPlayer.Error) return player.errorString;
                 if (!root.covered(root.playheadSecs))

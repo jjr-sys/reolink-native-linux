@@ -39,6 +39,8 @@ struct Capabilities
     bool alwaysOnline = false;
     // Snapshots, recordings, clips, history and validation go through Frigate's API.
     bool frigateApi = false;
+    // Recordings to play back: a recorder's own, or Frigate's. A bare stream has none.
+    bool hasRecordings = true;
     DetectionSource detections = DetectionSource::ReolinkPollAndPush;
 
     bool direct() const { return !reolinkProtocol; }
@@ -46,7 +48,7 @@ struct Capabilities
 
 Capabilities capabilities(Kind kind);
 // The same table as booleans for QML (keys: reolinkProtocol, direct, multiChannel,
-// alwaysOnline, frigateApi, hasDetections).
+// alwaysOnline, frigateApi, hasRecordings, hasDetections).
 QVariantMap capabilityMap(Kind kind);
 
 // ---- how a camera is addressed -------------------------------------------------

@@ -54,6 +54,7 @@ Capabilities capabilities(Kind kind)
     case Kind::Stream:
         c.reolinkProtocol = false;
         c.alwaysOnline = true;
+        c.hasRecordings = false;
         c.detections = DetectionSource::None;
         break;
     case Kind::Frigate:
@@ -75,6 +76,7 @@ QVariantMap capabilityMap(Kind kind)
     m[QStringLiteral("multiChannel")] = c.multiChannel;
     m[QStringLiteral("alwaysOnline")] = c.alwaysOnline;
     m[QStringLiteral("frigateApi")] = c.frigateApi;
+    m[QStringLiteral("hasRecordings")] = c.hasRecordings;
     m[QStringLiteral("hasDetections")] = c.detections != DetectionSource::None;
     return m;
 }
