@@ -93,8 +93,7 @@ EventManager::EventManager(Database *db, DeviceManager *devices, QObject *parent
             r.type = QString::fromUtf8(m.type);
             r.camera = QString::fromUtf8(m.cam);
             r.timestamp = now - m.ago;
-            if (matches(r))
-                m_rows.append(r);
+            m_rows.append(r);
         }
         endResetModel();
         emit countChanged();
@@ -105,14 +104,6 @@ EventManager::~EventManager()
 {
     m_db->touchAppRun(m_runId, QDateTime::currentSecsSinceEpoch());
     m_pending.waitForFinished();
-}
-
-bool EventManager::matches(const EventRecord &e) const
-{
-    const bool typeOk = m_filter.isEmpty() || e.type == m_filter;
-    const bool camOk = m_cameraFilter.isEmpty() || e.camera == m_cameraFilter;
-    const bool propOk = m_propertyFilter.isEmpty() || m_devices->hostName(e.hostId) == m_propertyFilter;
-    return typeOk && camOk && propOk;
 }
 
 // Rewrite any Frigate event still stored under its raw config key ("bosch_camera")
@@ -147,7 +138,6 @@ void EventManager::enforceRetention()
     if (thumbs.isEmpty())
         return;
     dropThumbnails(thumbs);
-    m_historyTrimmed = true;
     reload();
 }
 
@@ -165,24 +155,16 @@ void EventManager::enforceCap(qint64 hostId, const QString &type)
     const QStringList thumbs = m_db->trimHostEvents(hostId, device::kCapPerRecorder);
     it.value() = m_db->countCappedEvents(hostId);
     dropThumbnails(thumbs);
-    m_historyTrimmed = true;
     reload();
 }
 
 void EventManager::reload()
 {
-    QList<qint64> hostIds;
-    if (!m_propertyFilter.isEmpty())
-        for (const QVariant &v : m_devices->hostIds())
-            if (m_devices->hostName(v.toLongLong()) == m_propertyFilter)
-                hostIds.append(v.toLongLong());
     beginResetModel();
-    if (!m_propertyFilter.isEmpty() && hostIds.isEmpty())
-        m_rows.clear(); // that recorder is gone
-    else
-        m_rows = m_db->recentEvents(kListLimit, m_filter, hostIds, m_cameraFilter);
+    m_rows = m_db->recentEvents(kListLimit);
     endResetModel();
     emit countChanged();
+    emit storedChanged(-1);
 }
 
 int EventManager::rowCount(const QModelIndex &parent) const
@@ -234,38 +216,6 @@ QHash<int, QByteArray> EventManager::roleNames() const
     };
 }
 
-void EventManager::setFilter(const QString &filter)
-{
-    if (m_filter == filter)
-        return;
-    m_filter = filter;
-    emit filterChanged();
-    reload();
-}
-
-void EventManager::setCameraFilter(const QString &camera)
-{
-    if (m_cameraFilter == camera)
-        return;
-    m_cameraFilter = camera;
-    emit cameraFilterChanged();
-    reload();
-}
-
-void EventManager::setPropertyFilter(const QString &property)
-{
-    if (m_propertyFilter == property)
-        return;
-    m_propertyFilter = property;
-    emit propertyFilterChanged();
-    reload();
-}
-
-qint64 EventManager::oldestVisibleTimestamp() const
-{
-    return m_rows.isEmpty() ? 0 : m_rows.last().timestamp;
-}
-
 void EventManager::onDetection(qint64 hostId, int channel, const QString &type,
                                const QString &camera)
 {
@@ -304,17 +254,16 @@ void EventManager::fileEvent(EventRecord &rec)
     rec.id = m_db->addEvent(rec);
     if (rec.id <= 0)
         return;
-    if (matches(rec)) {
-        beginInsertRows({}, 0, 0);
-        m_rows.prepend(rec);
-        endInsertRows();
-        if (m_rows.size() > kListLimit) {
-            beginRemoveRows({}, m_rows.size() - 1, m_rows.size() - 1);
-            m_rows.removeLast();
-            endRemoveRows();
-        }
-        emit countChanged();
+    beginInsertRows({}, 0, 0);
+    m_rows.prepend(rec);
+    endInsertRows();
+    if (m_rows.size() > kListLimit) {
+        beginRemoveRows({}, m_rows.size() - 1, m_rows.size() - 1);
+        m_rows.removeLast();
+        endRemoveRows();
     }
+    emit countChanged();
+    emit storedChanged(rec.hostId);
     enforceCap(rec.hostId, rec.type);
 }
 
@@ -352,6 +301,7 @@ void EventManager::onThumbnailReady(qint64 eventId, const QString &path)
         QFile::remove(path); // event already trimmed away: don't keep an orphaned file
         return;
     }
+    emit storedChanged(-1); // the column showing it fetches the path again
     for (int i = 0; i < m_rows.size(); ++i) {
         if (m_rows.at(i).id != eventId)
             continue;
@@ -377,10 +327,23 @@ QVariantList EventManager::notRunningSpans(qint64 dayStart) const
 {
     const qint64 dayEnd = device::dayContaining(dayStart, QTimeZone::systemTimeZone()).to;
     QVariantList out;
-    for (const device::TimeSpan &g : device::notRunningGaps(
-             m_db->appRuns(dayStart, dayEnd), dayStart, dayEnd,
-             QDateTime::currentSecsSinceEpoch(), device::kMinNotRunningSecs))
+    for (const device::TimeSpan &g : device::storedNotRunningGaps(
+             *m_db, dayStart, dayEnd, QDateTime::currentSecsSinceEpoch()))
         out.append(QVariantMap{{"from", g.from}, {"to", g.to}});
+    return out;
+}
+
+QVariantMap EventManager::dayCountsByHost(qint64 dayStart) const
+{
+    const qint64 dayEnd = device::dayContaining(dayStart, QTimeZone::systemTimeZone()).to;
+    QVariantMap out;
+    const auto counts = m_db->eventCountsByHost(dayStart, dayEnd);
+    for (auto it = counts.cbegin(); it != counts.cend(); ++it) {
+        QVariantMap byType;
+        for (auto t = it.value().cbegin(); t != it.value().cend(); ++t)
+            byType.insert(t.key(), t.value());
+        out.insert(QString::number(it.key()), byType);
+    }
     return out;
 }
 

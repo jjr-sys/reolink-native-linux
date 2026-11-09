@@ -150,6 +150,7 @@ ApplicationWindow {
             }
             PlaybackPage { id: playbackPage; active: nav.currentIndex === 1; menus: deviceMenus }
             EventsPage {
+                menus: deviceMenus
                 onJumpToPlayback: (hostId, channel, timestamp) =>
                     window.openEventPlayback(hostId, channel, timestamp)
             }

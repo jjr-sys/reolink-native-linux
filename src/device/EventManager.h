@@ -17,8 +17,7 @@ namespace rl {
 class DeviceManager;
 
 // The event inbox: persists detection events (from DeviceManager's poller) and
-// exposes the newest of them to QML, with type/recorder/camera filters and an unread
-// counter. The store keeps its own history (motion 24 h; everything else 7 days under a
+// exposes the newest of them to QML, with an unread counter. The store keeps its own history (motion 24 h; everything else 7 days under a
 // per-recorder cap, see EventHistory.h); the list and the per-day lookups query it.
 class EventManager : public QAbstractListModel
 {
@@ -27,15 +26,7 @@ class EventManager : public QAbstractListModel
     Q_PROPERTY(int unread READ unread NOTIFY unreadChanged)
     // App-level master switch for desktop pop-ups (independent of the device Push flag).
     Q_PROPERTY(bool desktopNotifications READ desktopNotifications WRITE setDesktopNotifications NOTIFY desktopNotificationsChanged)
-    Q_PROPERTY(QString filter READ filter WRITE setFilter NOTIFY filterChanged)
-    Q_PROPERTY(QString cameraFilter READ cameraFilter WRITE setCameraFilter NOTIFY cameraFilterChanged)
-    Q_PROPERTY(QString propertyFilter READ propertyFilter WRITE setPropertyFilter NOTIFY propertyFilterChanged)
-    // Oldest event's Unix timestamp within the current filter (0 = view is empty).
-    Q_PROPERTY(qint64 oldestVisibleTimestamp READ oldestVisibleTimestamp NOTIFY countChanged)
-    // True once the retention window/cap has trimmed something at least once,
-    // meaning some history further back existed but aged out or got capped.
-    Q_PROPERTY(bool historyTrimmed READ historyTrimmed NOTIFY countChanged)
-    // How many of the newest matching events the list shows.
+    // How many of the newest events the list shows.
     Q_PROPERTY(int listLimit READ listLimit CONSTANT)
 
 public:
@@ -58,14 +49,8 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     int unread() const { return m_unread; }
-    QString filter() const { return m_filter; }
-    void setFilter(const QString &filter);
-    QString cameraFilter() const { return m_cameraFilter; }
-    void setCameraFilter(const QString &camera);
-    QString propertyFilter() const { return m_propertyFilter; }
-    void setPropertyFilter(const QString &property);
-    qint64 oldestVisibleTimestamp() const;
-    bool historyTrimmed() const { return m_historyTrimmed; }
+    // The store, for the Events page's columns (EventColumn), which query it per day.
+    Database *database() const { return m_db; }
     static constexpr int kListLimit = 500;
     int listLimit() const { return kListLimit; }
 
@@ -79,6 +64,9 @@ public:
     // The spans of the local day starting at dayStart when the app was not running (and
     // so stored no events), as {from, to} epoch maps.
     Q_INVOKABLE QVariantList notRunningSpans(qint64 dayStart) const;
+    // Each recorder's events on the local day starting at dayStart, by stored type:
+    // { "hostId": { type: count } }.
+    Q_INVOKABLE QVariantMap dayCountsByHost(qint64 dayStart) const;
     Q_INVOKABLE void clear();
     // Backfills the inbox from a Frigate server's own event history (unlike
     // onDetection, which only ever files what was seen live since the app was last
@@ -93,9 +81,9 @@ signals:
     void desktopNotificationsChanged();
     void countChanged();
     void unreadChanged();
-    void filterChanged();
-    void cameraFilterChanged();
-    void propertyFilterChanged();
+    // Stored events changed: one recorder's (an event filed, a thumbnail landed), or
+    // anyone's (hostId -1: a purge, a trim, a clear, a history sync).
+    void storedChanged(qint64 hostId);
     // The user clicked a desktop notification — jump to this event's playback.
     void eventActivated(qint64 hostId, int channel, qint64 timestamp);
 
@@ -107,9 +95,8 @@ private slots:
 
 private:
     void reload();
-    bool matches(const EventRecord &e) const;
-    // Files one event: stores it, puts it at the top of the list when it passes the
-    // filter, and keeps its recorder under the cap.
+    // Files one event: stores it, puts it at the top of the list, and keeps its recorder
+    // under the cap.
     void fileEvent(EventRecord &rec);
     // The per-recorder cap: counts capped (non-motion) events in memory and trims the
     // recorder only once it goes over.
@@ -149,14 +136,10 @@ private:
     QTimer m_runTimer;               // stamps this app run's last_seen
     qint64 m_runId = -1;             // this launch's app_runs row
     QFutureSynchronizer<void> m_pending; // drains in-flight history syncs at teardown
-    QVector<EventRecord> m_rows;     // the list: newest first, passing the filter
+    QVector<EventRecord> m_rows;     // the list: newest first
     QHash<qint64, int> m_cappedCount; // recorder -> capped events, counted lazily
-    QString m_filter;                // "" = all, else a type
-    QString m_cameraFilter;          // "" = all cameras, else a camera name
-    QString m_propertyFilter;        // "" = all properties, else a host/site name
     QSet<qint64> m_frigateHistoryChecked; // hosts already considered for the one-time catch-up
     int m_unread = 0;
-    bool m_historyTrimmed = false;   // true once the retention window/ceiling has ever trimmed something
 };
 
 } // namespace rl

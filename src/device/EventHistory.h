@@ -39,6 +39,10 @@ TimeSpan dayContaining(qint64 epoch, const QTimeZone &zone);
 QVector<TimeSpan> notRunningGaps(const QVector<std::pair<qint64, qint64>> &runs, qint64 from,
                                  qint64 to, qint64 now, qint64 minGapSecs);
 
+// The "app not running" spans of [from, to) from the store's runs. Time before the first
+// recorded run is unknown (events from a build that kept no runs), so it is never a gap.
+QVector<TimeSpan> storedNotRunningGaps(const Database &db, qint64 from, qint64 to, qint64 now);
+
 // A camera on a host, as Status rows name it.
 struct CameraRef
 {

@@ -249,6 +249,37 @@ QVector<EventRecord> Database::eventsBetween(qint64 hostId, int channel, qint64 
     return out;
 }
 
+QHash<QString, int> Database::eventCountsBetween(qint64 hostId, int channel, qint64 from,
+                                                 qint64 to) const
+{
+    QHash<QString, int> out;
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT type, COUNT(*) FROM events WHERE host_id = :h AND channel = :c"
+                             " AND ts >= :from AND ts < :to GROUP BY type"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":c"), channel);
+    q.bindValue(QStringLiteral(":from"), from);
+    q.bindValue(QStringLiteral(":to"), to);
+    if (q.exec())
+        while (q.next())
+            out.insert(q.value(0).toString(), q.value(1).toInt());
+    return out;
+}
+
+QHash<qint64, QHash<QString, int>> Database::eventCountsByHost(qint64 from, qint64 to) const
+{
+    QHash<qint64, QHash<QString, int>> out;
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT host_id, type, COUNT(*) FROM events WHERE ts >= :from"
+                             " AND ts < :to GROUP BY host_id, type"));
+    q.bindValue(QStringLiteral(":from"), from);
+    q.bindValue(QStringLiteral(":to"), to);
+    if (q.exec())
+        while (q.next())
+            out[q.value(0).toLongLong()].insert(q.value(1).toString(), q.value(2).toInt());
+    return out;
+}
+
 bool Database::hostHasEvents(qint64 hostId) const
 {
     QSqlQuery q(db());
@@ -429,6 +460,13 @@ QVector<std::pair<qint64, qint64>> Database::appRuns(qint64 from, qint64 to) con
         while (q.next())
             out.append({q.value(0).toLongLong(), q.value(1).toLongLong()});
     return out;
+}
+
+qint64 Database::firstAppRunStart() const
+{
+    QSqlQuery q(db());
+    return q.exec(QStringLiteral("SELECT MIN(started_at) FROM app_runs")) && q.next()
+               ? q.value(0).toLongLong() : 0;
 }
 
 qint64 Database::addHost(const HostRecord &rec)

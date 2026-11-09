@@ -73,6 +73,9 @@ public:
     // One camera's events in [from, to), newest first; `types` empty = every type.
     QVector<EventRecord> eventsBetween(qint64 hostId, int channel, qint64 from, qint64 to,
                                        const QStringList &types = {}) const;
+    // Counts by stored type: one camera's in [from, to), and every host's in [from, to).
+    QHash<QString, int> eventCountsBetween(qint64 hostId, int channel, qint64 from, qint64 to) const;
+    QHash<qint64, QHash<QString, int>> eventCountsByHost(qint64 from, qint64 to) const;
     bool hostHasEvents(qint64 hostId) const;
     // The event on this camera nearest `ts`, if one is less than `windowSecs` away.
     std::optional<EventRecord> eventNear(qint64 hostId, int channel, qint64 ts,
@@ -100,6 +103,8 @@ public:
     bool touchAppRun(qint64 id, qint64 now);
     // (started, last seen) of the runs overlapping [from, to), oldest first.
     QVector<std::pair<qint64, qint64>> appRuns(qint64 from, qint64 to) const;
+    // When the first recorded run started; 0 when none is recorded.
+    qint64 firstAppRunStart() const;
 
 private:
     bool migrate();

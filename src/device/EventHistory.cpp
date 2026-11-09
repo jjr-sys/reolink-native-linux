@@ -47,6 +47,15 @@ QVector<TimeSpan> notRunningGaps(const QVector<std::pair<qint64, qint64>> &runs,
     return out;
 }
 
+QVector<TimeSpan> storedNotRunningGaps(const Database &db, qint64 from, qint64 to, qint64 now)
+{
+    const qint64 first = db.firstAppRunStart();
+    if (first <= 0)
+        return {};
+    from = std::max(from, first);
+    return notRunningGaps(db.appRuns(from, to), from, to, now, kMinNotRunningSecs);
+}
+
 QVector<EventRecord> statusRows(qint64 hostId, int channel, const QString &name, bool online,
                                 const QVector<CameraRef> &cameras, qint64 now)
 {

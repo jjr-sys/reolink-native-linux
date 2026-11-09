@@ -31,6 +31,10 @@ Item {
     // bare stream has no recordings); "" when it can. Such a card is greyed and a tap on it
     // emits unavailableTapped instead.
     property var unavailable: (key) => ""
+    // Events: tapping a camera already selected shows its column (selectedTapped) instead of
+    // removing it; the column's own ✕ removes it.
+    property bool tapSelectedToFocus: false
+    signal selectedTapped(string key)
     signal unavailableTapped(string key)
 
     function close() { openSite = ""; }
@@ -466,7 +470,9 @@ Item {
                             TapHandler {
                                 acceptedButtons: Qt.LeftButton
                                 onTapped: {
-                                    if (!card.blocked)
+                                    if (card.picked && root.tapSelectedToFocus)
+                                        root.selectedTapped(card.key);
+                                    else if (!card.blocked)
                                         root.selection.toggle(card.key);
                                     else if (root.unavailable(card.key) !== "")
                                         root.unavailableTapped(card.key);
@@ -484,6 +490,7 @@ Item {
                                     text: (card.modelData.online ? qsTr("%1 · online") : qsTr("%1 · offline"))
                                               .arg(card.modelData.name) + "\n"
                                           + (card.blocked ? card.blocked
+                                             : root.tapSelectedToFocus ? (card.picked ? qsTr("Click to show its column") : qsTr("Click to add a column"))
                                              : card.picked ? qsTr("Click to remove its pane") : qsTr("Click to add a pane"))
                                     color: Theme.text; font.pixelSize: 11
                                 }
