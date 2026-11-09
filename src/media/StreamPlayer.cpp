@@ -1,5 +1,6 @@
 #include "StreamPlayer.h"
 #include "core/Backoff.h"
+#include "media/HttpAuth.h"
 #include "media/LiveUrl.h"
 
 #include "AudioDecoder.h"
@@ -541,6 +542,11 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     // by the device, no URL to open.
     const bool packetSource = static_cast<bool>(s->readPacket);
     const bool live = packetSource || isLiveUrl(source);
+    const bool httpUrl = !packetSource && (url.startsWith("http://") || url.startsWith("https://"));
+    // A server that signs in with a session cookie (Frigate on 8971) needs it on the playlist
+    // and on every segment; FFmpeg's HLS reader passes `headers` on to the segments. Fetched
+    // before the open deadline starts, since getting it may mean signing in first.
+    const QByteArray authHeaders = httpUrl ? httpauth::headersFor(QUrl(source)) : QByteArray();
 
     InterruptContext interrupt{s.get(), QDeadlineTimer(kOpenTimeoutMs)};
 
@@ -599,9 +605,13 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     // rather than depending on a library default that moved under us.
     if (!packetSource && (url.startsWith("https://") || url.startsWith("rtsps://")))
         av_dict_set(&opts, "tls_verify", "0", 0);
+    if (!authHeaders.isEmpty())
+        av_dict_set(&opts, "headers", authHeaders.constData(), 0);
     int rc = avformat_open_input(&fmt, packetSource ? nullptr : url.constData(), ifmt, &opts);
     av_dict_free(&opts);
     if (rc < 0) {
+        if (rc == AVERROR_HTTP_UNAUTHORIZED && !authHeaders.isEmpty())
+            httpauth::refused(QUrl(source)); // a stale session: the retry signs in afresh
         char buf[AV_ERROR_MAX_STRING_SIZE]{};
         av_strerror(rc, buf, sizeof(buf));
         // A recorder answering "not found" for a camera's stream means it has no video

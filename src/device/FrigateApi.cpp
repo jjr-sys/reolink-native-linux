@@ -1,4 +1,6 @@
 #include "FrigateApi.h"
+#include "media/HttpAuth.h"
+#include <QThread>
 
 #include <QEventLoop>
 #include <algorithm>
@@ -447,6 +449,36 @@ QByteArray sessionCookie(const QString &host, int port, int timeoutMs, QString *
 void forgetSession(const QString &host, int port)
 {
     clearSession(QUrl(base(host, port)));
+}
+
+namespace {
+bool hasLogin(const QUrl &url)
+{
+    QMutexLocker lock(&authMutex());
+    const auto it = authEntries().constFind(authKey(url));
+    return it != authEntries().cend() && !it->username.isEmpty() && !it->password.isEmpty();
+}
+} // namespace
+
+void installMediaAuth()
+{
+    httpauth::install(
+        [](const QUrl &url) -> QByteArray {
+            if (!hasLogin(url))
+                return {}; // not a Frigate host with a login: no sign-in, no network
+            // Signing in uses QNetworkAccessManager, which wants a QThread; the player's
+            // worker is a std::thread, so sign in on a short-lived QThread (as FrigateLive).
+            QByteArray cookie;
+            QThread *t = QThread::create([&cookie, url] {
+                QNetworkAccessManager nam;
+                cookie = sessionCookie(url, nam, 15000, nullptr);
+            });
+            t->start();
+            t->wait();
+            delete t;
+            return cookie.isEmpty() ? QByteArray() : "Cookie: " + cookie + "\r\n";
+        },
+        [](const QUrl &url) { clearSession(url); });
 }
 
 QByteArray httpGet(const QString &url, int timeoutMs, QString *error)

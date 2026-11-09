@@ -12,6 +12,7 @@
 #include "device/Highlights.h"
 #include "media/AlertSounds.h"
 #include "device/EventManager.h"
+#include "device/FrigateApi.h"
 #include "media/StreamPlayer.h"
 #include "media/LiveStream.h"
 #include "media/PlaybackSession.h"
@@ -191,6 +192,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::LiveStream>("ReolinkApp.Core", 1, 0, "LiveStream");
     qmlRegisterType<rl::PlaybackSession>("ReolinkApp.Core", 1, 0, "PlaybackSession");
     qmlRegisterType<rl::ClipLoader>("ReolinkApp.Core", 1, 0, "ClipLoader");
+    rl::frigate::installMediaAuth(); // Frigate Playback signs in with the session cookie
     qmlRegisterType<rl::TalkSession>("ReolinkApp.Core", 1, 0, "TalkSession");
     qmlRegisterType<rl::LiveArrangement>("ReolinkApp.Core", 1, 0, "LiveArrangement");
     qmlRegisterType<rl::SiteMap>("ReolinkApp.Core", 1, 0, "SiteMap");

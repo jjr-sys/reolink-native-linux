@@ -108,4 +108,8 @@ QByteArray sessionCookie(const QString &host, int port, int timeoutMs, QString *
 // Forget a host's cached session cookie (the server refused it); the next call signs in again.
 void forgetSession(const QString &host, int port);
 
+// Hand the media player the session cookie for Frigate URLs (Playback's VOD playlist and its
+// segments). Hosts without a registered login get nothing. Call once at startup.
+void installMediaAuth();
+
 } // namespace rl::frigate
