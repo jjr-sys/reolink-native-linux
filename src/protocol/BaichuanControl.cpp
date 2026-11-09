@@ -1,6 +1,5 @@
 #include "BaichuanControl.h"
 
-#include "protocol/BaichuanDownload.h"
 #include "protocol/BcCrypto.h"
 
 #include <QTcpSocket>
@@ -229,17 +228,8 @@ static QByteArray decryptReply(const Msg &m, const QByteArray &key)
 QByteArray BaichuanControl::transact(quint32 cmdId, int channel, const QByteArray &bodyXml,
                                      quint16 *statusOut)
 {
-    if (!isOpen())
+    if (!sendRequest(cmdId, channel, nextMessId(), bodyXml))
         return {};
-    const quint8 chId = channel < 0 ? 250 : static_cast<quint8>(channel + 1);
-    const QByteArray ext = channel < 0 ? QByteArray() : channelExtension(channel);
-    const QByteArray encExt = ext.isEmpty() ? QByteArray() : bc::aesCfb(ext, m_aesKey, false);
-    const QByteArray encBody =
-        bodyXml.isEmpty() ? QByteArray() : bc::aesCfb(bodyXml, m_aesKey, false);
-    const quint32 messId = (++m_messId) & 0xFFFFFF;
-
-    m_sock->write(modernMessage(cmdId, chId, messId, encExt, encBody));
-    m_sock->flush();
 
     Msg reply;
     if (!recvMatch(m_sock.get(), m_netBuf, cmdId, reply))
@@ -350,7 +340,7 @@ std::optional<BaichuanControl::Message> BaichuanControl::readMessage(int waitMs,
         const QByteArray ext = bc::aesCfb(m.body.left(m.payloadOffset), m_aesKey, true);
         if (ext.contains("<binaryData>1</binaryData>")) {
             out.binary = true;
-            out.body = bcBinaryPayload(ext, m.body.mid(m.payloadOffset), m_aesKey);
+            out.body = bc::binaryPayload(ext, m.body.mid(m.payloadOffset), m_aesKey);
             return out;
         }
     }

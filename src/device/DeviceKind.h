@@ -42,6 +42,9 @@ struct Capabilities
     // Recordings to play back: a recorder's own, or Frigate's. A bare stream has none.
     bool hasRecordings = true;
     DetectionSource detections = DetectionSource::ReolinkPollAndPush;
+    // Recordings download over Baichuan (cmd 143). NVRs need it: their HTTP NvrDownload
+    // fragments broke on firmware v3.6.5.597. Standalone cameras keep HTTP Download.
+    bool baichuanDownload = false;
 
     bool direct() const { return !reolinkProtocol; }
 };

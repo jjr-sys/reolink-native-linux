@@ -28,16 +28,10 @@ struct BcDownloadRequest {
     QString uid;          // camera UID; omitted from the request when empty
     QDateTime start;      // the recorder's local time, as the rest of the app assumes
     QDateTime end;
-    bool mainStream = true;
 };
 
-// The cmd 143 request body.
+// The cmd 143 request body (main stream: export is always full quality).
 QByteArray bcDownloadXml(const BcDownloadRequest &req);
-
-// The media bytes of a binary message: under full-AES login the first `encryptLen` bytes
-// (named in the message's Extension) are encrypted, the rest are plain.
-QByteArray bcBinaryPayload(const QByteArray &extensionXml, const QByteArray &payload,
-                           const QByteArray &aesKey);
 
 // One logged-in Baichuan session, as the download needs it. The real one wraps
 // BaichuanControl; tests script it. Blocking, worker thread only.
@@ -65,7 +59,7 @@ struct BcDownloadResult {
     enum class Outcome {
         Done,      // the recorder said the range is complete
         NoData,    // it ended without sending any footage
-        Refused,   // it turned the request down (see status)
+        Refused,   // it turned the request down, or failed part way (see status)
         Cancelled,
         Stalled,   // nothing arrived for too long
         Lost,      // the connection dropped
@@ -81,13 +75,19 @@ struct BcDownloadOptions {
     int stallMs = 30000;
     // Every non-media 143/144 message, for logs and probes.
     std::function<void(const BcDownloadPort::Message &)> trace;
+    // Called once the recorder accepts, with the size it announces (sizeL + sizeH << 32;
+    // -1 when it gives none or a nonsense one: it is sometimes -1 or wrong). Return false
+    // to cancel before any footage is taken, e.g. when the disk is too small.
+    std::function<bool(qint64 announcedBytes)> onAccepted;
 };
 
 constexpr quint32 kBcCmdDownload = 143;
 constexpr quint32 kBcCmdDownloadStop = 144;
 
 // Run one download to completion, handing each media payload to `media` in order.
-// Always closes the download with 144 once the recorder has accepted it.
+// Closes the download with 144 whenever it ends on our side or the recorder's (done,
+// error, cancel, stall), but not after a refusal: the recorder has nothing open then, and
+// a 144 could stop another client's download.
 BcDownloadResult runBcDownload(BcDownloadPort &port, const BcDownloadRequest &req,
                                const std::function<void(const QByteArray &)> &media,
                                const BcDownloadOptions &opts = {});

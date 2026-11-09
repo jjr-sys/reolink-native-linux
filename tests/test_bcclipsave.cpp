@@ -71,6 +71,21 @@ private slots:
         QVERIFY(!r.writeError.isEmpty());
         QVERIFY(!QFile::exists(path));
     }
+    // The recorder announces the size up front; a disk that cannot hold it stops the
+    // download before any footage is taken.
+    void announcedSizeTooBigForTheDisk_stopsEarly()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath("c.mp4");
+        ScriptedPort port;
+        port.replies = {Msg{143, 200, false, "<body><sizeL>0</sizeL><sizeH>65535</sizeH></body>"},
+                        Msg{143, 200, true, "x"}, Msg{143, 300, false, {}}};
+        const BcClipSaveResult r = saveBcClip(port, request(1000, 15), path, nullptr);
+        QVERIFY(r.noSpace);
+        QVERIFY(!r.ok());
+        QCOMPARE(port.sent.back(), kBcCmdDownloadStop);
+        QVERIFY(!QFile::exists(path));
+    }
     void cancelled_leavesNoFile()
     {
         QTemporaryDir dir;

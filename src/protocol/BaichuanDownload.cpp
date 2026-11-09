@@ -46,6 +46,29 @@ private:
     quint32 m_messId;
 };
 
+qint64 xmlNumber(const QByteArray &xml, const char *tag, bool *ok)
+{
+    const QByteArray open = QByteArray("<") + tag + ">";
+    const int p = xml.indexOf(open);
+    const int q = p < 0 ? -1 : xml.indexOf("</", p);
+    if (q < 0) {
+        *ok = false;
+        return 0;
+    }
+    return xml.mid(p + open.size(), q - p - open.size()).trimmed().toLongLong(ok);
+}
+
+// sizeL + sizeH << 32 from the accepting reply, or -1 when absent or nonsense.
+qint64 announcedSize(const QByteArray &xml)
+{
+    bool okL = false, okH = false;
+    const qint64 lo = xmlNumber(xml, "sizeL", &okL);
+    const qint64 hi = xmlNumber(xml, "sizeH", &okH);
+    if (!okL || lo < 0 || lo > 0xFFFFFFFFll || (okH && (hi < 0 || hi > 0xFFFF)))
+        return -1;
+    return (okH ? hi << 32 : 0) + lo;
+}
+
 bool isEnd(quint16 status)
 {
     return status == 300 || status == 331;
@@ -62,28 +85,13 @@ QByteArray bcDownloadXml(const BcDownloadRequest &req)
 {
     const QByteArray uidEl =
         req.uid.isEmpty() ? QByteArray() : "<uid>" + req.uid.toUtf8() + "</uid>\n";
-    // supportSub 1 forces the sub stream whatever streamType says (reolink_aio#240).
+    // supportSub 1 would force the sub stream whatever streamType says (reolink_aio#240).
     return "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n<body>\n<FileInfoList version=\"1.1\">\n"
            "<FileInfo>\n" + uidEl
            + "<logicChnBitmap>255</logicChnBitmap>\n<channelId>" + QByteArray::number(req.channel)
-           + "</channelId>\n<supportSub>" + QByteArray(req.mainStream ? "0" : "1")
-           + "</supportSub>\n<streamType>"
-           + QByteArray(req.mainStream ? "mainStream" : "subStream") + "</streamType>\n"
+           + "</channelId>\n<supportSub>0</supportSub>\n<streamType>mainStream</streamType>\n"
            + timeXml("startTime", req.start) + "\n" + timeXml("endTime", req.end)
            + "\n</FileInfo>\n</FileInfoList>\n</body>\n";
-}
-
-QByteArray bcBinaryPayload(const QByteArray &extensionXml, const QByteArray &payload,
-                           const QByteArray &aesKey)
-{
-    const int p = extensionXml.indexOf("<encryptLen>");
-    if (p < 0)
-        return payload;
-    const int q = extensionXml.indexOf("</encryptLen>", p);
-    const int n = q < 0 ? 0 : extensionXml.mid(p + 12, q - p - 12).trimmed().toInt();
-    if (n <= 0)
-        return payload;
-    return bc::aesCfb(payload.left(n), aesKey, true) + payload.mid(n);
 }
 
 BcDownloadResult runBcDownload(BcDownloadPort &port, const BcDownloadRequest &req,
@@ -100,6 +108,7 @@ BcDownloadResult runBcDownload(BcDownloadPort &port, const BcDownloadRequest &re
     }
 
     bool accepted = false;
+    bool askedCaller = false;
     QElapsedTimer quiet;
     quiet.start();
     const int waitMs = qBound(1, opts.stallMs, 300);
@@ -148,13 +157,22 @@ BcDownloadResult runBcDownload(BcDownloadPort &port, const BcDownloadRequest &re
         }
         if (m->status == 200 || m->status == 201) {
             accepted = true;
+            if (!askedCaller && opts.onAccepted) {
+                askedCaller = true;
+                if (!opts.onAccepted(announcedSize(m->body))) {
+                    stop();
+                    r.outcome = BcDownloadResult::Outcome::Cancelled;
+                    return r;
+                }
+            }
             continue;
         }
-        if (!accepted) {
-            r.status = m->status;
-            r.outcome = BcDownloadResult::Outcome::Refused;
-            return r;
-        }
+        // An error status: before acceptance a refusal, after it a failure part way.
+        if (accepted)
+            stop();
+        r.status = m->status;
+        r.outcome = BcDownloadResult::Outcome::Refused;
+        return r;
     }
 }
 

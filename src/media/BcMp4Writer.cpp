@@ -171,8 +171,8 @@ void BcMp4Writer::addVideo(const BcMediaParser::VideoFrame &f, int width, int he
         return;
     }
     m_pending.push_back(std::move(p));
-    if (us >= kAudioWaitUs && !open())
-        return;
+    if (us >= kAudioWaitUs)
+        open(); // no audio so far: write the file video-only
 }
 
 void BcMp4Writer::addAudio(const QByteArray &adtsFrame)

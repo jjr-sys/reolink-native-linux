@@ -75,4 +75,17 @@ QByteArray aesCfb(const QByteArray &in, const QByteArray &key, bool decrypt)
     return out;
 }
 
+QByteArray binaryPayload(const QByteArray &extensionXml, const QByteArray &payload,
+                         const QByteArray &key)
+{
+    const int p = extensionXml.indexOf("<encryptLen>");
+    if (p < 0)
+        return payload;
+    const int q = extensionXml.indexOf("</encryptLen>", p);
+    const int n = q < 0 ? 0 : extensionXml.mid(p + 12, q - p - 12).trimmed().toInt();
+    if (n <= 0)
+        return payload;
+    return aesCfb(payload.left(n), key, true) + payload.mid(n);
+}
+
 } // namespace rl::bc

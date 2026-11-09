@@ -1,6 +1,7 @@
 #include "protocol/BaichuanDownload.h"
 #include "protocol/BcCrypto.h"
 
+#include <QElapsedTimer>
 #include <QThread>
 #include <QtTest>
 
@@ -108,12 +109,12 @@ private slots:
         const QByteArray wire = bc::aesCfb(plain.left(16), key, false) + plain.mid(16);
         const QByteArray ext = "<Extension version=\"1.1\"><binaryData>1</binaryData>"
                                "<encryptLen>16</encryptLen></Extension>";
-        QCOMPARE(bcBinaryPayload(ext, wire, key), plain);
+        QCOMPARE(bc::binaryPayload(ext, wire, key), plain);
     }
     void binaryPayload_withoutEncryptLenIsPlain()
     {
         const QByteArray ext = "<Extension version=\"1.1\"><binaryData>1</binaryData></Extension>";
-        QCOMPARE(bcBinaryPayload(ext, "raw", QByteArray(16, 'k')), QByteArray("raw"));
+        QCOMPARE(bc::binaryPayload(ext, "raw", QByteArray(16, 'k')), QByteArray("raw"));
     }
 
     // Accepted, two media messages (a block may cross them: the bytes go on in order),
@@ -191,6 +192,54 @@ private slots:
         QCOMPARE(r.status, quint16(400));
         QCOMPARE(port.sent.size(), size_t(1));
     }
+    // An error after the recorder accepted fails at once (not after the stall wait) and
+    // closes the download.
+    void download_errorAfterAcceptFailsAndSends144()
+    {
+        ScriptedPort port;
+        port.replies = {reply(200), media("a"), reply(500, {}), media("b")};
+        BcDownloadOptions o;
+        o.stallMs = 5000;
+        QElapsedTimer t;
+        t.start();
+        const BcDownloadResult r = runBcDownload(port, request(), [](const QByteArray &) {}, o);
+        QVERIFY(t.elapsed() < 1000);
+        QCOMPARE(r.outcome, Outcome::Refused);
+        QCOMPARE(r.status, quint16(500));
+        QCOMPARE(port.sent.back().cmdId, kBcCmdDownloadStop);
+    }
+    // The size the recorder announces in its first reply (sizeL + sizeH << 32) can veto the
+    // download before any footage is taken, e.g. when the disk is too small.
+    void download_acceptHookSeesAnnouncedSize()
+    {
+        ScriptedPort port;
+        port.replies = {reply(200, "<body><FileInfoList><FileInfo><sizeL>11989232</sizeL>"
+                                   "<sizeH>1</sizeH></FileInfo></FileInfoList></body>"),
+                        media("a"), reply(300, {})};
+        qint64 seen = 0;
+        BcDownloadOptions o;
+        o.onAccepted = [&](qint64 bytes) { seen = bytes; return false; };
+        QByteArray got;
+        const BcDownloadResult r =
+            runBcDownload(port, request(), [&](const QByteArray &b) { got += b; }, o);
+        QCOMPARE(seen, (qint64(1) << 32) + 11989232);
+        QCOMPARE(r.outcome, Outcome::Cancelled);
+        QVERIFY(got.isEmpty());
+        QCOMPARE(port.sent.back().cmdId, kBcCmdDownloadStop);
+    }
+    // A size the recorder gets wrong (-1 is seen in the wild) is reported as unknown.
+    void download_acceptHookUnknownSize()
+    {
+        ScriptedPort port;
+        port.replies = {reply(200, "<body><sizeL>-1</sizeL><sizeH>0</sizeH></body>"), media("a"),
+                        reply(300, {})};
+        qint64 seen = 0;
+        BcDownloadOptions o;
+        o.onAccepted = [&](qint64 bytes) { seen = bytes; return true; };
+        QCOMPARE(runBcDownload(port, request(), [](const QByteArray &) {}, o).outcome, Outcome::Done);
+        QCOMPARE(seen, qint64(-1));
+    }
+
     void download_cancelSends144()
     {
         ScriptedPort port;

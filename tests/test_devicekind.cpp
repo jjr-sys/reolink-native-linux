@@ -63,14 +63,15 @@ private slots:
         QTest::addColumn<bool>("alwaysOnline");
         QTest::addColumn<bool>("frigate");
         QTest::addColumn<int>("detections");
+        QTest::addColumn<bool>("baichuanDownload");
         QTest::newRow("camera") << int(Kind::Camera) << true << false << false << false
-                                << int(DetectionSource::ReolinkPollAndPush);
+                                << int(DetectionSource::ReolinkPollAndPush) << false;
         QTest::newRow("nvr") << int(Kind::Nvr) << true << true << false << false
-                             << int(DetectionSource::ReolinkPollAndPush);
+                             << int(DetectionSource::ReolinkPollAndPush) << true;
         QTest::newRow("stream") << int(Kind::Stream) << false << false << true << false
-                                << int(DetectionSource::None);
+                                << int(DetectionSource::None) << false;
         QTest::newRow("frigate") << int(Kind::Frigate) << false << true << false << true
-                                 << int(DetectionSource::FrigateServer);
+                                 << int(DetectionSource::FrigateServer) << false;
     }
     void capabilityTable()
     {
@@ -80,6 +81,7 @@ private slots:
         QFETCH(bool, alwaysOnline);
         QFETCH(bool, frigate);
         QFETCH(int, detections);
+        QFETCH(bool, baichuanDownload);
         const Capabilities c = capabilities(Kind(kind));
         QCOMPARE(c.reolinkProtocol, reolink);
         QCOMPARE(c.direct(), !reolink);
@@ -87,6 +89,7 @@ private slots:
         QCOMPARE(c.alwaysOnline, alwaysOnline);
         QCOMPARE(c.frigateApi, frigate);
         QCOMPARE(int(c.detections), detections);
+        QCOMPARE(c.baichuanDownload, baichuanDownload);
     }
     void capabilityMapForQml()
     {

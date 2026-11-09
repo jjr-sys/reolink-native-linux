@@ -30,4 +30,9 @@ QByteArray aesKey(const QString &nonce, const QString &password);
 // control bodies and, under FullAES, the media payload.
 QByteArray aesCfb(const QByteArray &in, const QByteArray &key, bool decrypt);
 
+// The payload of a binary message: under full-AES login the first `encryptLen` bytes
+// (named in the message's Extension XML) are encrypted, the rest are plain.
+QByteArray binaryPayload(const QByteArray &extensionXml, const QByteArray &payload,
+                         const QByteArray &key);
+
 } // namespace rl::bc

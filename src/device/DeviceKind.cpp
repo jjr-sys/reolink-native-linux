@@ -50,6 +50,7 @@ Capabilities capabilities(Kind kind)
         break;
     case Kind::Nvr:
         c.multiChannel = true;
+        c.baichuanDownload = true;
         break;
     case Kind::Stream:
         c.reolinkProtocol = false;

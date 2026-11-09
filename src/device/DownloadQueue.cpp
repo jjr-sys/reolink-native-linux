@@ -299,7 +299,8 @@ void DownloadQueue::run(const Item &item, const QString &folder)
     const QDateTime end = QDateTime::fromSecsSinceEpoch(item.end);
 
     if (src.baichuan) {
-        BaichuanControl link({src.host, 9000, src.username, src.password});
+        BaichuanControl link({src.host, 9000 /* Baichuan, beside the HTTP port */,
+                              src.username, src.password});
         if (!link.open()) {
             fail(link.refused() ? tr("The NVR refused the login")
                                 : tr("Can't reach the NVR on port 9000"));
@@ -317,12 +318,16 @@ void DownloadQueue::run(const Item &item, const QString &folder)
         sinceEmit.start();
         const auto port = bcDownloadPort(link);
         const BcClipSaveResult r = saveBcClip(*port, req, path, cancel, [&](int pct) {
-            if (sinceEmit.elapsed() < 250)
+            if (sinceEmit.elapsed() < 250) // at most four updates a second to the list
                 return;
             sinceEmit.restart();
             post(DlState::Downloading, pct, tr("Downloading"), {});
         });
         link.close();
+        if (r.noSpace) {
+            fail(tr("Not enough free space in %1").arg(folder));
+            return;
+        }
         using O = BcDownloadResult::Outcome;
         if (r.ok()) {
             qCInfo(lcCore).noquote() << "download saved" << src.site << "/" << src.camera << "ch"
@@ -337,7 +342,9 @@ void DownloadQueue::run(const Item &item, const QString &folder)
         switch (r.download.outcome) {
         case O::Done: fail(r.writeError); break;
         case O::NoData: fail(tr("No recording covers this range")); break;
-        case O::Refused: fail(tr("The NVR turned the download down (status %1)").arg(r.download.status)); break;
+        case O::Refused:
+            fail(tr("The NVR stopped the download (status %1)").arg(r.download.status));
+            break;
         case O::Cancelled: fail({}); break;
         case O::Stalled: fail(tr("The NVR stopped sending")); break;
         case O::Lost: fail(tr("The connection to the NVR dropped")); break;

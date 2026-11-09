@@ -1546,7 +1546,7 @@ DownloadSource DeviceManager::downloadSource(int row)
     s.port = e.rec.port;
     s.https = e.rec.https;
     s.client = std::move(client);
-    s.baichuan = device::kindFromString(e.rec.kind) == device::Kind::Nvr;
+    s.baichuan = e.kindCaps().baichuanDownload;
     s.username = e.rec.username;
     s.password = e.password;
     s.uid = e.uid;

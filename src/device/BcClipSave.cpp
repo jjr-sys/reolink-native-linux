@@ -3,7 +3,8 @@
 #include "media/BcMediaParser.h"
 #include "media/BcMp4Writer.h"
 
-#include <QFile>
+#include <QFileInfo>
+#include <QStorageInfo>
 
 namespace rl {
 
@@ -31,6 +32,14 @@ BcClipSaveResult saveBcClip(BcDownloadPort &port, const BcDownloadRequest &req, 
 
     BcDownloadOptions opts;
     opts.cancel = cancel;
+    opts.onAccepted = [&](qint64 announced) {
+        if (announced < 0)
+            return true; // unknown: a full disk shows up as a write error instead
+        const qint64 free = QStorageInfo(QFileInfo(path).absolutePath()).bytesAvailable();
+        constexpr qint64 kMargin = 256ll << 20; // the announced size runs a little under
+        r.noSpace = free >= 0 && free < announced + kMargin;
+        return !r.noSpace;
+    };
     r.download = runBcDownload(port, req, [&](const QByteArray &b) { parser.append(b); }, opts);
     if (!r.download.ok())
         return r; // the writer's destructor removes the partial file
