@@ -101,10 +101,23 @@ bool Database::migrate()
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts DESC)"),
     };
 
+    // Events storage (wayfinder/site-tabs-redesign step 5): per-camera day queries, app
+    // runs for the "app not running" bands, and each channel's supported event types.
+    static const QStringList migrationsV3 = {
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_events_camera"
+                       " ON events(host_id, channel, type, ts)"),
+        QStringLiteral("CREATE TABLE IF NOT EXISTS app_runs ("
+                       " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                       " started_at INTEGER NOT NULL,"
+                       " last_seen INTEGER NOT NULL)"),
+        QStringLiteral("ALTER TABLE channels ADD COLUMN event_types TEXT NOT NULL DEFAULT ''"),
+    };
+
     // Ordered migrations; each bumps the stored version by one.
     const QVector<QPair<int, const QStringList *>> steps = {
         {1, &migrationsV1},
         {2, &migrationsV2},
+        {3, &migrationsV3},
     };
 
     const int current = schemaVersion();
@@ -159,27 +172,132 @@ qint64 Database::addEvent(const EventRecord &rec)
     return q.lastInsertId().toLongLong();
 }
 
-QVector<EventRecord> Database::recentEvents(int limit) const
+static EventRecord eventFrom(const QSqlQuery &q)
+{
+    EventRecord r;
+    r.id = q.value(0).toLongLong();
+    r.hostId = q.value(1).toLongLong();
+    r.channel = q.value(2).toInt();
+    r.timestamp = q.value(3).toLongLong();
+    r.type = q.value(4).toString();
+    r.camera = q.value(5).toString();
+    r.thumbnail = q.value(6).toString();
+    return r;
+}
+
+static const char kEventColumns[] = "SELECT id, host_id, channel, ts, type, camera, thumbnail FROM events";
+
+QVector<EventRecord> Database::recentEvents(int limit, const QString &type,
+                                            const QList<qint64> &hostIds,
+                                            const QString &camera) const
 {
     QVector<EventRecord> out;
+    QStringList where;
+    if (!type.isEmpty())
+        where << QStringLiteral("type = :type");
+    if (!camera.isEmpty())
+        where << QStringLiteral("camera = :cam");
+    if (!hostIds.isEmpty()) {
+        QStringList ids;
+        for (qint64 id : hostIds)
+            ids << QString::number(id);
+        where << QStringLiteral("host_id IN (%1)").arg(ids.join(QLatin1Char(',')));
+    }
+    QString sql = QString::fromLatin1(kEventColumns);
+    if (!where.isEmpty())
+        sql += QStringLiteral(" WHERE ") + where.join(QStringLiteral(" AND "));
+    sql += QStringLiteral(" ORDER BY ts DESC, id DESC LIMIT :lim");
     QSqlQuery q(db());
-    q.prepare(QStringLiteral("SELECT id, host_id, channel, ts, type, camera, thumbnail"
-                             " FROM events ORDER BY ts DESC, id DESC LIMIT :lim"));
+    q.prepare(sql);
+    if (!type.isEmpty())
+        q.bindValue(QStringLiteral(":type"), type);
+    if (!camera.isEmpty())
+        q.bindValue(QStringLiteral(":cam"), camera);
     q.bindValue(QStringLiteral(":lim"), limit);
     if (!q.exec())
         return out;
-    while (q.next()) {
-        EventRecord r;
-        r.id = q.value(0).toLongLong();
-        r.hostId = q.value(1).toLongLong();
-        r.channel = q.value(2).toInt();
-        r.timestamp = q.value(3).toLongLong();
-        r.type = q.value(4).toString();
-        r.camera = q.value(5).toString();
-        r.thumbnail = q.value(6).toString();
-        out.append(r);
-    }
+    while (q.next())
+        out.append(eventFrom(q));
     return out;
+}
+
+QVector<EventRecord> Database::eventsBetween(qint64 hostId, int channel, qint64 from, qint64 to,
+                                             const QStringList &types) const
+{
+    QVector<EventRecord> out;
+    QString sql = QString::fromLatin1(kEventColumns)
+                  + QStringLiteral(" WHERE host_id = :h AND channel = :c AND ts >= :from AND ts < :to");
+    if (!types.isEmpty()) {
+        QStringList marks;
+        for (int i = 0; i < types.size(); ++i)
+            marks << QStringLiteral(":t%1").arg(i);
+        sql += QStringLiteral(" AND type IN (%1)").arg(marks.join(QLatin1Char(',')));
+    }
+    sql += QStringLiteral(" ORDER BY ts DESC, id DESC");
+    QSqlQuery q(db());
+    q.prepare(sql);
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":c"), channel);
+    q.bindValue(QStringLiteral(":from"), from);
+    q.bindValue(QStringLiteral(":to"), to);
+    for (int i = 0; i < types.size(); ++i)
+        q.bindValue(QStringLiteral(":t%1").arg(i), types.at(i));
+    if (!q.exec())
+        return out;
+    while (q.next())
+        out.append(eventFrom(q));
+    return out;
+}
+
+bool Database::hostHasEvents(qint64 hostId) const
+{
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT 1 FROM events WHERE host_id = :h LIMIT 1"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    return q.exec() && q.next();
+}
+
+std::optional<EventRecord> Database::eventNear(qint64 hostId, int channel, qint64 ts,
+                                               qint64 windowSecs) const
+{
+    QSqlQuery q(db());
+    q.prepare(QString::fromLatin1(kEventColumns)
+              + QStringLiteral(" WHERE host_id = :h AND channel = :c AND ts > :lo AND ts < :hi"
+                               " ORDER BY ABS(ts - :ts) LIMIT 1"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":c"), channel);
+    q.bindValue(QStringLiteral(":lo"), ts - windowSecs);
+    q.bindValue(QStringLiteral(":hi"), ts + windowSecs);
+    q.bindValue(QStringLiteral(":ts"), ts);
+    if (q.exec() && q.next())
+        return eventFrom(q);
+    return std::nullopt;
+}
+
+QStringList Database::eventCameras(qint64 hostId) const
+{
+    QStringList out;
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT DISTINCT camera FROM events WHERE host_id = :h"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    if (q.exec())
+        while (q.next())
+            out.append(q.value(0).toString());
+    return out;
+}
+
+bool Database::renameEventCamera(qint64 hostId, const QString &from, const QString &to)
+{
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("UPDATE events SET camera = :to WHERE host_id = :h AND camera = :from"));
+    q.bindValue(QStringLiteral(":to"), sqlText(to));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":from"), sqlText(from));
+    if (!q.exec()) {
+        m_lastError = q.lastError().text();
+        return false;
+    }
+    return true;
 }
 
 bool Database::clearEvents()
@@ -202,7 +320,7 @@ bool Database::setEventThumbnail(qint64 id, const QString &path)
         m_lastError = q.lastError().text();
         return false;
     }
-    return true;
+    return q.numRowsAffected() > 0;
 }
 
 bool Database::setEventCamera(qint64 id, const QString &camera)
@@ -218,48 +336,99 @@ bool Database::setEventCamera(qint64 id, const QString &camera)
     return true;
 }
 
-QStringList Database::purgeEventsOlderThan(qint64 maxAgeSecs)
+// Runs `whereSql` (with its bindings) as a delete, first collecting the thumbnails of
+// the rows it removes.
+static QStringList deleteEventsWhere(const QSqlDatabase &database, const QString &whereSql,
+                                     const QVariantMap &binds, QString *error)
 {
-    const qint64 cutoff = QDateTime::currentSecsSinceEpoch() - maxAgeSecs;
     QStringList thumbs;
-    QSqlQuery sel(db());
-    sel.prepare(QStringLiteral(
-        "SELECT thumbnail FROM events WHERE ts < :cutoff AND thumbnail != ''"));
-    sel.bindValue(QStringLiteral(":cutoff"), cutoff);
+    QSqlQuery sel(database);
+    sel.prepare(QStringLiteral("SELECT thumbnail FROM events WHERE thumbnail != '' AND ") + whereSql);
+    for (auto it = binds.constBegin(); it != binds.constEnd(); ++it)
+        sel.bindValue(it.key(), it.value());
     if (sel.exec())
         while (sel.next())
             thumbs.append(sel.value(0).toString());
 
-    QSqlQuery del(db());
-    del.prepare(QStringLiteral("DELETE FROM events WHERE ts < :cutoff"));
-    del.bindValue(QStringLiteral(":cutoff"), cutoff);
+    QSqlQuery del(database);
+    del.prepare(QStringLiteral("DELETE FROM events WHERE ") + whereSql);
+    for (auto it = binds.constBegin(); it != binds.constEnd(); ++it)
+        del.bindValue(it.key(), it.value());
     if (!del.exec())
-        m_lastError = del.lastError().text();
+        *error = del.lastError().text();
     return thumbs;
+}
+
+QStringList Database::purgeExpiredEvents(qint64 now, qint64 motionKeepSecs, qint64 otherKeepSecs)
+{
+    return deleteEventsWhere(
+        db(),
+        QStringLiteral("((type = 'motion' AND ts < :mcut) OR (type <> 'motion' AND ts < :ocut))"),
+        {{QStringLiteral(":mcut"), now - motionKeepSecs}, {QStringLiteral(":ocut"), now - otherKeepSecs}},
+        &m_lastError);
+}
+
+int Database::countCappedEvents(qint64 hostId) const
+{
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT COUNT(*) FROM events WHERE host_id = :h AND type <> 'motion'"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    return q.exec() && q.next() ? q.value(0).toInt() : 0;
 }
 
 QStringList Database::trimHostEvents(qint64 hostId, int keep)
 {
-    QStringList thumbs;
-    QSqlQuery sel(db());
-    sel.prepare(QStringLiteral(
-        "SELECT thumbnail FROM events WHERE host_id = :host AND thumbnail != '' AND id NOT IN "
-        "(SELECT id FROM events WHERE host_id = :host ORDER BY ts DESC, id DESC LIMIT :keep)"));
-    sel.bindValue(QStringLiteral(":host"), hostId);
-    sel.bindValue(QStringLiteral(":keep"), keep);
-    if (sel.exec())
-        while (sel.next())
-            thumbs.append(sel.value(0).toString());
+    // The newest row past the cap; it and everything older go. One indexed lookup instead
+    // of a NOT IN over the kept rows.
+    QSqlQuery cut(db());
+    cut.prepare(QStringLiteral("SELECT ts, id FROM events WHERE host_id = :h AND type <> 'motion'"
+                               " ORDER BY ts DESC, id DESC LIMIT 1 OFFSET :keep"));
+    cut.bindValue(QStringLiteral(":h"), hostId);
+    cut.bindValue(QStringLiteral(":keep"), keep);
+    if (!cut.exec() || !cut.next())
+        return {};
+    return deleteEventsWhere(
+        db(),
+        QStringLiteral("host_id = :h AND type <> 'motion' AND (ts < :ts OR (ts = :ts AND id <= :id))"),
+        {{QStringLiteral(":h"), hostId},
+         {QStringLiteral(":ts"), cut.value(0).toLongLong()},
+         {QStringLiteral(":id"), cut.value(1).toLongLong()}},
+        &m_lastError);
+}
 
-    QSqlQuery del(db());
-    del.prepare(QStringLiteral(
-        "DELETE FROM events WHERE host_id = :host AND id NOT IN "
-        "(SELECT id FROM events WHERE host_id = :host ORDER BY ts DESC, id DESC LIMIT :keep)"));
-    del.bindValue(QStringLiteral(":host"), hostId);
-    del.bindValue(QStringLiteral(":keep"), keep);
-    if (!del.exec())
-        m_lastError = del.lastError().text();
-    return thumbs;
+qint64 Database::beginAppRun(qint64 now)
+{
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("INSERT INTO app_runs (started_at, last_seen) VALUES (:t, :t)"));
+    q.bindValue(QStringLiteral(":t"), now);
+    if (!q.exec()) {
+        m_lastError = q.lastError().text();
+        return -1;
+    }
+    return q.lastInsertId().toLongLong();
+}
+
+bool Database::touchAppRun(qint64 id, qint64 now)
+{
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("UPDATE app_runs SET last_seen = :t WHERE id = :id"));
+    q.bindValue(QStringLiteral(":t"), now);
+    q.bindValue(QStringLiteral(":id"), id);
+    return q.exec() && q.numRowsAffected() > 0;
+}
+
+QVector<std::pair<qint64, qint64>> Database::appRuns(qint64 from, qint64 to) const
+{
+    QVector<std::pair<qint64, qint64>> out;
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT started_at, last_seen FROM app_runs"
+                             " WHERE started_at < :to AND last_seen > :from ORDER BY started_at"));
+    q.bindValue(QStringLiteral(":from"), from);
+    q.bindValue(QStringLiteral(":to"), to);
+    if (q.exec())
+        while (q.next())
+            out.append({q.value(0).toLongLong(), q.value(1).toLongLong()});
+    return out;
 }
 
 qint64 Database::addHost(const HostRecord &rec)
@@ -353,7 +522,8 @@ bool Database::setChannelNameOverride(qint64 hostId, int channel, const QString 
 {
     QSqlQuery q(db());
     if (name.trimmed().isEmpty()) {
-        q.prepare(QStringLiteral("DELETE FROM channels WHERE host_id = :h AND idx = :i"));
+        // Keep the row: it also holds the channel's supported event types.
+        q.prepare(QStringLiteral("UPDATE channels SET name = '' WHERE host_id = :h AND idx = :i"));
     } else {
         q.prepare(QStringLiteral("INSERT INTO channels (host_id, idx, name) VALUES (:h, :i, :n)"
                                  " ON CONFLICT(host_id, idx) DO UPDATE SET name = excluded.name"));
@@ -362,6 +532,33 @@ bool Database::setChannelNameOverride(qint64 hostId, int channel, const QString 
     q.bindValue(QStringLiteral(":h"), hostId);
     q.bindValue(QStringLiteral(":i"), channel);
     return q.exec();
+}
+
+QHash<int, QStringList> Database::channelEventTypes(qint64 hostId) const
+{
+    QHash<int, QStringList> out;
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT idx, event_types FROM channels WHERE host_id = :h AND event_types <> ''"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    if (q.exec())
+        while (q.next())
+            out.insert(q.value(0).toInt(), q.value(1).toString().split(QLatin1Char(',')));
+    return out;
+}
+
+bool Database::setChannelEventTypes(qint64 hostId, int channel, const QStringList &types)
+{
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("INSERT INTO channels (host_id, idx, event_types) VALUES (:h, :i, :t)"
+                             " ON CONFLICT(host_id, idx) DO UPDATE SET event_types = excluded.event_types"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":i"), channel);
+    q.bindValue(QStringLiteral(":t"), types.join(QLatin1Char(',')));
+    if (!q.exec()) {
+        m_lastError = q.lastError().text();
+        return false;
+    }
+    return true;
 }
 
 } // namespace rl

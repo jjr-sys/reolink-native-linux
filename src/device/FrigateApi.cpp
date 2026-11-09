@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <QDateTime>
 #include <QHash>
+#include <QSet>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -42,6 +43,35 @@ QStringList parseCameraNames(const Json &config)
             continue;
         out.append(QString::fromStdString(it.key()));
     }
+    return out;
+}
+
+QStringList cameraEventTypes(const Json &config, const QString &camera)
+{
+    if (!config.is_object() || !config.contains("cameras") || !config["cameras"].is_object())
+        return {};
+    const Json &cams = config["cameras"];
+    const std::string key = camera.toStdString();
+    if (!cams.contains(key))
+        return {};
+    QSet<QString> found;
+    const Json &cam = cams[key];
+    const Json *track = nullptr;
+    if (cam.is_object() && cam.contains("objects") && cam["objects"].is_object()
+        && cam["objects"].contains("track") && cam["objects"]["track"].is_array())
+        track = &cam["objects"]["track"];
+    if (track) {
+        for (const Json &label : *track)
+            if (label.is_string())
+                found.insert(typeForLabel(QString::fromStdString(label.get<std::string>())));
+    } else {
+        found.insert(QStringLiteral("person"));
+    }
+    QStringList out;
+    for (const char *t : {"person", "vehicle", "pet"})
+        if (found.contains(QLatin1String(t)))
+            out << QString::fromLatin1(t);
+    out << QStringLiteral("status");
     return out;
 }
 

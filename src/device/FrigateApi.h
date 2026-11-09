@@ -22,6 +22,10 @@ struct Event {
 
 // Enabled cameras in /api/config. go2rtc-only streams are not cameras and are ignored.
 QStringList parseCameraNames(const Json &config);
+// The event types one camera can report: its objects.track labels as types ("person",
+// "vehicle", "pet"; Frigate's default track list is just person), then "status". Empty
+// for a camera not in the config. Frigate raises no motion or visitor events.
+QStringList cameraEventTypes(const Json &config, const QString &camera);
 // The go2rtc stream to play when a camera is shown in HD: "<camera>_main" when the config's
 // go2rtc section defines one (the usual way to publish a camera's full-resolution stream
 // next to the one Frigate itself uses, often the sub stream), else empty = the camera's own.

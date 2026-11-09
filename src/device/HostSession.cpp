@@ -361,6 +361,30 @@ Validation validateReolinkHost(ReolinkTransport &http, const HostRecord &rec,
             v.channels.append(cr);
         }
     }
+
+    // Supported event types: one GetAiState per camera for its `support` flags (read
+    // once here, since Baichuan push replaces the state polls), else GetAbility's.
+    Json aiCmds = Json::array();
+    QVector<int> aiChannels;
+    for (const ChannelResult &cr : v.channels)
+        if (cr.online) {
+            aiCmds.push_back(api::command(QStringLiteral("GetAiState"), Json{{"channel", cr.channel}}));
+            aiChannels.append(cr.channel);
+        }
+    // A failed request leaves the types unread, so ones kept from an earlier launch stand.
+    QHash<int, api::DetectionState> aiByChannel;
+    bool aiAnswered = false;
+    if (!aiChannels.isEmpty()) {
+        const api::BatchResult b3 = http.call(aiCmds);
+        aiAnswered = b3.transportOk;
+        if (b3.transportOk)
+            for (int i = 0; i < b3.results.size() && i < aiChannels.size(); ++i) // request order
+                if (b3.results[i].ok)
+                    aiByChannel.insert(aiChannels[i], api::parseAiState(b3.results[i].value));
+    }
+    for (ChannelResult &cr : v.channels)
+        if (cr.online && aiAnswered)
+            cr.eventTypes = api::supportedEventTypes(cr.caps, aiByChannel.value(cr.channel));
     return v;
 }
 

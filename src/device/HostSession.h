@@ -113,6 +113,7 @@ struct ChannelResult {
     QString uid;
     api::ChannelCaps caps;
     QString mainRestream; // Frigate: go2rtc stream for HD; empty = the camera's own
+    QStringList eventTypes; // the event types it can report; empty = not read
 };
 
 // Outcome of a worker-thread validation, applied back on the GUI thread.

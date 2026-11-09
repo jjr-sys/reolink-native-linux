@@ -321,7 +321,35 @@ DetectionState parseAiState(const Json &value)
     d.person = alarm("people");
     d.vehicle = alarm("vehicle");
     d.pet = alarm("dog_cat");
+    auto support = [&](const char *key, bool *known) {
+        const Json obj = jsonObj(value, key);
+        if (!obj.is_object() || !obj.contains("support"))
+            return false;
+        *known = true;
+        return jsonInt(obj, "support", 0) != 0;
+    };
+    d.supportsPerson = support("people", &d.supportKnown);
+    d.supportsVehicle = support("vehicle", &d.supportKnown);
+    d.supportsPet = support("dog_cat", &d.supportKnown);
     return d;
+}
+
+QStringList supportedEventTypes(const ChannelCaps &caps, const DetectionState &aiState)
+{
+    const bool person = aiState.supportKnown ? aiState.supportsPerson : caps.aiPeople;
+    const bool vehicle = aiState.supportKnown ? aiState.supportsVehicle : caps.aiVehicle;
+    const bool pet = aiState.supportKnown ? aiState.supportsPet : caps.aiDogCat;
+    QStringList out;
+    if (person)
+        out << QStringLiteral("person");
+    if (vehicle)
+        out << QStringLiteral("vehicle");
+    if (pet)
+        out << QStringLiteral("pet");
+    if (caps.doorbell)
+        out << QStringLiteral("visitor");
+    out << QStringLiteral("motion") << QStringLiteral("status");
+    return out;
 }
 
 BatteryInfo parseBatteryInfo(const Json &value)

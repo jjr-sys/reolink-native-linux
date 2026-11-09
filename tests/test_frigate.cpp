@@ -55,6 +55,21 @@ private slots:
         QVERIFY(!names.contains("old"));
         QVERIFY(!names.contains("mulga-nvr_0")); // go2rtc-only streams are not cameras
     }
+    // /api/config lists each camera's objects.track; the Events page offers those types
+    // (plus Status). Frigate raises no Motion or Visitor events.
+    void cameraEventTypes_fromObjectsTrack()
+    {
+        const Json cfg = J("{ 'cameras': {"
+                           " 'yard': {'objects': {'track': ['person', 'car', 'truck', 'dog', 'bird']}},"
+                           " 'gate': {'objects': {'track': ['person']}},"
+                           " 'bare': {} } }");
+        QCOMPARE(cameraEventTypes(cfg, "yard"), QStringList({"person", "vehicle", "pet", "status"}));
+        QCOMPARE(cameraEventTypes(cfg, "gate"), QStringList({"person", "status"}));
+        // No track list: Frigate's default is person.
+        QCOMPARE(cameraEventTypes(cfg, "bare"), QStringList({"person", "status"}));
+        // A camera not in the config raises nothing.
+        QVERIFY(cameraEventTypes(cfg, "missing").isEmpty());
+    }
     void mainRestream_onlyWhenGo2rtcPublishesIt()
     {
         const Json cfg = J("{ 'cameras': {'kitchen': {}, 'bosch_camera': {}}, 'go2rtc': {'streams': {'kitchen': ['rtsp://sub'], 'kitchen_main': ['rtsp://main'], 'bosch_camera': ['rtsp://y']}} }");

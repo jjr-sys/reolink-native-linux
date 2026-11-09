@@ -258,7 +258,7 @@ watermark, poll/socket dedup in both orders, history window).
 - Reolink poll with push live on a single-channel host still queries states, as before
   (the poll is that camera's health check).
 - Rest of `EventManager` (532 lines, no test): its other rules are persistence concerns
-  (retention 7 days / 10,000 per property, notification gating by `pushEnabledFor`,
+  (retention: motion 24 h, the rest 7 days under 25,000 per recorder, notification gating by `pushEnabledFor`,
   thumbnail capture) and do not duplicate the detection rules, so they were not moved.
   The one duplicate (burst gate and history window) is shared as above. A table test for
   retention and the history de-duplication needs an in-memory `Database`; left.

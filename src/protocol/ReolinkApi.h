@@ -156,12 +156,22 @@ struct DetectionState {
     bool vehicle = false;
     bool pet = false;
     bool visitor = false; // a doorbell press; only Baichuan push reports it
+    // GetAiState's `support` flags: which AI types the channel can detect at all.
+    // supportKnown is false when no object answered (fall back to GetAbility).
+    bool supportKnown = false;
+    bool supportsPerson = false;
+    bool supportsVehicle = false;
+    bool supportsPet = false;
 };
 // The detections that began between two states, as detectionEvent types: "person",
 // "vehicle", "pet", "visitor", and "motion" only while no AI type is (or was) active.
 QStringList risingDetections(const DetectionState &prev, const DetectionState &now);
 bool parseMdState(const Json &value);              // GetMdState -> motion bool
 DetectionState parseAiState(const Json &value);    // GetAiState -> per-type flags
+// The event types a Reolink channel can report, in display order: "person", "vehicle",
+// "pet" (GetAiState `support`, else GetAbility's aiPeople/aiVehicle/aiDogCat), "visitor"
+// (a doorbell), then always "motion" and "status".
+QStringList supportedEventTypes(const ChannelCaps &caps, const DetectionState &aiState);
 
 // ---- Battery (GetBatteryInfo, battery/solar cameras) ----------------------
 struct BatteryInfo {

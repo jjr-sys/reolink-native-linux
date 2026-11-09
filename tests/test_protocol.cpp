@@ -296,6 +296,53 @@ private slots:
         QVERIFY(d.pet);
     }
 
+    // GetAiState carries each type's `support` flag beside its alarm state; the Events
+    // page offers only the types a camera supports.
+    void aiStateKeepsSupport()
+    {
+        auto parse = [](const char *s) {
+            const QByteArray b(s);
+            return Json::parse(b.constData(), b.constData() + b.size(), nullptr, false);
+        };
+        const api::DetectionState d = api::parseAiState(parse(
+            R"({"people":{"alarm_state":0,"support":1},"vehicle":{"alarm_state":0,"support":0},)"
+            R"("dog_cat":{"alarm_state":0,"support":1}})"));
+        QVERIFY(d.supportKnown);
+        QVERIFY(d.supportsPerson);
+        QVERIFY(!d.supportsVehicle);
+        QVERIFY(d.supportsPet);
+
+        const api::DetectionState none = api::parseAiState(parse(R"({})"));
+        QVERIFY(!none.supportKnown); // no object answered: fall back to GetAbility
+    }
+
+    void supportedEventTypes()
+    {
+        api::ChannelCaps caps;
+        api::DetectionState ai;
+        // Nothing known: a Reolink camera still raises motion and status.
+        QCOMPARE(api::supportedEventTypes(caps, ai),
+                 QStringList({QStringLiteral("motion"), QStringLiteral("status")}));
+
+        // GetAbility fallback when GetAiState did not say.
+        caps.aiPeople = true;
+        caps.aiVehicle = true;
+        QCOMPARE(api::supportedEventTypes(caps, ai),
+                 QStringList({"person", "vehicle", "motion", "status"}));
+
+        // GetAiState `support` wins over GetAbility.
+        ai.supportKnown = true;
+        ai.supportsPerson = true;
+        ai.supportsPet = true;
+        QCOMPARE(api::supportedEventTypes(caps, ai),
+                 QStringList({"person", "pet", "motion", "status"}));
+
+        // A doorbell adds Visitor.
+        caps.doorbell = true;
+        QCOMPARE(api::supportedEventTypes(caps, ai),
+                 QStringList({"person", "pet", "visitor", "motion", "status"}));
+    }
+
     void batteryInfo()
     {
         auto parse = [](const char *s) {

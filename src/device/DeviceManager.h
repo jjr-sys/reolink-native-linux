@@ -5,6 +5,7 @@
 #include "CameraCommands.h"
 #include "DeviceKind.h"
 #include "Detections.h"
+#include "EventHistory.h"
 #include "HostSession.h"
 #include "DownloadSource.h"
 #include "protocol/ReolinkApi.h"
@@ -202,6 +203,10 @@ public:
     // The property/site name a host was added under (e.g. "Lascelles"), or empty
     // if hostId is unknown. Distinct from a camera's own display name.
     Q_INVOKABLE QString hostName(qint64 hostId) const;
+    // The event types this camera can report, in display order ("person", "vehicle",
+    // "pet", "visitor", "motion", "status"): as read at this launch's validation, else as
+    // kept from an earlier one. Empty for a bare stream, which raises no events.
+    Q_INVOKABLE QStringList eventTypesFor(qint64 hostId, int channel) const;
     // Distinct property/site names in list order, for a property filter.
     Q_INVOKABLE QStringList propertyNames() const;
     // Channel -> raw config-key camera name for a host (e.g. Frigate's "bosch_camera",
@@ -341,8 +346,10 @@ signals:
     // A quiet event-thumbnail capture finished (path is a local JPEG).
     void eventThumbnailReady(qint64 eventId, const QString &path);
     // A camera (channel >= 0) or a whole host (channel == -1) changed
-    // connectivity. name is the camera/host display name.
-    void connectivityChanged(qint64 hostId, int channel, const QString &name, bool online);
+    // connectivity. name is the camera/host display name. For a host, `changed` lists
+    // the cameras that actually flipped with it (empty for a single camera).
+    void connectivityChanged(qint64 hostId, int channel, const QString &name, bool online,
+                             const QVector<rl::device::CameraRef> &changed);
 
 private slots:
     void pollDetections();
@@ -385,6 +392,7 @@ private:
         bool validated = false;                     // channel list came from the HTTP API
         bool degraded = false;                      // channel list came from Baichuan only
         api::ChannelCaps caps;                      // this channel's capabilities
+        QStringList eventTypes;                     // event types it reports (validation)
         bool talk = false;                          // channel supports two-way audio
         bool isAdmin = false;                       // logged-in user may edit settings
         api::BatteryInfo battery;                   // battery/solar state (if any)

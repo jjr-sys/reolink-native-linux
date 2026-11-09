@@ -6,6 +6,9 @@
 #include <QStringList>
 #include <QVector>
 
+#include <optional>
+#include <utility>
+
 namespace rl {
 
 struct HostRecord {
@@ -24,7 +27,8 @@ struct EventRecord {
     qint64 hostId = -1;
     int channel = 0;
     qint64 timestamp = 0; // Unix seconds (UTC)
-    QString type;         // "motion" | "person" | "vehicle" | "pet" | "visitor"
+    QString type;         // "motion" | "person" | "vehicle" | "pet" | "visitor" |
+                          // "online" | "offline" (Status)
     QString camera;       // device name at event time
     QString thumbnail;    // optional JPEG path
 };
@@ -53,21 +57,49 @@ public:
     QHash<int, QString> channelNameOverrides(qint64 hostId) const;
     bool setChannelNameOverride(qint64 hostId, int channel, const QString &name);
 
-    // Events (motion / AI detections), newest first.
+    // Supported event types per channel ("person", ..., "motion", "status"), kept so a
+    // camera offline at launch still knows what it can report. Separate from the name
+    // override: clearing one keeps the other.
+    QHash<int, QStringList> channelEventTypes(qint64 hostId) const;
+    bool setChannelEventTypes(qint64 hostId, int channel, const QStringList &types);
+
+    // Events (motion / AI detections / Status), newest first.
     qint64 addEvent(const EventRecord &rec);
-    QVector<EventRecord> recentEvents(int limit = 500) const;
+    // The newest `limit` events, optionally narrowed to one type, some hosts (empty = all)
+    // and one camera name.
+    QVector<EventRecord> recentEvents(int limit = 500, const QString &type = {},
+                                      const QList<qint64> &hostIds = {},
+                                      const QString &camera = {}) const;
+    // One camera's events in [from, to), newest first; `types` empty = every type.
+    QVector<EventRecord> eventsBetween(qint64 hostId, int channel, qint64 from, qint64 to,
+                                       const QStringList &types = {}) const;
+    bool hostHasEvents(qint64 hostId) const;
+    // The event on this camera nearest `ts`, if one is less than `windowSecs` away.
+    std::optional<EventRecord> eventNear(qint64 hostId, int channel, qint64 ts,
+                                         qint64 windowSecs) const;
+    // The camera names a host's events are filed under, and renaming them in place.
+    QStringList eventCameras(qint64 hostId) const;
+    bool renameEventCamera(qint64 hostId, const QString &from, const QString &to);
     bool clearEvents();
-    // Age-based retention: delete events older than `maxAgeSecs`, returning the
-    // (non-empty) thumbnail paths of the rows removed so the caller can delete
-    // those files too.
-    QStringList purgeEventsOlderThan(qint64 maxAgeSecs);
-    // Safety-valve retention: for one host, delete all but the newest `keep`
-    // events, returning the thumbnail paths of the rows removed. Guards against
-    // a single flooding camera/host growing the store without bound between
-    // age-based purges.
+    // Age-based retention at `now`: motion older than `motionKeepSecs`, everything else
+    // older than `otherKeepSecs`. Returns the (non-empty) thumbnail paths of the removed
+    // rows so the caller can delete those files too.
+    QStringList purgeExpiredEvents(qint64 now, qint64 motionKeepSecs, qint64 otherKeepSecs);
+    // The per-recorder cap counts every event except motion.
+    int countCappedEvents(qint64 hostId) const;
+    // Deletes all but the newest `keep` capped (non-motion) events of one host, returning
+    // the thumbnail paths of the removed rows. Motion is left to the age purge.
     QStringList trimHostEvents(qint64 hostId, int keep);
+    // False when the event no longer exists (trimmed while its thumbnail was on the way).
     bool setEventThumbnail(qint64 id, const QString &path);
     bool setEventCamera(qint64 id, const QString &camera);
+
+    // App runs: one row per launch, its last_seen stamped by a heartbeat, so the time the
+    // app was not running (and so stored no events) can be shown.
+    qint64 beginAppRun(qint64 now);
+    bool touchAppRun(qint64 id, qint64 now);
+    // (started, last seen) of the runs overlapping [from, to), oldest first.
+    QVector<std::pair<qint64, qint64>> appRuns(qint64 from, qint64 to) const;
 
 private:
     bool migrate();

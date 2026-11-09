@@ -398,10 +398,9 @@ Item {
         }
 
         // ---- History depth ----
-        // The inbox only ever holds events seen live since it was last connected,
-        // capped at 100 total across every camera on every property, so a busy
-        // camera can push a quiet one's older events out. This says plainly how
-        // far back the current view actually reaches.
+        // The inbox holds events seen live while the app runs: motion for 24 hours,
+        // the rest for 7 days. The list shows the newest listLimit of those that pass
+        // the filters. This says plainly how far back the current view reaches.
         Text {
             Layout.fillWidth: true
             Layout.topMargin: 2
@@ -415,8 +414,10 @@ Item {
                 if (oldest <= 0)
                     return ""
                 const when = Qt.formatDateTime(new Date(oldest * 1000), "MMM d, yyyy hh:mm")
+                if (Events.count >= Events.listLimit)
+                    return qsTr("Showing the newest %1, back to %2").arg(Events.listLimit).arg(when)
                 return Events.historyTrimmed
-                       ? qsTr("Showing back to %1 — older events were trimmed to keep the shared 100-event limit").arg(when)
+                       ? qsTr("Showing back to %1 — motion is kept for 24 hours, other events for 7 days").arg(when)
                        : qsTr("Showing the complete history, back to %1").arg(when)
             }
         }

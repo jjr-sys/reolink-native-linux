@@ -2,6 +2,7 @@
 
 #include "core/Database.h"
 #include "core/Notifier.h"
+#include "device/EventHistory.h"
 #include "device/FrigateApi.h"
 
 #include <QAbstractListModel>
@@ -16,7 +17,9 @@ namespace rl {
 class DeviceManager;
 
 // The event inbox: persists detection events (from DeviceManager's poller) and
-// exposes them newest-first to QML, with a type filter and an unread counter.
+// exposes the newest of them to QML, with type/recorder/camera filters and an unread
+// counter. The store keeps its own history (motion 24 h; everything else 7 days under a
+// per-recorder cap, see EventHistory.h); the list and the per-day lookups query it.
 class EventManager : public QAbstractListModel
 {
     Q_OBJECT
@@ -29,9 +32,11 @@ class EventManager : public QAbstractListModel
     Q_PROPERTY(QString propertyFilter READ propertyFilter WRITE setPropertyFilter NOTIFY propertyFilterChanged)
     // Oldest event's Unix timestamp within the current filter (0 = view is empty).
     Q_PROPERTY(qint64 oldestVisibleTimestamp READ oldestVisibleTimestamp NOTIFY countChanged)
-    // True once the retention window/ceiling has trimmed something at least once,
+    // True once the retention window/cap has trimmed something at least once,
     // meaning some history further back existed but aged out or got capped.
     Q_PROPERTY(bool historyTrimmed READ historyTrimmed NOTIFY countChanged)
+    // How many of the newest matching events the list shows.
+    Q_PROPERTY(int listLimit READ listLimit CONSTANT)
 
 public:
     enum Role {
@@ -61,6 +66,8 @@ public:
     void setPropertyFilter(const QString &property);
     qint64 oldestVisibleTimestamp() const;
     bool historyTrimmed() const { return m_historyTrimmed; }
+    static constexpr int kListLimit = 500;
+    int listLimit() const { return kListLimit; }
 
     bool desktopNotifications() const { return m_desktopNotifications; }
     void setDesktopNotifications(bool on);
@@ -69,6 +76,9 @@ public:
     // Seconds-into-day of each detection event for this camera on the given day
     // (dayStart = local midnight epoch). Feeds the playback timeline's markers.
     Q_INVOKABLE QVariantList eventTimesFor(qint64 hostId, int channel, qint64 dayStart) const;
+    // The spans of the local day starting at dayStart when the app was not running (and
+    // so stored no events), as {from, to} epoch maps.
+    Q_INVOKABLE QVariantList notRunningSpans(qint64 dayStart) const;
     Q_INVOKABLE void clear();
     // Backfills the inbox from a Frigate server's own event history (unlike
     // onDetection, which only ever files what was seen live since the app was last
@@ -92,21 +102,28 @@ signals:
 private slots:
     void onDetection(qint64 hostId, int channel, const QString &type, const QString &camera);
     void onThumbnailReady(qint64 eventId, const QString &path);
-    void onConnectivity(qint64 hostId, int channel, const QString &name, bool online);
+    void onConnectivity(qint64 hostId, int channel, const QString &name, bool online,
+                        const QVector<rl::device::CameraRef> &changed);
 
 private:
     void reload();
     bool matches(const EventRecord &e) const;
+    // Files one event: stores it, puts it at the top of the list when it passes the
+    // filter, and keeps its recorder under the cap.
+    void fileEvent(EventRecord &rec);
+    // The per-recorder cap: counts capped (non-motion) events in memory and trims the
+    // recorder only once it goes over.
+    void enforceCap(qint64 hostId, const QString &type);
+    void dropThumbnails(const QStringList &paths);
     // One-time cleanup: events stored under a Frigate camera's raw config key
     // ("bosch_camera") before the display-name fix shipped are rewritten in
-    // place, in memory and in the database, to the pretty form ("Bosch Camera")
+    // place in the database to the pretty form ("Bosch Camera")
     // so they line up with the filter dropdown and the property/camera shown
     // on the row. No-op once everything is already in the pretty form.
     void normalizeStoredCameraNames();
-    // Age-based purge (every property, whole store) plus a per-host safety-valve
-    // trim for `hostId` (0 = skip). Deletes orphaned thumbnail files and reloads
-    // the model if anything was actually removed.
-    void enforceRetention(qint64 hostId = 0);
+    // Age-based purge of the whole store (motion 24 h, the rest 7 days). Deletes the
+    // removed rows' thumbnail files and reloads the list if anything went.
+    void enforceRetention();
     // Runs on the GUI thread once syncFrigateHistory()'s worker thread has the raw
     // events back: applies the same burst-gate as live polling, skips anything
     // already covering that moment, and files the rest with their real timestamps.
@@ -128,10 +145,12 @@ private:
     DeviceManager *m_devices;
     bool m_desktopNotifications = true;
     Notifier m_notifier;             // desktop notifications for new detections
-    QTimer m_retentionTimer;         // periodic age-based purge, in case nothing new arrives
+    QTimer m_retentionTimer;         // hourly age-based purge
+    QTimer m_runTimer;               // stamps this app run's last_seen
+    qint64 m_runId = -1;             // this launch's app_runs row
     QFutureSynchronizer<void> m_pending; // drains in-flight history syncs at teardown
-    QVector<EventRecord> m_all;      // newest first
-    QVector<int> m_view;             // indices into m_all passing the filter
+    QVector<EventRecord> m_rows;     // the list: newest first, passing the filter
+    QHash<qint64, int> m_cappedCount; // recorder -> capped events, counted lazily
     QString m_filter;                // "" = all, else a type
     QString m_cameraFilter;          // "" = all cameras, else a camera name
     QString m_propertyFilter;        // "" = all properties, else a host/site name

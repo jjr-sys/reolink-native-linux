@@ -186,14 +186,19 @@ void DeviceManager::applyConnectivity(qint64 hostId, bool transportOk,
             }
         }
     } else if (action == PollAction::Recovered) {
+        // Cameras this same poll reports down stay down (the channel loop below would
+        // only flip them back, filing a false online/offline pair).
+        QVector<device::CameraRef> changed;
         for (int i = 0; i < m_entries.size(); ++i) {
-            if (m_entries.at(i).rec.id != hostId || m_entries.at(i).online)
+            Entry &e = m_entries[i];
+            if (e.rec.id != hostId || e.online || !chanOnline.value(e.channel, true))
                 continue;
-            m_entries[i].online = true;
-            m_entries[i].status = tr("online");
+            e.online = true;
+            e.status = tr("online");
+            changed.append({e.channel, displayName(e.chanName, e.rec.kind)});
             emit dataChanged(index(i), index(i));
         }
-        emit connectivityChanged(hostId, -1, hostName, true);
+        emit connectivityChanged(hostId, -1, hostName, true, changed);
     }
 
     // Channel-level (NVRs): flip individual cameras that dropped or returned.
@@ -207,7 +212,7 @@ void DeviceManager::applyConnectivity(qint64 hostId, bool transportOk,
                 e.status = it.value() ? tr("online") : tr("offline");
                 emit dataChanged(index(i), index(i));
                 emit connectivityChanged(hostId, e.channel, displayName(e.chanName, e.rec.kind),
-                                         it.value());
+                                         it.value(), {});
             }
             break;
         }
@@ -216,14 +221,17 @@ void DeviceManager::applyConnectivity(qint64 hostId, bool transportOk,
 
 void DeviceManager::markHostUnreachable(qint64 hostId, const QString &hostName)
 {
+    QVector<device::CameraRef> changed;
     for (int i = 0; i < m_entries.size(); ++i) {
-        if (m_entries.at(i).rec.id != hostId || !m_entries.at(i).online)
+        Entry &e = m_entries[i];
+        if (e.rec.id != hostId || !e.online)
             continue;
-        m_entries[i].online = false;
-        m_entries[i].status = tr("unreachable");
+        e.online = false;
+        e.status = tr("unreachable");
+        changed.append({e.channel, displayName(e.chanName, e.rec.kind)});
         emit dataChanged(index(i), index(i));
     }
-    emit connectivityChanged(hostId, -1, hostName, false);
+    emit connectivityChanged(hostId, -1, hostName, false, changed);
 }
 
 // The HTTP API failed several polls in a row. NVRs can wedge that API while still serving
@@ -899,6 +907,12 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
     QVector<Entry> fresh;
     fresh.reserve(v.channels.size());
     const QHash<int, QString> chosenNames = m_db->channelNameOverrides(rec.id);
+    // Supported event types: kept when this validation read them, so a camera that is
+    // offline at a later launch still knows them.
+    if (!v.degraded)
+        for (const ChannelResult &ch : v.channels)
+            if (ch.online && !ch.eventTypes.isEmpty())
+                m_db->setChannelEventTypes(rec.id, ch.channel, ch.eventTypes);
     for (const ChannelResult &ch : v.channels) {
         Entry e;
         e.rec = rec;
@@ -919,6 +933,7 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
         e.mainRestream = ch.mainRestream;
         e.caps = ch.caps;
         e.talk = ch.caps.talk;
+        e.eventTypes = ch.eventTypes;
         e.isAdmin = v.isAdmin;
         e.password = v.password;
         e.restreamUser = v.restreamUser;
@@ -979,6 +994,7 @@ DeviceManager::Validation DeviceManager::validateFrigate(const HostRecord &rec,
         cr.online = true;
         cr.codec = QStringLiteral("h264");
         cr.mainRestream = frigate::mainRestream(cfg, names.at(i));
+        cr.eventTypes = frigate::cameraEventTypes(cfg, names.at(i));
         v.channels.append(cr);
     }
     return v;
@@ -2059,6 +2075,19 @@ QString DeviceManager::hostName(qint64 hostId) const
         if (e.rec.id == hostId)
             return e.rec.name;
     return {};
+}
+
+QStringList DeviceManager::eventTypesFor(qint64 hostId, int channel) const
+{
+    for (const Entry &e : m_entries) {
+        if (e.rec.id != hostId)
+            continue;
+        if (e.kindCaps().detections == device::DetectionSource::None)
+            return {}; // a bare stream raises nothing
+        if (e.channel == channel && !e.eventTypes.isEmpty())
+            return e.eventTypes;
+    }
+    return m_db->channelEventTypes(hostId).value(channel);
 }
 
 QStringList DeviceManager::propertyNames() const

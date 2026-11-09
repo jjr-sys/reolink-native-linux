@@ -8,6 +8,21 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ## [Unreleased]
 
+### Changed
+
+- **Events keep a full week.** Motion is now kept for 24 hours and no longer counts
+  toward the per-recorder limit, which rises from 10,000 to 25,000. Person, Vehicle,
+  Pet, Visitor and Status events stay for 7 days on every Site, even the busy ones.
+  On the first launch, motion older than a day is cleared with its thumbnails.
+- **When a whole recorder or Frigate server goes offline, each of its cameras gets
+  its own Status event**, rather than one event under the recorder's name. You still
+  get one desktop notification.
+- The Events list shows the newest 500 matching events, read straight from the
+  store, rather than loading up to 50,000 into memory. The Playback timeline's
+  event marks come from the store the same way.
+- Groundwork for the Events page on Site tabs: the app now notes which event types
+  each camera supports, and when it was running.
+
 ### Fixed
 
 - **Clip export and Download range work again on NVRs.** Firmware v3.6.5.597,
