@@ -27,7 +27,7 @@ Item {
     onMaximizedKeyChanged: {
         if (maximizedKey !== "" || streamingPanes === 0)
             return;
-        selection.keys.forEach(k => { var p = paneOf(k); if (!p || !p.streaming) _resume[k] = true; });
+        selection.keys.forEach(k => { _resume[k] = "ifStopped"; });
         Qt.callLater(flushResume);
     }
     property bool _autoplayed: false // test hook guard
@@ -255,7 +255,8 @@ Item {
         }
     }
     // Panes waiting to start at the playhead: their day isn't known yet, or their pane
-    // isn't on screen yet.
+    // isn't on screen yet. "ifStopped": only if it isn't already opening or playing (a
+    // pane hidden for a moment by a re-pack or a maximise).
     property var _resume: ({})
     function flushResume() {
         for (var k in _resume) {
@@ -263,7 +264,10 @@ Item {
             var p = paneOf(k);
             if (!p || !p.visible || segsByKey[k] === undefined)
                 continue;
+            var onlyIfStopped = _resume[k] === "ifStopped";
             delete _resume[k];
+            if (onlyIfStopped && p.busy)
+                continue;
             p.playAtSecs(playheadSecs, epochAt(playheadSecs));
         }
     }
@@ -437,7 +441,7 @@ Item {
     // mosaic is rebuilt. Those playing start again at the playhead once shown.
     function rowsShifted() {
         if (streamingPanes > 0)
-            selection.keys.forEach(k => { _resume[k] = true; });
+            selection.keys.forEach(k => { if (!_resume[k]) _resume[k] = "ifStopped"; });
         scheduleMosaic();
         pruneTimer.restart();
     }

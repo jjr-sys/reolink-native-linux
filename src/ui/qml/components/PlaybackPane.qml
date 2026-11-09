@@ -31,7 +31,7 @@ Rectangle {
     property bool holding: false
     function freeze() { if (streaming) { holding = true; holdTimer.restart(); } }
     Timer { id: holdTimer; interval: 6000; onTriggered: root.holding = false }
-    onStreamingChanged: if (streaming) { holding = false; _align(); }
+    onStreamingChanged: if (streaming) { holding = false; Qt.callLater(_align); }
     property real speed: 1.0
     // Save the picture on screen as a JPEG named for this camera and the recorded
     // moment; returns the path, or "" if there is no picture yet.
@@ -63,18 +63,22 @@ Rectangle {
 
     readonly property bool hasSource: deviceRow >= 0
     readonly property bool streaming: player.state === StreamPlayer.Streaming
+    // Opening or playing: a resume must leave such a pane alone.
+    readonly property bool busy: player.state === StreamPlayer.Connecting || streaming
 
     // ---- No picture ---------------------------------------------------------
     // Recorders refuse streams over their budget silently: the stream stays connecting, or
     // "streams" without a frame. With footage at the playhead and no new frame for 8 s, the
     // pane says "No picture: retrying" and reopens at the playhead, again after 16 s, 32 s,
-    // then every 60 s, until a frame comes (the 8MP-plays-alone rule is not enforced; this
+    // then every 60 s, until a frame comes. A first picture gets 20 s: with several
+    // sessions starting together, an NVR takes 6 to 11 s to send one (the 8MP-plays-alone rule is not enforced; this
     // shows it failing).
     property bool noPicture: false
     property real _lastFrames: -1
     property int _stillTicks: 0
     property int _retries: 0
     readonly property var _retryTicks: [4, 8, 16, 30]   // 2 s ticks: 8, 16, 32, 60 s
+    readonly property var _firstTicks: [10, 10, 16, 30] // before a first picture: 20 s
     Timer {
         interval: 2000
         repeat: true
@@ -101,7 +105,8 @@ Rectangle {
                 root._stillTicks++;
             }
             root._lastFrames = f;
-            if (root._stillTicks >= root._retryTicks[Math.min(root._retries, 3)]) {
+            var ticks = player.state === StreamPlayer.Connecting ? root._firstTicks : root._retryTicks;
+            if (root._stillTicks >= ticks[Math.min(root._retries, 3)]) {
                 root.noPicture = true;
                 root._retries++;
                 root._stillTicks = 0;
@@ -180,33 +185,44 @@ Rectangle {
         _suppressResume = false;
         _openSec = sec;
         _openWall = Date.now();
+        catchUpTimer.stop();
+        catchUp = 1.0;
         return session.playAt(epoch, covered(sec));
     }
 
     // ---- Keeping in step with the playhead -------------------------------------
-    // Each recorder takes its own time to send a first picture, so panes asked for the
-    // same moment start at different wall-clock times, and the late ones lag the shared
-    // playhead by their delay. When a pane's first picture comes, it compares where it is
-    // with the playhead; more than `syncTolerance` seconds out, it reopens ahead by its own
-    // measured delay (or seeks in place to the playhead, when its session allows), twice
-    // at most per start.
-    property real syncTolerance: 0.8
+    // Each recorder takes its own time to send a first picture (5 to 7 s at Farm), so
+    // panes asked for the same moment start at different wall-clock times and the late
+    // ones lag the shared playhead. When a pane's first picture comes it compares itself
+    // with the playhead and, more than `syncTolerance` seconds out, plays a little faster
+    // (1.5x) or slower (0.7x) until level: no reopen, so no black gap. Only a pane more
+    // than 10 s out reopens at the playhead plus its own start delay. Adjusted after the
+    // first-picture change has finished, never inside it.
+    property real syncTolerance: 0.4
+    property real catchUp: 1.0          // multiplies `speed` while a pane catches up
     property real _openSec: 0
     property real _openWall: 0
     property int _syncTries: 0
+    Timer { id: catchUpTimer; onTriggered: root.catchUp = 1.0 }
     function _align() {
-        if (_syncTries >= 2 || !covered(playheadSecs))
+        if (!streaming || !covered(playheadSecs))
             return;
         var drift = _openSec - playheadSecs;       // + ahead of the playhead, - behind
         if (Math.abs(drift) <= syncTolerance)
             return;
-        _syncTries++;
-        var delay = (Date.now() - _openWall) / 1000 * speed;
-        var target = Math.min(86399, playheadSecs + delay);
-        if (_open(target, epochOf(target)) === PlaybackSession.SeekedInPlace) {
-            // A seek in place is near-instant: aim at the playhead itself.
-            _open(playheadSecs + 0.3, epochOf(playheadSecs + 0.3));
+        if (Math.abs(drift) > 10) {
+            if (_syncTries >= 1)
+                return;
+            _syncTries++;
+            var delay = (Date.now() - _openWall) / 1000 * speed;
+            var target = Math.min(86399, playheadSecs + delay);
+            _open(target, epochOf(target));
+            return;
         }
+        var rate = drift < 0 ? 1.5 : 0.7;
+        catchUp = rate;
+        catchUpTimer.interval = Math.round(Math.abs(drift) / (Math.abs(rate - 1) * Math.max(0.25, speed)) * 1000);
+        catchUpTimer.restart();
     }
 
     function stopPlayback() {
@@ -225,7 +241,7 @@ Rectangle {
         videoSink: video.videoSink
         retryOnError: true
         playback: true
-        speed: root.speed
+        speed: root.speed * root.catchUp
         // Off screen or not the chosen pane: no decode, no device held open.
         muted: root.audioMuted || !root.audioActive || !root.visible
     }
