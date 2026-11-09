@@ -109,12 +109,21 @@ class TestFrigateVod : public QObject
 
 private slots:
     void initTestCase() { frigate::installMediaAuth(); }
+    // Each test registers a login for its own server's port; drop it so a later server that
+    // happens to get the same port starts with no login.
+    void cleanup()
+    {
+        if (m_port)
+            frigate::setCredentials(QStringLiteral("127.0.0.1"), m_port, {}, {});
+        m_port = 0;
+    }
 
     // The playlist and the segment it lists both carry the Frigate session cookie.
     void playlistAndSegmentsCarryTheSessionCookie()
     {
         FakeFrigate f;
         QVERIFY(f.server.isListening());
+        m_port = f.port();
         frigate::setCredentials(QStringLiteral("127.0.0.1"), f.port(), QStringLiteral("u"),
                                 QStringLiteral("p"));
 
@@ -135,6 +144,7 @@ private slots:
         FakeFrigate f;
         f.issue = "old";
         f.accept = "new";
+        m_port = f.port();
         frigate::setCredentials(QStringLiteral("127.0.0.1"), f.port(), QStringLiteral("u"),
                                 QStringLiteral("p"));
 
@@ -149,6 +159,24 @@ private slots:
         player.stop();
         QCOMPARE(f.logins, 2);
         QCOMPARE(f.segmentCookies.first(), QByteArray("frigate_token=new"));
+    }
+
+    // A cached session is reused: a second open does not sign in again.
+    void cachedSessionIsReused()
+    {
+        FakeFrigate f;
+        m_port = f.port();
+        frigate::setCredentials(QStringLiteral("127.0.0.1"), f.port(), QStringLiteral("u"),
+                                QStringLiteral("p"));
+        for (int i = 0; i < 2; ++i) {
+            StreamPlayer player;
+            player.setSource(vodUrl(f.port()));
+            player.start();
+            QTRY_VERIFY_WITH_TIMEOUT(f.segmentCookies.size() > i, 15000);
+            player.stop();
+        }
+        QCOMPARE(f.logins, 1);
+        QCOMPARE(f.segmentCookies.last(), QByteArray("frigate_token=abc"));
     }
 
     // A host with no Frigate login (a Reolink NVR, port 5000 Frigate) sends no cookie and
@@ -166,6 +194,9 @@ private slots:
         QCOMPARE(f.logins, 0);
         QVERIFY(f.playlistCookies.first().isEmpty());
     }
+
+private:
+    int m_port = 0;
 };
 
 QTEST_MAIN(TestFrigateVod)

@@ -16,6 +16,6 @@ using Refused = std::function<void(const QUrl &url)>;
 
 void install(Provider provider, Refused refused);
 QByteArray headersFor(const QUrl &url);
-void refused(const QUrl &url);
+void forgetHeadersFor(const QUrl &url);
 
 } // namespace rl::httpauth

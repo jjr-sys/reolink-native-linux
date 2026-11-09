@@ -611,7 +611,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     av_dict_free(&opts);
     if (rc < 0) {
         if (rc == AVERROR_HTTP_UNAUTHORIZED && !authHeaders.isEmpty())
-            httpauth::refused(QUrl(source)); // a stale session: the retry signs in afresh
+            httpauth::forgetHeadersFor(QUrl(source)); // a stale session: the retry signs in afresh
         char buf[AV_ERROR_MAX_STRING_SIZE]{};
         av_strerror(rc, buf, sizeof(buf));
         // A recorder answering "not found" for a camera's stream means it has no video

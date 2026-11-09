@@ -452,30 +452,42 @@ void forgetSession(const QString &host, int port)
 }
 
 namespace {
-bool hasLogin(const QUrl &url)
+enum class LoginState { None, Cached, NeedsSignIn };
+// Whether `url`'s host has a Frigate login, and its unexpired session cookie if one is cached.
+LoginState loginState(const QUrl &url, QByteArray *cookie)
 {
     QMutexLocker lock(&authMutex());
     const auto it = authEntries().constFind(authKey(url));
-    return it != authEntries().cend() && !it->username.isEmpty() && !it->password.isEmpty();
+    if (it == authEntries().cend() || it->username.isEmpty() || it->password.isEmpty())
+        return LoginState::None;
+    if (!it->cookie.isEmpty() && it->expiresAt > QDateTime::currentDateTimeUtc()) {
+        *cookie = it->cookie;
+        return LoginState::Cached;
+    }
+    return LoginState::NeedsSignIn;
 }
+constexpr int kMediaLoginTimeoutMs = 8000; // as FrigateLive
 } // namespace
 
 void installMediaAuth()
 {
     httpauth::install(
         [](const QUrl &url) -> QByteArray {
-            if (!hasLogin(url))
-                return {}; // not a Frigate host with a login: no sign-in, no network
-            // Signing in uses QNetworkAccessManager, which wants a QThread; the player's
-            // worker is a std::thread, so sign in on a short-lived QThread (as FrigateLive).
             QByteArray cookie;
-            QThread *t = QThread::create([&cookie, url] {
-                QNetworkAccessManager nam;
-                cookie = sessionCookie(url, nam, 15000, nullptr);
-            });
-            t->start();
-            t->wait();
-            delete t;
+            const LoginState state = loginState(url, &cookie);
+            if (state == LoginState::None)
+                return {}; // not a Frigate host with a login: no sign-in, no network
+            if (state == LoginState::NeedsSignIn) {
+                // Signing in uses QNetworkAccessManager, which wants a QThread; the player's
+                // worker is a std::thread, so sign in on a short-lived QThread (as FrigateLive).
+                QThread *t = QThread::create([&cookie, url] {
+                    QNetworkAccessManager nam;
+                    cookie = sessionCookie(url, nam, kMediaLoginTimeoutMs, nullptr);
+                });
+                t->start();
+                t->wait();
+                delete t;
+            }
             return cookie.isEmpty() ? QByteArray() : "Cookie: " + cookie + "\r\n";
         },
         [](const QUrl &url) { clearSession(url); });

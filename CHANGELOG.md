@@ -41,7 +41,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
   recordings list signed in, but the player asked for the video without the
   Frigate session. The player now sends the session with the playlist and every
   piece of video it lists, and signs in again if the server has dropped it.
-  Detection clips and live view already signed in and are unchanged.
+  Detection clips and live view already signed in and are unchanged. Known gap: if
+  the server drops the session part-way through a long playback, that playback
+  stops rather than signing in again; reopening it signs in.
 - **Clip export and Download range work again on NVRs.** Firmware v3.6.5.597,
   which both RLN36 recorders installed by themselves, broke the HTTP download the
   app used: the NVR still named a clip but no longer served it. NVR downloads now

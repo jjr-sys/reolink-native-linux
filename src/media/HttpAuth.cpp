@@ -26,7 +26,7 @@ QByteArray headersFor(const QUrl &url)
     return p ? p(url) : QByteArray();
 }
 
-void refused(const QUrl &url)
+void forgetHeadersFor(const QUrl &url)
 {
     Refused r;
     {
