@@ -32,9 +32,9 @@ QStringList storedTypes(const QStringList &types)
 EventColumn::EventColumn(QObject *parent)
     : QAbstractListModel(parent)
 {
-    m_later.setSingleShot(true);
-    m_later.setInterval(300);
-    connect(&m_later, &QTimer::timeout, this, &EventColumn::refresh);
+    m_refreshSoon.setSingleShot(true);
+    m_refreshSoon.setInterval(300);
+    connect(&m_refreshSoon, &QTimer::timeout, this, &EventColumn::refresh);
 }
 
 int EventColumn::rowCount(const QModelIndex &parent) const
@@ -80,7 +80,7 @@ void EventColumn::setEvents(EventManager *events)
     if (events)
         connect(events, &EventManager::storedChanged, this, [this](qint64 hostId) {
             if (hostId < 0 || hostId == m_host)
-                m_later.start();
+                m_refreshSoon.start();
         });
     emit eventsChanged();
     refresh();
@@ -138,13 +138,14 @@ void EventColumn::toggle(const QString &type)
 {
     if (!m_supported.contains(type))
         return;
-    QStringList next = m_enabled;
+    // From the chosen set, so a remembered type the camera hasn't reported yet stays.
+    QStringList next = m_chosen ? m_wanted : m_enabled;
     if (!next.removeOne(type))
         next << type;
     m_chosen = true;
     m_wanted = next;
     setEnabled(next);
-    emit typesToggled(m_enabled);
+    emit typesToggled(m_wanted);
 }
 
 void EventColumn::restoreTypes(const QStringList &types)
@@ -168,6 +169,34 @@ void EventColumn::setEnabled(const QStringList &types)
     refresh();
 }
 
+// New events arrive at the top: when the old rows are the tail of the new ones, insert the
+// new ones and update thumbnails in place, so a scrolled list keeps its place. Anything
+// else (a day or type change, a purge) resets the list.
+void EventColumn::applyRows(const QVector<Row> &rows)
+{
+    const auto same = [](const Row &a, const Row &b) {
+        return a.gap == b.gap && a.ts == b.ts && a.from == b.from && a.type == b.type;
+    };
+    const qsizetype added = rows.size() - m_rows.size();
+    if (added < 0 || !std::equal(m_rows.cbegin(), m_rows.cend(), rows.cbegin() + added, same)) {
+        beginResetModel();
+        m_rows = rows;
+        endResetModel();
+        return;
+    }
+    if (added > 0) {
+        beginInsertRows({}, 0, int(added) - 1);
+        m_rows = rows.mid(0, added) + m_rows;
+        endInsertRows();
+    }
+    for (qsizetype i = added; i < rows.size(); ++i) {
+        if (m_rows.at(i).thumbnail == rows.at(i).thumbnail)
+            continue;
+        m_rows[i].thumbnail = rows.at(i).thumbnail;
+        emit dataChanged(index(int(i)), index(int(i)), {ThumbnailRole});
+    }
+}
+
 qint64 EventColumn::now() const
 {
     return m_now > 0 ? m_now : QDateTime::currentSecsSinceEpoch();
@@ -175,7 +204,7 @@ qint64 EventColumn::now() const
 
 void EventColumn::refresh()
 {
-    m_later.stop();
+    m_refreshSoon.stop();
     QVector<Row> rows;
     QVariantMap counts;
     QString note;
@@ -203,13 +232,11 @@ void EventColumn::refresh()
                          [](const Row &a, const Row &b) { return a.ts > b.ts; });
 
         if (dayEnd <= t - device::kOtherKeepSecs)
-            note = tr("Events are kept for 7 days.");
+            note = tr("Events are kept for %1 days.").arg(device::kOtherKeepSecs / 86400);
         else if (m_enabled.contains(kMotion) && m_dayStart < t - device::kMotionKeepSecs)
-            note = tr("Motion is kept for 24 hours.");
+            note = tr("Motion is kept for %1 hours.").arg(device::kMotionKeepSecs / 3600);
     }
-    beginResetModel();
-    m_rows = std::move(rows);
-    endResetModel();
+    applyRows(rows);
     m_counts = counts;
     m_keptNote = note;
     emit refreshed();

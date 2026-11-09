@@ -137,6 +137,39 @@ private slots:
         QCOMPARE(late.enabledTypes(), QStringList({"person", "motion"}));
     }
 
+    // Toggling keeps a remembered type the camera hasn't reported yet.
+    void togglingKeepsTypesNotYetSupported()
+    {
+        EventColumn c;
+        setUp(c, {"person", "motion"});
+        c.restoreTypes({"person", "vehicle"});
+        QSignalSpy toggled(&c, &EventColumn::typesToggled);
+        c.toggle(QStringLiteral("motion"));
+        QCOMPARE(toggled.first().first().toStringList(), QStringList({"person", "vehicle", "motion"}));
+        c.setSupportedTypes({"person", "vehicle", "motion"});
+        QCOMPARE(c.enabledTypes(), QStringList({"person", "vehicle", "motion"}));
+    }
+
+    // New events go in at the top without resetting the list, so a scrolled column stays put.
+    void newEventsInsertWithoutReset()
+    {
+        add(1, 0, m_day.from + 100, "person");
+        EventColumn c;
+        setUp(c);
+        QSignalSpy reset(&c, &QAbstractItemModel::modelReset);
+        QSignalSpy inserted(&c, &QAbstractItemModel::rowsInserted);
+        add(1, 0, m_day.from + 200, "person");
+        add(1, 0, m_day.from + 300, "vehicle");
+        c.refresh();
+        QCOMPARE(reset.count(), 0);
+        QCOMPARE(inserted.count(), 1);
+        QCOMPARE(typesOf(c), QStringList({"event:vehicle", "event:person", "event:person"}));
+        // Nothing new: nothing happens.
+        c.refresh();
+        QCOMPARE(reset.count(), 0);
+        QCOMPARE(inserted.count(), 1);
+    }
+
     void aCameraWithNoTypesSaysSo()
     {
         add(1, 0, m_day.from + 100, "motion");

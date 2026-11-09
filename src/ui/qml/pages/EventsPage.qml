@@ -66,22 +66,26 @@ Item {
     // Local days. The page follows today while it shows today, across midnight.
     property date day: new Date()
     readonly property real dayStart: Math.floor(new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime() / 1000)
-    readonly property bool isToday: sameDay(day, new Date())
+    // The clock, ticked each minute: `new Date()` alone is not watched by bindings.
+    property date now: new Date()
+    readonly property bool isToday: sameDay(day, now)
     property bool _onToday: true
     function sameDay(a, b) {
         return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
     }
     function setDay(y, m, d) {   // m: 1-based
+        now = new Date();
         var next = new Date(y, m - 1, d);
-        if (next > new Date())
+        if (next > now)
             return;
         day = next;
         _onToday = isToday;
     }
     function stepDay(n) { setDay(day.getFullYear(), day.getMonth() + 1, day.getDate() + n); }
     function followToday() {
+        now = new Date();
         if (_onToday && !isToday)
-            day = new Date();
+            day = now;
     }
     Timer { interval: 60000; repeat: true; running: page.visible; onTriggered: page.followToday() }
 
@@ -544,7 +548,7 @@ Item {
                                         }
                                         Text {
                                             Layout.fillWidth: true
-                                            text: page.labelFor(rowItem.type)
+                                            text: page.iconFor(rowItem.type) + " " + page.labelFor(rowItem.type)
                                             color: page.colorFor(rowItem.type)
                                             font.pixelSize: 11
                                         }

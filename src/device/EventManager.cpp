@@ -135,10 +135,8 @@ void EventManager::enforceRetention()
     const QStringList thumbs = m_db->purgeExpiredEvents(
         QDateTime::currentSecsSinceEpoch(), device::kMotionKeepSecs, device::kOtherKeepSecs);
     m_cappedCount.clear(); // recounted on each recorder's next event
-    if (thumbs.isEmpty())
-        return;
     dropThumbnails(thumbs);
-    reload();
+    reload(); // rows without thumbnails may have gone too
 }
 
 void EventManager::enforceCap(qint64 hostId, const QString &type)
@@ -301,14 +299,15 @@ void EventManager::onThumbnailReady(qint64 eventId, const QString &path)
         QFile::remove(path); // event already trimmed away: don't keep an orphaned file
         return;
     }
-    emit storedChanged(-1); // the column showing it fetches the path again
     for (int i = 0; i < m_rows.size(); ++i) {
         if (m_rows.at(i).id != eventId)
             continue;
         m_rows[i].thumbnail = path;
         emit dataChanged(index(i), index(i), {ThumbnailRole});
+        emit storedChanged(m_rows.at(i).hostId); // its camera's column fetches the path
         return;
     }
+    emit storedChanged(-1); // an older event (a history sync): its recorder isn't at hand
 }
 
 QVariantList EventManager::eventTimesFor(qint64 hostId, int channel, qint64 dayStart) const

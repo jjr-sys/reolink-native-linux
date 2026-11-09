@@ -95,11 +95,12 @@ private:
         qint64 ts = 0, from = 0, to = 0;
     };
     void setEnabled(const QStringList &types);
+    void applyRows(const QVector<Row> &rows);
     qint64 now() const;
 
     QPointer<EventManager> m_events;
     Database *m_db = nullptr;
-    QTimer m_later;             // coalesces bursts of stored events into one query
+    QTimer m_refreshSoon;       // coalesces bursts of stored events into one query
     qint64 m_now = 0;
     QString m_key;
     qint64 m_host = -1;
