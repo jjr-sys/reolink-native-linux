@@ -10,6 +10,14 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Fixed
 
+- **Clip export and Download range work again on NVRs.** Firmware v3.6.5.597,
+  which both RLN36 recorders installed by themselves, broke the HTTP download the
+  app used: the NVR still named a clip but no longer served it. NVR downloads now
+  use the Baichuan time-range download (port 9000) that Reolink's own clients use.
+  It sends exactly the asked range, in full quality with sound, and works while
+  Playback is open. H.264 and H.265 cameras both export. Standalone cameras keep
+  the HTTP download.
+
 - **A Frigate server whose live stream asks for a login now plays.** Frigate's
   go2rtc restream can require its own username and password (a Basic login, not
   the Frigate login), and every camera on such a server answered

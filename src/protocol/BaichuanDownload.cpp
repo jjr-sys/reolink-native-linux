@@ -171,7 +171,8 @@ BcDownloadResult runBcDownload(BcDownloadPort &port, const BcDownloadRequest &re
         if (accepted)
             stop();
         r.status = m->status;
-        r.outcome = BcDownloadResult::Outcome::Refused;
+        r.outcome = accepted ? BcDownloadResult::Outcome::Failed
+                             : BcDownloadResult::Outcome::Refused;
         return r;
     }
 }

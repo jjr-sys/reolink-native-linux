@@ -59,7 +59,8 @@ struct BcDownloadResult {
     enum class Outcome {
         Done,      // the recorder said the range is complete
         NoData,    // it ended without sending any footage
-        Refused,   // it turned the request down, or failed part way (see status)
+        Refused,   // it turned the request down (see status; 400 for an empty channel)
+        Failed,    // it sent an error part way through (see status)
         Cancelled,
         Stalled,   // nothing arrived for too long
         Lost,      // the connection dropped

@@ -343,6 +343,9 @@ void DownloadQueue::run(const Item &item, const QString &folder)
         case O::Done: fail(r.writeError); break;
         case O::NoData: fail(tr("No recording covers this range")); break;
         case O::Refused:
+            fail(tr("The NVR turned the download down (status %1)").arg(r.download.status));
+            break;
+        case O::Failed:
             fail(tr("The NVR stopped the download (status %1)").arg(r.download.status));
             break;
         case O::Cancelled: fail({}); break;

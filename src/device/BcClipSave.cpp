@@ -20,9 +20,11 @@ BcClipSaveResult saveBcClip(BcDownloadPort &port, const BcDownloadRequest &req, 
     int lastPercent = -1;
     parser.onVideo = [&](const BcMediaParser::VideoFrame &f) {
         writer.addVideo(f, parser.declaredWidth(), parser.declaredHeight());
-        if (!progress || f.time == 0)
+        if (!progress)
             return;
-        const int pct = int(qBound(qint64(0), (qint64(f.time) - from) * 100 / span, qint64(99)));
+        // Wall-clock time when the frame has it; otherwise how much video is written.
+        const qint64 done = f.time != 0 ? qint64(f.time) - from : writer.durationMs() / 1000;
+        const int pct = int(qBound(qint64(0), done * 100 / span, qint64(99)));
         if (pct > lastPercent) {
             lastPercent = pct;
             progress(pct);

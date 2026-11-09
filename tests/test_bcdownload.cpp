@@ -204,7 +204,7 @@ private slots:
         t.start();
         const BcDownloadResult r = runBcDownload(port, request(), [](const QByteArray &) {}, o);
         QVERIFY(t.elapsed() < 1000);
-        QCOMPARE(r.outcome, Outcome::Refused);
+        QCOMPARE(r.outcome, Outcome::Failed);
         QCOMPARE(r.status, quint16(500));
         QCOMPARE(port.sent.back().cmdId, kBcCmdDownloadStop);
     }

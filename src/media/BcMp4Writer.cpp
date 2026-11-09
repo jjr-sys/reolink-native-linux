@@ -246,10 +246,9 @@ bool BcMp4Writer::open()
         fail(QStringLiteral("Can't write %1: %2").arg(m_path, avErr(e)));
         return false;
     }
-    AVDictionary *opts = nullptr;
-    av_dict_set(&opts, "movflags", "+faststart", 0); // index at the front: opens and seeks fast
-    e = avformat_write_header(m_fmt, &opts);
-    av_dict_free(&opts);
+    // No +faststart: the files are played locally, and moving the index to the front
+    // would rewrite the whole file at the end (minutes for a long range).
+    e = avformat_write_header(m_fmt, nullptr);
     if (e < 0) {
         fail(QStringLiteral("mp4 header: %1").arg(avErr(e)));
         return false;
