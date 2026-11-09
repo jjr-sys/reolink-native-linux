@@ -2,6 +2,8 @@
 
 #include "core/Log.h"
 #include "core/Paths.h"
+#include "device/BcClipSave.h"
+#include "protocol/BaichuanControl.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -257,7 +259,9 @@ void DownloadQueue::pump()
             return;
         Item &it = m_items[size_t(next)];
         it.state = DlState::Preparing; // claimed now, so this loop cannot start it twice
-        update(it.id, DlState::Preparing, -1, tr("Preparing: the NVR is cutting the clip"));
+        update(it.id, DlState::Preparing, -1,
+               it.src.baichuan ? tr("Connecting to the NVR")
+                               : tr("Preparing: the NVR is cutting the clip"));
         const Item snapshot = it;
         const QString folder = m_folder;
         m_pool.start([this, snapshot, folder] { run(snapshot, folder); });
@@ -293,6 +297,54 @@ void DownloadQueue::run(const Item &item, const QString &folder)
 
     const QDateTime start = QDateTime::fromSecsSinceEpoch(item.start);
     const QDateTime end = QDateTime::fromSecsSinceEpoch(item.end);
+
+    if (src.baichuan) {
+        BaichuanControl link({src.host, 9000, src.username, src.password});
+        if (!link.open()) {
+            fail(link.refused() ? tr("The NVR refused the login")
+                                : tr("Can't reach the NVR on port 9000"));
+            return;
+        }
+        const QString path =
+            uniquePath(folder, downloadFileName(src.site, src.camera, start));
+        BcDownloadRequest req;
+        req.channel = src.channel;
+        req.uid = src.uid;
+        req.start = start;
+        req.end = end;
+        post(DlState::Downloading, 0, tr("Downloading"), {});
+        QElapsedTimer sinceEmit;
+        sinceEmit.start();
+        const auto port = bcDownloadPort(link);
+        const BcClipSaveResult r = saveBcClip(*port, req, path, cancel, [&](int pct) {
+            if (sinceEmit.elapsed() < 250)
+                return;
+            sinceEmit.restart();
+            post(DlState::Downloading, pct, tr("Downloading"), {});
+        });
+        link.close();
+        using O = BcDownloadResult::Outcome;
+        if (r.ok()) {
+            qCInfo(lcCore).noquote() << "download saved" << src.site << "/" << src.camera << "ch"
+                                     << src.channel << r.durationMs << "ms"
+                                     << r.download.mediaBytes << "bytes";
+            post(DlState::Done, 100, tr("Saved"), {path});
+            return;
+        }
+        qCWarning(lcCore).noquote() << "download failed" << src.site << "/" << src.camera
+                                    << "outcome" << int(r.download.outcome) << "status"
+                                    << r.download.status << r.writeError;
+        switch (r.download.outcome) {
+        case O::Done: fail(r.writeError); break;
+        case O::NoData: fail(tr("No recording covers this range")); break;
+        case O::Refused: fail(tr("The NVR turned the download down (status %1)").arg(r.download.status)); break;
+        case O::Cancelled: fail({}); break;
+        case O::Stalled: fail(tr("The NVR stopped sending")); break;
+        case O::Lost: fail(tr("The connection to the NVR dropped")); break;
+        }
+        return;
+    }
+
     const api::BatchResult b = src.client->callSlow(
         Json::array({api::nvrDownloadBody(src.channel, start, end, QStringLiteral("main"))}),
         prepareTimeoutSecs(item.end - item.start), cancel);

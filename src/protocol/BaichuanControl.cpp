@@ -1,5 +1,6 @@
 #include "BaichuanControl.h"
 
+#include "protocol/BaichuanDownload.h"
 #include "protocol/BcCrypto.h"
 
 #include <QTcpSocket>
@@ -308,6 +309,53 @@ quint16 BaichuanControl::drainReplies()
     while (parseMessage(m_netBuf, m))
         last = m.status;
     return last;
+}
+
+bool BaichuanControl::sendRequest(quint32 cmdId, int channel, quint32 messId,
+                                  const QByteArray &bodyXml)
+{
+    if (!isOpen())
+        return false;
+    const quint8 chId = channel < 0 ? 250 : static_cast<quint8>(channel + 1);
+    const QByteArray ext = channel < 0 ? QByteArray() : channelExtension(channel);
+    const QByteArray encExt = ext.isEmpty() ? QByteArray() : bc::aesCfb(ext, m_aesKey, false);
+    const QByteArray encBody =
+        bodyXml.isEmpty() ? QByteArray() : bc::aesCfb(bodyXml, m_aesKey, false);
+    m_sock->write(modernMessage(cmdId, chId, messId & 0xFFFFFF, encExt, encBody));
+    m_sock->flush();
+    return m_sock->state() == QAbstractSocket::ConnectedState;
+}
+
+std::optional<BaichuanControl::Message> BaichuanControl::readMessage(int waitMs, bool *lost)
+{
+    *lost = false;
+    if (!isOpen()) {
+        *lost = true;
+        return std::nullopt;
+    }
+    Msg m;
+    if (!parseMessage(m_netBuf, m)) {
+        if (m_sock->bytesAvailable() == 0 && !m_sock->waitForReadyRead(waitMs)) {
+            *lost = m_sock->state() != QAbstractSocket::ConnectedState;
+            return std::nullopt;
+        }
+        m_netBuf.append(m_sock->readAll());
+        if (!parseMessage(m_netBuf, m))
+            return std::nullopt;
+    }
+    Message out{m.cmdId, m.status, false, {}};
+    // A binary message: the Extension (its own AES segment) up to payload_offset, then
+    // the media, of which the first <encryptLen> bytes are ciphered under full AES.
+    if (m.payloadOffset > 0 && m.payloadOffset <= static_cast<quint32>(m.body.size())) {
+        const QByteArray ext = bc::aesCfb(m.body.left(m.payloadOffset), m_aesKey, true);
+        if (ext.contains("<binaryData>1</binaryData>")) {
+            out.binary = true;
+            out.body = bcBinaryPayload(ext, m.body.mid(m.payloadOffset), m_aesKey);
+            return out;
+        }
+    }
+    out.body = decryptReply(m, m_aesKey);
+    return out;
 }
 
 QByteArray BaichuanControl::get(quint32 cmdId, int channel, quint16 *statusOut)

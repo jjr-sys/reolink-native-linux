@@ -226,13 +226,6 @@ public:
     Q_INVOKABLE void searchRecordings(int row, int year, int month, int day);
     // Playable HTTP-FLV URL for a recording starting at startEpoch (Unix seconds).
     Q_INVOKABLE QString playbackUrl(int row, qint64 startEpoch, bool mainStream = false);
-    // Full-resolution (main-stream) playback: download the clip covering
-    // [startEpoch, startEpoch+durationSecs] to a local file, then emit hdClipReady
-    // with its path (the file is playable/seekable locally, unlike the FLV path).
-    Q_INVOKABLE void requestHdClip(int row, qint64 startEpoch, int durationSecs = 15);
-    // Save a main-stream clip covering [startEpoch, +durationSecs] into
-    // ~/Videos/Reolink with a friendly name. Emits clipExported/clipExportFailed.
-    Q_INVOKABLE void exportClip(int row, qint64 startEpoch, int durationSecs);
 
     // What the downloads queue needs to fetch this camera's recordings (invalid if the
     // device is not ready or has no recordings).
@@ -330,10 +323,6 @@ signals:
     void recordingsFound(int row, const QVariantList &segments);
     void recordingDaysFound(int row, int year, int month, const QVariantList &days);
     void recordingsFailed(int row, const QString &error);
-    void hdClipReady(int row, const QString &localPath, qint64 startEpoch);
-    void hdClipFailed(int row, const QString &error);
-    void clipExported(int row, const QString &path);
-    void clipExportFailed(int row, const QString &error);
     void settingsLoaded(int row, const QVariantMap &values);
     void settingsFailed(int row, const QString &error);
     void settingApplied(int row, const QString &command, bool ok, const QString &error);

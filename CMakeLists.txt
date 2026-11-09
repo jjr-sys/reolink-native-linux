@@ -37,6 +37,8 @@ add_library(reolink_core STATIC
     src/protocol/BcCrypto.h src/protocol/BcCrypto.cpp
     src/protocol/BaichuanClient.h src/protocol/BaichuanClient.cpp
     src/protocol/BaichuanControl.h src/protocol/BaichuanControl.cpp
+    src/protocol/BaichuanDownload.h src/protocol/BaichuanDownload.cpp
+    src/device/BcClipSave.h src/device/BcClipSave.cpp
     src/protocol/ReolinkTransport.h src/protocol/BaichuanLink.h
     src/protocol/BaichuanEventListener.h src/protocol/BaichuanEventListener.cpp
     src/protocol/BcAlarmEvents.h
@@ -70,6 +72,7 @@ add_library(reolink_core STATIC
     src/media/PlaybackSession.h src/media/PlaybackSession.cpp src/media/PlaybackTransport.h
     src/device/RecordingFileSnap.h src/device/RecordingFileSnap.cpp
     src/media/ClipLoader.h src/media/ClipLoader.cpp
+    src/media/BcMp4Writer.h src/media/BcMp4Writer.cpp
     src/media/AudioDecoder.h src/media/AudioDecoder.cpp
     src/media/AudioPlayback.h src/media/AudioPlayback.cpp
     src/media/AlertSounds.h src/media/AlertSounds.cpp
@@ -238,7 +241,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection test_sitebudget test_savedselections test_playbackgroup)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection test_sitebudget test_savedselections test_playbackgroup test_bcdownload test_bcmp4writer test_bcclipsave)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})

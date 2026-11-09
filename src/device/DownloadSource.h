@@ -19,6 +19,12 @@ struct DownloadSource {
     int port = 443;
     bool https = true;
     std::shared_ptr<ReolinkHttpClient> client;
+    // NVRs send the clip over Baichuan (cmd 143, TCP 9000): their HTTP NvrDownload
+    // fragments stopped working on firmware v3.6.5.597. Standalone cameras keep HTTP.
+    bool baichuan = false;
+    QString username;
+    QString password;
+    QString uid;            // camera UID, sent with the request when known
     bool valid() const { return client != nullptr; }
 };
 

@@ -101,6 +101,20 @@ public:
     // up during a long send and surfaces the device rejecting the stream.
     quint16 drainReplies();
 
+    // ---- Receiving a binary stream from the device (recording download) --------
+    // Send a request with the channel Extension and an encrypted XML body (empty =
+    // header only), without waiting for the reply. False if the socket is gone.
+    bool sendRequest(quint32 cmdId, int channel, quint32 messId, const QByteArray &bodyXml);
+    struct Message {
+        quint32 cmdId = 0;
+        quint16 status = 0;
+        bool binary = false;  // Extension says <binaryData>1</binaryData>
+        QByteArray body;      // decrypted media (binary) or reply XML
+    };
+    // The next message of any kind, waiting up to `waitMs`. Empty on timeout; sets
+    // *lost when the connection has gone.
+    std::optional<Message> readMessage(int waitMs, bool *lost);
+
 private:
     Params m_p;
     std::unique_ptr<QTcpSocket> m_sock;
