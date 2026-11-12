@@ -38,20 +38,29 @@ QVector<Mark> placeMarks(const Layout &layout, double barHeight, double minGap,
 
     // How many labels fit: the first at 0, the last ending at the bottom.
     const int capacity = barHeight >= minGap ? int(std::floor((barHeight - minGap) / minGap)) + 1 : 0;
-    int stride = 1;
-    const auto label = [&] {
-        int other = 0, n = 0;
-        for (Mark &m : marks) {
-            m.labelled = keep.contains(m.day) || (other++ % stride == 0);
-            n += m.labelled;
-        }
-        return n;
+    // Labels for the kept days and every `stride`th of the others (stride 0: kept only).
+    const auto labels = [&](int stride) {
+        QVector<bool> on;
+        int other = 0;
+        for (const Mark &m : std::as_const(marks))
+            on << (keep.contains(m.day) || (stride > 0 && other++ % stride == 0));
+        return on;
     };
-    while (label() > capacity && stride < marks.size())
-        stride *= 2;
-    if (label() > capacity) // not even the kept ones fit: label none
-        for (Mark &m : marks)
-            m.labelled = false;
+    QVector<bool> chosen;
+    for (int stride = 1; stride <= marks.size(); stride *= 2) {
+        const QVector<bool> on = labels(stride);
+        if (on.count(true) <= capacity) {
+            chosen = on;
+            break;
+        }
+    }
+    if (chosen.isEmpty()) {
+        chosen = labels(0);
+        if (chosen.count(true) > capacity) // not even the kept days fit: ticks only
+            chosen.fill(false);
+    }
+    for (int i = 0; i < marks.size(); ++i)
+        marks[i].labelled = chosen.at(i);
 
     // Stack the labels downward, then push them back up from the bottom.
     double prev = -minGap;

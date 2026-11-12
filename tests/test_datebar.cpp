@@ -114,6 +114,20 @@ private slots:
                     }
     }
 
+    // A bar with room for only the kept labels still shows them; one with room for none
+    // shows ticks only.
+    void aShortBarKeepsTodayAndYesterday()
+    {
+        const Layout l = rows({"today", "yest", "d3", "d2", "d1"});
+        const QSet<QString> keep{QStringLiteral("today"), QStringLiteral("yest")};
+        QCOMPARE(labelled(placeMarks(l, 52, 26, keep)), QStringList({"today", "yest"}));
+        // Room for three: the kept two and every fourth of the others (d3).
+        QCOMPARE(labelled(placeMarks(l, 78, 26, keep)), QStringList({"today", "yest", "d3"}));
+        const QVector<Mark> none = placeMarks(l, 20, 26, keep);
+        QCOMPARE(none.size(), 5);
+        QVERIFY(labelled(none).isEmpty());
+    }
+
     // A point on the bar shows that part of the feed, centred on the pointer.
     void barPointMapsToTheRowThere()
     {

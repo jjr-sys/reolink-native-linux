@@ -571,7 +571,8 @@ Item {
     // thumb for the visible part; press or drag to jump; a bubble with the top event's date
     // and time while the feed moves. Geometry comes from EventDateBar (the feed's own rows).
     readonly property string todayKey: Qt.formatDate(page.now, "yyyy-MM-dd")
-    readonly property string yesterdayKey: Qt.formatDate(new Date(page.now.getTime() - 86400000), "yyyy-MM-dd")
+    readonly property string yesterdayKey:
+        Qt.formatDate(new Date(page.now.getFullYear(), page.now.getMonth(), page.now.getDate() - 1), "yyyy-MM-dd")
     EventDateBar {
         id: dateBar
         feed: feed
@@ -580,12 +581,16 @@ Item {
         headerHeight: 30
         spacing: feedView.spacing
         barHeight: rail.height
-        minGap: 26
+        minGap: 30   // a two-line label is about 27 px
         keep: [page.todayKey, page.yesterdayKey]
     }
-    // The row at the top of the view and how far into it the view is scrolled.
+    // The row at the top of the view and how far into it the view is scrolled; follows
+    // scrolling, rows arriving and the layout changing.
+    readonly property var viewTop: {
+        feedView.contentY; dateBar.total;
+        return page.topOfView();
+    }
     function topOfView() {
-        feedView.contentY;   // re-evaluate as it scrolls
         for (const dy of [1, 31, 61]) {
             const i = feedView.indexAt(20, feedView.contentY + dy);
             if (i >= 0) {
@@ -595,11 +600,12 @@ Item {
         }
         return { row: 0, offset: 0 };
     }
+    property int lastJump: -1
     function jumpTo(y) {
         const row = dateBar.rowAtBar(y, feedView.height);
-        if (row >= 0)
+        if (row >= 0 && row !== page.lastJump)
             feedView.positionViewAtIndex(row, ListView.Beginning);
-        bubbleHide.restart();
+        page.lastJump = row;
     }
     // A mark's label: Today, Yest., or the weekday over the day number, with the month on
     // the 1st and where the month changes from the label above.
@@ -667,7 +673,7 @@ Item {
         }
 
         Rectangle {   // the thumb: the visible part of the feed
-            readonly property var viewTop: page.topOfView()
+            readonly property var viewTop: page.viewTop
             x: 0
             width: 4
             radius: 2
@@ -680,14 +686,16 @@ Item {
             id: railArea
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            onPressed: (mouse) => page.jumpTo(mouse.y)
+            onPressed: (mouse) => { page.lastJump = -1; page.jumpTo(mouse.y); }
             onPositionChanged: (mouse) => { if (pressed) page.jumpTo(mouse.y); }
+            onReleased: bubbleHide.restart()
         }
     }
-    // The bubble beside the bar: the top event's date and time while the feed moves.
+    // The bubble beside the bar: the top event's date and time while the person scrolls
+    // or drags, gone a second after. It sits over the feed's edge and takes no input.
     Rectangle {
         id: bubble
-        readonly property var viewTop: page.topOfView()
+        readonly property var viewTop: page.viewTop
         readonly property bool active: feedView.moving || railArea.pressed || bubbleHide.running
         x: rail.x - width - 6
         y: rail.y + Math.max(0, Math.min(rail.height - height, dateBar.barY(viewTop.row, viewTop.offset) - height / 2))
@@ -713,7 +721,7 @@ Item {
     Timer { id: bubbleHide; interval: 1000 }
     Connections {
         target: feedView
-        function onContentYChanged() { bubbleHide.restart(); }
+        function onMovementEnded() { bubbleHide.restart(); }
     }
 
     // ---- Right: the player panel (the clip player comes in step 22) -----------------------
