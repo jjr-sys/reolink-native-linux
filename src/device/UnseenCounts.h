@@ -74,6 +74,7 @@ private:
     qint64 m_now = 0;
     QString m_openCamera;
     qint64 m_seenLine = -1;
+    bool m_marking = false; // marking the open camera seen ourselves
     int m_total = 0;
     int m_revision = 0;
     QHash<QPair<qint64, int>, QVariantMap> m_counts;

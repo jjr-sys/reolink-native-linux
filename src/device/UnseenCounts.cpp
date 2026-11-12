@@ -76,7 +76,10 @@ void UnseenCounts::setStore(SeenStore *store)
         disconnect(m_store, nullptr, this, nullptr);
     m_store = store;
     if (store)
-        connect(store, &SeenStore::changed, this, [this] { m_refreshSoon.start(); });
+        connect(store, &SeenStore::changed, this, [this] {
+            if (!m_marking) // our own marks are counted by the refresh that made them
+                m_refreshSoon.start();
+        });
 }
 
 void UnseenCounts::setOpenCamera(const QString &key)
@@ -108,8 +111,11 @@ void UnseenCounts::markOpenSeen(const QHash<QPair<qint64, int>, qint64> &lastEve
     if (!m_store || !parseKey(m_openCamera, host, channel))
         return;
     const qint64 at = qMax(now(), lastEventTimes.value({host, channel}));
-    if (at > m_store->seenAt(host, channel))
+    if (at > m_store->seenAt(host, channel)) {
+        m_marking = true;
         m_store->markSeen(host, channel, at);
+        m_marking = false;
+    }
 }
 
 QVariantMap UnseenCounts::countsFor(const QString &key) const

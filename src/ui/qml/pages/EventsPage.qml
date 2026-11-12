@@ -118,13 +118,15 @@ Item {
     function chooseCamera() {
         if (page.camera !== "" && !page.autoChosen && cameraList.contains(page.camera))
             return;
-        // On screen the shown camera stays put: following the most active camera there would
-        // open (and mark seen) each camera as it logs, and its bubbles would never show.
-        if (page.camera !== "" && page.onScreen && cameraList.contains(page.camera))
-            return;
         var m = {};
         try { m = JSON.parse(store.cameras); } catch (e) { m = {}; }
         const remembered = m[page.site] || "";
+        // On screen the shown camera stays put (unless the remembered one has just been
+        // listed): following the most active camera there would open, and mark seen, each
+        // camera as it logs, and its bubbles would never show.
+        if (page.camera !== "" && page.onScreen && cameraList.contains(page.camera)
+                && !cameraList.contains(remembered))
+            return;
         page.autoChosen = !cameraList.contains(remembered);
         const next = page.autoChosen ? cameraList.first() : remembered;
         if (next !== page.camera)
