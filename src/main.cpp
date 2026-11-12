@@ -24,6 +24,7 @@
 #include "ui/SiteBudget.h"
 #include "ui/SavedSelections.h"
 #include "ui/PlaybackGroup.h"
+#include "ui/EventCameraList.h"
 #include "ui/EventFeed.h"
 #include "ui/MosaicLayout.h"
 
@@ -201,6 +202,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::SavedSelections>("ReolinkApp.Core", 1, 0, "SavedSelections");
     qmlRegisterType<rl::PlaybackGroup>("ReolinkApp.Core", 1, 0, "PlaybackGroup");
     qmlRegisterType<rl::EventFeed>("ReolinkApp.Core", 1, 0, "EventFeed");
+    qmlRegisterType<rl::EventCameraList>("ReolinkApp.Core", 1, 0, "EventCameraList");
     qmlRegisterType<rl::MosaicLayout>("ReolinkApp.Core", 1, 0, "MosaicLayout");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);
@@ -219,6 +221,10 @@ int main(int argc, char *argv[])
     // Lets tests/screenshots open a specific page (0=Live,1=Playback,2=Events,3=Settings).
     engine.rootContext()->setContextProperty(
         QStringLiteral("initialPage"), qEnvironmentVariableIntValue("RL_INITIAL_PAGE"));
+    // RL_EVENTS_AUTOSCROLL=1 scrolls the Events feed to its end, logs the longest stall
+    // between scroll steps, and quits: for checking the feed scrolls smoothly.
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("eventsAutoScroll"), qEnvironmentVariableIsSet("RL_EVENTS_AUTOSCROLL"));
     // RL_SETTINGS_CATEGORY=<key> opens Settings on a section (e.g. "highlights", "mosaics").
     engine.rootContext()->setContextProperty(
         QStringLiteral("initialSettingsCategory"), qEnvironmentVariable("RL_SETTINGS_CATEGORY"));

@@ -25,16 +25,16 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Changed
 
-- **Events on Site tabs.** Pick cameras from the Site tabs, as on Live View and
-  Playback; each gets its own column, side by side, scrolling sideways when there
-  are many. A column's head holds the camera's own event types, each with its count
-  for the day: tap one to show or hide it (all start on except Motion and Status,
-  and each camera remembers its choice). The ✕ removes a column; Clear all clears
-  them, with Undo. A day picker (‹ day › and a calendar) replaces the newest-500
-  list, and time when the app wasn't running shows as a grey "App not running" band.
-  With nothing picked, the page shows the day's counts for each Site. Sync Frigate
-  history, desktop notifications and deleting all events moved to the ⋯ menu.
-  The old type, property and camera filters are gone.
+- **Events: a camera list and one camera's feed.** Site tabs pick the Site; its
+  cameras are listed on the left, the most recently active first ("last 3 min ago"),
+  with cameras that can only log Status now at the bottom. The middle shows one
+  camera's events over the whole month, newest first: a full-width snapshot under each
+  caption (type, date and time, ⋯ with Open in Playback and Save snapshot), sticky day
+  headers, and slim lines for Status and "App not running". The camera's type chips
+  (with their counts) filter it and are remembered per camera; switched-off types have
+  no chip. The player panel on the right waits for the clip player. Sync Frigate
+  history, desktop notifications and deleting all events are in the ⋯ menu. This
+  replaces the per-camera columns and the day picker.
 - **Events keep a month.** Motion is now kept for 24 hours and no longer counts
   toward the per-recorder limit, which rises from 10,000 to 50,000. Person, Vehicle,
   Pet, Visitor and Status events stay for 30 days on every Site, even the busy ones.

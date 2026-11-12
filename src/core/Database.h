@@ -105,6 +105,8 @@ public:
     // Every camera's name on its newest stored detection (Status rows carry the
     // recorder's name on a host-wide change, so they don't count), by (host, channel).
     QHash<QPair<qint64, int>, QString> eventCameraNames() const;
+    // Every camera's newest stored detection time (Status doesn't count), by (host, channel).
+    QHash<QPair<qint64, int>, qint64> lastEventTimes() const;
     bool renameEventCamera(qint64 hostId, const QString &from, const QString &to);
     bool clearEvents();
     // Age-based retention at `now`: motion older than `motionKeepSecs`, everything else

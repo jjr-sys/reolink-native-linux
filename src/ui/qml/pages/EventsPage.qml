@@ -5,25 +5,22 @@ import QtQuick.Layouts
 import ReolinkApp
 import ReolinkApp.Core
 
-// Events on Site tabs (wayfinder/site-tabs-redesign, step 6): one column per selected camera,
-// each listing one local day's events newest first, filtered by the camera's own event type
-// row, with an "App not running" band where the app was not running. The day picker sits on
-// the strip; with nothing selected the page shows the day's counts by Site. Clicking an event
-// opens it in Playback.
+// Events (wayfinder/events-feed step 18, layout P2): Site tabs on top; on the left the
+// Site's cameras, the most recently active first; in the middle one camera's feed over
+// everything kept (30 days), newest first, a full-width snapshot under each caption line,
+// sticky day headers; on the right the player panel (the clip player comes in step 22).
+// The camera's type chips filter its feed and are remembered per camera.
 Item {
     id: page
     signal jumpToPlayback(var hostId, var channel, var timestamp)
-    property var menus: null        // DeviceMenus, for the right-click menus on the Site tabs
+    property var menus: null        // DeviceMenus (unused here since the Site drawer went)
 
-    readonly property int columnWidth: 300
-    readonly property int columnGap: Theme.spacing
+    readonly property int listWidth: 260
+    readonly property int feedWidth: 560
+    readonly property bool showPlayer: width >= 1150
 
-    onVisibleChanged: if (visible) { Events.markAllRead(); page.followToday(); page.countsRev++; }
-    Component.onCompleted: {
-        selection.saved = String(selStore.value("keys", ""));
-        if (visible)
-            Events.markAllRead();
-    }
+    onVisibleChanged: if (visible) { Events.markAllRead(); page.now = new Date(); }
+    Component.onCompleted: if (visible) Events.markAllRead()
 
     function iconFor(type) {
         switch (type) {
@@ -62,523 +59,564 @@ Item {
     }
     function hhmm(epoch) { return Qt.formatTime(new Date(epoch * 1000), "HH:mm"); }
 
-    // ---- The day -------------------------------------------------------------------------
-    // Local days. The page follows today while it shows today, across midnight.
-    property date day: new Date()
-    readonly property real dayStart: Math.floor(new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime() / 1000)
     // The clock, ticked each minute: `new Date()` alone is not watched by bindings.
     property date now: new Date()
-    readonly property bool isToday: sameDay(day, now)
-    property bool _onToday: true
-    function sameDay(a, b) {
-        return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    Timer { interval: 60000; repeat: true; running: page.visible; onTriggered: page.now = new Date() }
+    function ago(epoch) {
+        if (epoch <= 0)
+            return qsTr("nothing in 30 days");
+        const s = Math.max(0, Math.floor(page.now.getTime() / 1000) - epoch);
+        if (s < 60) return qsTr("last just now");
+        if (s < 3600) return qsTr("last %1 min ago").arg(Math.floor(s / 60));
+        if (s < 86400) return qsTr("last %1 h ago").arg(Math.floor(s / 3600));
+        return qsTr("last %1 d ago").arg(Math.floor(s / 86400));
     }
-    function setDay(y, m, d) {   // m: 1-based
-        now = new Date();
-        var next = new Date(y, m - 1, d);
-        if (next > now)
+    // A sticky day header: Today, Yesterday, or "Tue 10 Nov".
+    function dayTitle(isoDay) {
+        const p = isoDay.split("-");
+        if (p.length !== 3)
+            return isoDay;
+        const d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+        const today = new Date(page.now.getFullYear(), page.now.getMonth(), page.now.getDate());
+        const days = Math.round((today - d) / 86400000);
+        if (days === 0) return qsTr("Today");
+        if (days === 1) return qsTr("Yesterday");
+        return Qt.formatDate(d, "ddd d MMM");
+    }
+
+    // ---- What is shown: a Site and one of its cameras, remembered ------------------------
+    Settings {
+        id: store
+        category: "eventsFeed"
+        property string site: ""
+        property string cameras: "{}"    // JSON: site -> the camera last opened there
+    }
+    property string site: Sites.list.indexOf(store.site) >= 0 ? store.site
+                          : (Sites.list.length > 0 ? Sites.list[0] : "")
+    property string camera: ""
+    function pickSite(s) {
+        store.site = s;
+        page.camera = "";
+        page.chooseCamera();
+    }
+    function pickCamera(key) {
+        page.camera = key;
+        var m = {};
+        try { m = JSON.parse(store.cameras); } catch (e) { m = {}; }
+        m[page.site] = key;
+        store.cameras = JSON.stringify(m);
+    }
+    // The remembered camera of this Site if it is still listed, else the most active one.
+    function chooseCamera() {
+        if (page.camera !== "" && cameraList.has(page.camera))
             return;
-        day = next;
-        _onToday = isToday;
-    }
-    function stepDay(n) { setDay(day.getFullYear(), day.getMonth() + 1, day.getDate() + n); }
-    function followToday() {
-        now = new Date();
-        if (_onToday && !isToday)
-            day = now;
-    }
-    Timer { interval: 60000; repeat: true; running: page.visible; onTriggered: page.followToday() }
-
-    // ---- The selection -------------------------------------------------------------------
-    // Its own, stored in [eventsSelection]; it starts empty.
-    SiteSelection {
-        id: selection
-        sites: Sites.map
-        onSaveRequested: (text) => selStore.setValue("keys", text)
-        onUndoChanged: if (!canUndo) undoToast.dismiss()
-    }
-    Settings { id: selStore; category: "eventsSelection" }
-    // Keys of a recorder that has been removed are dropped once the device list settles.
-    Timer {
-        interval: 8000
-        running: true
-        onTriggered: if (Devices.count > 0) selection.pruneHosts(Devices.hostIds())
+        var m = {};
+        try { m = JSON.parse(store.cameras); } catch (e) { m = {}; }
+        const remembered = m[page.site] || "";
+        page.camera = cameraList.has(remembered) ? remembered : cameraList.first();
     }
 
-    // Each camera's type row is remembered, per camera, in [eventTypes].
-    Settings { id: typeStore; category: "eventTypes" }
-    function typeKey(key) { return "c" + key.replace(":", "_"); }
-
-    // Device facts change as recorders answer; columns re-read their types then.
+    // Device facts change as recorders answer; the camera list re-reads them then.
     property int devRev: 0
     Connections {
         target: Devices
-        function onDataChanged() { page.devRev++; }
-        function onModelReset() { page.devRev++; }
-        function onRowsInserted() { page.devRev++; }
+        function onDataChanged() { devRefresh.restart(); }
+        function onModelReset() { devRefresh.restart(); }
+        function onRowsInserted() { devRefresh.restart(); }
     }
-    function cameraName(key) {
+    Timer { id: devRefresh; interval: 300; onTriggered: page.devRev++ }
+
+    // The Site's cameras, for the list: { key, name, types }.
+    readonly property var siteCameras: {
+        devRev; Sites.revision;
+        var out = [];
+        Sites.hostsOf(page.site).forEach(h => {
+            Devices.channelsForHost(h).forEach(c => {
+                const row = Devices.rowOfHostChannel(h, c.channel);
+                if (row < 0)
+                    return;
+                out.push({ key: h + ":" + c.channel, name: Devices.nameAt(row),
+                           types: Devices.eventTypesFor(h, c.channel) });
+            });
+        });
+        return out;
+    }
+    EventCameraList {
+        id: cameraList
+        events: Events
+        cameras: page.siteCameras
+        onRefreshed: page.chooseCamera()
+        function has(key) {
+            for (var i = 0; i < page.siteCameras.length; ++i)
+                if (page.siteCameras[i].key === key)
+                    return true;
+            return false;
+        }
+    }
+
+    readonly property var hc: camera.split(":")
+    readonly property string cameraName: {
         devRev;
-        var p = key.split(":");
-        var row = Devices.rowOfHostChannel(Number(p[0]), Number(p[1]));
-        return row >= 0 ? Devices.nameAt(row) : key;
+        const row = camera === "" ? -1 : Devices.rowOfHostChannel(Number(hc[0]), Number(hc[1]));
+        return row >= 0 ? Devices.nameAt(row) : "";
     }
-    function typesOf(key) {
-        devRev;
-        var p = key.split(":");
-        return Devices.eventTypesFor(Number(p[0]), Number(p[1]));
+    // The camera's type chips: what it reports, less what is switched off (Status always).
+    readonly property var cameraTypes: {
+        devRev; switchRev;
+        if (camera === "")
+            return [];
+        return Devices.eventTypesFor(Number(hc[0]), Number(hc[1]))
+            .filter(t => t === "status" || !Events.isSwitchedOff(Number(hc[0]), Number(hc[1]), t));
     }
-
-    // A camera tapped again in the drawer: bring its column into view and flash it.
-    property string flashKey: ""
-    Timer { id: flashEnd; interval: 1600; onTriggered: page.flashKey = "" }
-    function focusColumn(key) {
-        var i = selection.paneOrder.indexOf(key);
-        if (i < 0)
-            return;
-        var x = colRow.x + i * (columnWidth + columnGap) - (columns.width - columnWidth) / 2;
-        columns.contentX = Math.max(0, Math.min(x, columns.contentWidth - columns.width));
-        flashKey = key;
-        flashEnd.restart();
-    }
-
-    // ---- Site tabs -----------------------------------------------------------------------
-    SiteTabs {
-        id: tabs
-        z: 10
-        width: parent.width
-        height: implicitHeight
-        selection: selection
-        menus: page.menus
-        tapSelectedToFocus: true
-        onSelectedTapped: (key) => page.focusColumn(key)
-        onCleared: (n) => undoToast.show(n === 1 ? qsTr("Cleared 1 camera ·") : qsTr("Cleared %1 cameras ·").arg(n))
-
-        leftItems: [
-            Rectangle {   // ⋯ the page's other actions
-                width: 30; height: 26; radius: 13
-                color: moreHover.hovered ? Theme.surfaceAlt : Theme.surface
-                border.color: Theme.border
-                Text { anchors.centerIn: parent; text: "⋯"; color: Theme.text; font.pixelSize: 14 }
-                HoverHandler { id: moreHover; cursorShape: Qt.PointingHandCursor }
-                TapHandler { onTapped: moreMenu.popup() }
-                ThemedMenu {
-                    id: moreMenu
-                    ThemedMenuItem {
-                        // The store holds only what the app saw live; this pulls each Frigate
-                        // server's own history in.
-                        text: qsTr("Sync Frigate history")
-                        onTriggered: Events.syncAllFrigateHistory()
-                    }
-                    ThemedMenuItem {
-                        text: Events.desktopNotifications ? qsTr("Desktop notifications: On")
-                                                          : qsTr("Desktop notifications: Off")
-                        onTriggered: Events.desktopNotifications = !Events.desktopNotifications
-                    }
-                    ThemedMenuSeparator {}
-                    ThemedMenuItem {
-                        text: qsTr("Delete all events…")
-                        onTriggered: deleteAll.open()
-                    }
-                }
-            }
-        ]
-        rightItems: [
-            Row {   // ‹ day › and a calendar
-                spacing: 2
-                Rectangle {
-                    width: 26; height: 26; radius: 13
-                    color: prevHover.hovered ? Theme.surfaceAlt : Theme.surface
-                    border.color: Theme.border
-                    Text { anchors.centerIn: parent; text: "‹"; color: Theme.text; font.pixelSize: 15 }
-                    HoverHandler { id: prevHover; cursorShape: Qt.PointingHandCursor }
-                    TapHandler { onTapped: page.stepDay(-1) }
-                }
-                Rectangle {
-                    width: dayLabel.implicitWidth + 22; height: 26; radius: 13
-                    color: dayHover.hovered || calPopup.opened ? Theme.surfaceAlt : Theme.surface
-                    border.color: Theme.border
-                    Text {
-                        id: dayLabel
-                        anchors.centerIn: parent
-                        text: page.isToday ? qsTr("Today") : Qt.formatDate(page.day, "ddd d MMM")
-                        color: Theme.text
-                        font.pixelSize: 12
-                    }
-                    HoverHandler { id: dayHover; cursorShape: Qt.PointingHandCursor }
-                    TapHandler { onTapped: calPopup.opened ? calPopup.close() : calPopup.open() }
-                    Popup {
-                        id: calPopup
-                        y: parent.height + 6
-                        x: parent.width - width
-                        padding: Theme.spacing
-                        background: Rectangle { color: Theme.surface; border.color: Theme.border; radius: Theme.radius }
-                        onAboutToShow: {
-                            cal.year = page.day.getFullYear();
-                            cal.month = page.day.getMonth() + 1;
-                        }
-                        MonthCalendar {
-                            id: cal
-                            width: 240
-                            selDay: (year === page.day.getFullYear() && month === page.day.getMonth() + 1)
-                                    ? page.day.getDate() : -1
-                            onDateSelected: (y, m, d) => { page.setDay(y, m, d); calPopup.close(); }
-                        }
-                    }
-                }
-                Rectangle {
-                    readonly property bool usable: !page.isToday
-                    width: 26; height: 26; radius: 13
-                    color: nextHover.hovered && usable ? Theme.surfaceAlt : Theme.surface
-                    border.color: Theme.border
-                    opacity: usable ? 1 : 0.4
-                    Text { anchors.centerIn: parent; text: "›"; color: Theme.text; font.pixelSize: 15 }
-                    HoverHandler { id: nextHover; cursorShape: parent.usable ? Qt.PointingHandCursor : Qt.ArrowCursor }
-                    TapHandler { onTapped: if (parent.usable) page.stepDay(1) }
-                }
-            }
-        ]
-    }
-
-    // ---- Nothing selected: a prompt and the day's counts by Site ---------------------------
-    property int countsRev: 0
+    property int switchRev: 0
     Connections {
         target: Events
-        enabled: selection.count === 0 && page.visible
-        function onStoredChanged() { countsTimer.restart(); }
-    }
-    Timer { id: countsTimer; interval: 1000; onTriggered: page.countsRev++ }
-    readonly property var siteCounts: {
-        countsRev; Sites.revision;
-        if (selection.count > 0)
-            return [];
-        var byHost = Events.dayCountsByHost(dayStart);
-        return Sites.list.map(site => {
-            var c = ({});
-            Sites.hostsOf(site).forEach(h => {
-                var t = byHost[String(h)] || ({});
-                for (var k in t) {
-                    var key = (k === "online" || k === "offline") ? "status" : k;
-                    c[key] = (c[key] || 0) + t[k];
-                }
-            });
-            return { site: site, counts: c };
-        });
+        function onSwitchesChanged() { page.switchRev++; }
     }
 
-    Column {
-        anchors.top: tabs.bottom
-        anchors.topMargin: Theme.spacing * 4
-        anchors.horizontalCenter: parent.horizontalCenter
-        width: Math.min(parent.width - Theme.spacing * 4, 900)
-        visible: selection.count === 0
-        spacing: Theme.spacing * 2
+    // Each camera's chosen chips, remembered per camera, in [eventTypes].
+    Settings { id: typeStore; category: "eventTypes" }
+    function typeKey(key) { return "c" + key.replace(":", "_"); }
 
-        Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: qsTr("Pick a camera from a Site tab to see its events")
-            color: Theme.text
-            font.pixelSize: 14
+    EventFeed {
+        id: feed
+        events: Events
+        cameraKey: page.camera
+        supportedTypes: page.cameraTypes
+        onTypesToggled: (types) => typeStore.setValue(page.typeKey(page.camera), types.join(","))
+        onCameraKeyChanged: {
+            const v = page.camera === "" ? undefined : typeStore.value(page.typeKey(page.camera));
+            if (v !== undefined && v !== null)
+                restoreTypes(String(v) === "" ? [] : String(v).split(","));
+            else
+                useDefaultTypes();
+            feedView.positionViewAtBeginning();
         }
-        Flow {
-            width: parent.width
-            spacing: Theme.spacing
+    }
+    Timer { interval: 60000; repeat: true; running: page.visible; onTriggered: feed.refresh() }
+
+    // ---- Top bar: ⋯, the Site tabs, the camera's type chips -------------------------------
+    Rectangle {
+        id: bar
+        width: parent.width
+        height: 44
+        color: Theme.window
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
+
+        Rectangle {   // ⋯ the page's other actions
+            id: moreButton
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.spacing
+            anchors.verticalCenter: parent.verticalCenter
+            width: 30; height: 26; radius: 13
+            color: moreHover.hovered ? Theme.surfaceAlt : Theme.surface
+            border.color: Theme.border
+            Text { anchors.centerIn: parent; text: "⋯"; color: Theme.text; font.pixelSize: 14 }
+            HoverHandler { id: moreHover; cursorShape: Qt.PointingHandCursor }
+            TapHandler { onTapped: moreMenu.popup() }
+            ThemedMenu {
+                id: moreMenu
+                ThemedMenuItem {
+                    // The store holds only what the app saw live; this pulls each Frigate
+                    // server's own history in.
+                    text: qsTr("Sync Frigate history")
+                    onTriggered: Events.syncAllFrigateHistory()
+                }
+                ThemedMenuItem {
+                    text: Events.desktopNotifications ? qsTr("Desktop notifications: On")
+                                                      : qsTr("Desktop notifications: Off")
+                    onTriggered: Events.desktopNotifications = !Events.desktopNotifications
+                }
+                ThemedMenuSeparator {}
+                ThemedMenuItem {
+                    text: qsTr("Delete all events…")
+                    onTriggered: deleteAll.open()
+                }
+            }
+        }
+
+        Row {   // the Site tabs: a tap picks the Site
+            anchors.centerIn: parent
+            spacing: 2
             Repeater {
-                model: page.siteCounts
+                model: Sites.list
                 Rectangle {
-                    id: siteCard
-                    required property var modelData
-                    width: 210
-                    height: siteCol.implicitHeight + 20
-                    radius: Theme.radius
-                    color: siteHover.hovered ? Theme.surfaceAlt : Theme.surface
-                    border.color: Theme.border
-                    Column {
-                        id: siteCol
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        spacing: 6
-                        Text {
-                            text: siteCard.modelData.site
-                            color: Theme.text
-                            font.pixelSize: 13
-                            font.bold: true
-                        }
-                        Text {
-                            visible: Object.keys(siteCard.modelData.counts).length === 0
-                            text: page.isToday ? qsTr("No events yet today") : qsTr("No events this day")
-                            color: Theme.textMuted
-                            font.pixelSize: 12
-                        }
-                        Flow {
-                            width: parent.width
-                            spacing: 8
-                            Repeater {
-                                model: ["person", "vehicle", "pet", "visitor", "motion", "status"]
-                                        .filter(t => siteCard.modelData.counts[t] > 0)
-                                Text {
-                                    required property string modelData
-                                    text: page.iconFor(modelData) + " " + siteCard.modelData.counts[modelData]
-                                    color: Theme.text
-                                    font.pixelSize: 12
-                                    ToolTip.visible: tHover.hovered
-                                    ToolTip.text: page.labelFor(modelData)
-                                    HoverHandler { id: tHover }
-                                }
-                            }
-                        }
+                    required property string modelData
+                    readonly property bool current: modelData === page.site
+                    width: siteText.implicitWidth + 28
+                    height: 28
+                    radius: 14
+                    color: current ? Theme.accentDim : (siteHover.hovered ? Theme.surfaceAlt : Theme.surface)
+                    border.color: current ? Theme.accent : Theme.border
+                    Text {
+                        id: siteText
+                        anchors.centerIn: parent
+                        text: parent.modelData
+                        color: parent.current ? Theme.text : Theme.textMuted
+                        font.pixelSize: 13
                     }
                     HoverHandler { id: siteHover; cursorShape: Qt.PointingHandCursor }
-                    TapHandler { onTapped: tabs.openSite = modelData.site }
+                    TapHandler { onTapped: page.pickSite(parent.modelData) }
                 }
             }
         }
     }
 
-    // ---- One column per selected camera, scrolling sideways --------------------------------
-    Flickable {
-        id: columns
-        anchors.fill: parent
-        anchors.topMargin: tabs.height + Theme.spacing
-        anchors.leftMargin: Theme.spacing
-        anchors.rightMargin: Theme.spacing
-        anchors.bottomMargin: Theme.spacing
-        visible: selection.count > 0
-        clip: true
-        contentWidth: Math.max(colRow.width, width)
-        contentHeight: height
-        flickableDirection: Flickable.HorizontalFlick
-        boundsBehavior: Flickable.StopAtBounds
-        interactive: contentWidth > width
-        ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
-        // Tapping the columns closes an open drawer, as tapping the video does elsewhere.
-        TapHandler { onTapped: tabs.close() }
+    // ---- Left: the Site's cameras ----------------------------------------------------------
+    Rectangle {
+        id: listPane
+        anchors.top: bar.bottom
+        anchors.bottom: parent.bottom
+        width: page.listWidth
+        color: Theme.surface
+        Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.border }
 
-        Row {
-            id: colRow
-            x: Math.max(0, (columns.width - width) / 2)
-            height: columns.height - 10
-            spacing: page.columnGap
-            Repeater {
-                model: selection.paneOrder
-                Rectangle {
-                    id: colItem
-                    required property string modelData
-                    readonly property var hc: modelData.split(":")
-                    width: page.columnWidth
-                    height: colRow.height
-                    radius: Theme.radius
-                    color: Theme.surface
-                    border.color: page.flashKey === modelData ? Theme.accent : Theme.border
-                    border.width: page.flashKey === modelData ? 2 : 1
-                    Behavior on border.color { ColorAnimation { duration: 200 } }
+        ListView {
+            id: cameraView
+            anchors.fill: parent
+            anchors.margins: 6
+            model: cameraList
+            clip: true
+            spacing: 2
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            delegate: Rectangle {
+                id: camRow
+                required property string key
+                required property string name
+                required property var last
+                required property bool statusOnly
+                readonly property bool current: key === page.camera
+                width: ListView.view.width
+                height: 48
+                radius: Theme.radius
+                color: current ? Theme.accentDim : (camHover.hovered ? Theme.surfaceAlt : "transparent")
+                border.color: current ? Theme.accent : "transparent"
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 10
+                    spacing: 1
+                    Item { Layout.fillHeight: true }
+                    Text {
+                        Layout.fillWidth: true
+                        text: camRow.name
+                        color: camRow.statusOnly && !camRow.current ? Theme.textMuted : Theme.text
+                        font.pixelSize: 13
+                        font.bold: camRow.current
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: camRow.statusOnly ? qsTr("Status only") : page.ago(Number(camRow.last))
+                        color: Theme.textMuted
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                    }
+                    Item { Layout.fillHeight: true }
+                }
+                HoverHandler { id: camHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: page.pickCamera(camRow.key) }
+            }
+            Text {
+                anchors.centerIn: parent
+                visible: cameraView.count === 0
+                text: Sites.list.length === 0 ? qsTr("No Sites yet") : qsTr("No cameras on this Site")
+                color: Theme.textMuted
+                font.pixelSize: 12
+            }
+        }
+    }
 
-                    EventFeed {
-                        id: col
-                        events: Events
-                        cameraKey: colItem.modelData
-                        dayStart: page.dayStart
-                        supportedTypes: page.typesOf(colItem.modelData)
-                        onTypesToggled: (types) => typeStore.setValue(page.typeKey(colItem.modelData), types.join(","))
-                        Component.onCompleted: {
-                            var v = typeStore.value(page.typeKey(colItem.modelData));
-                            if (v !== undefined && v !== null)
-                                restoreTypes(String(v) === "" ? [] : String(v).split(","));
+    // ---- Middle: the camera's feed ---------------------------------------------------------
+    Item {
+        id: feedPane
+        anchors.top: bar.bottom
+        anchors.bottom: parent.bottom
+        anchors.left: listPane.right
+        width: page.feedWidth + Theme.spacing * 4
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: Theme.spacing * 2
+            anchors.topMargin: Theme.spacing
+            spacing: 6
+
+            // The camera's name and its type chips (counts over 30 days).
+            RowLayout {
+                Layout.fillWidth: true
+                visible: page.camera !== ""
+                spacing: 8
+                Text {
+                    text: page.cameraName
+                    color: Theme.text
+                    font.pixelSize: 15
+                    font.bold: true
+                    elide: Text.ElideRight
+                    Layout.maximumWidth: 200
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Repeater {
+                        model: feed.supportedTypes
+                        Rectangle {
+                            required property string modelData
+                            readonly property bool on: feed.enabledTypes.indexOf(modelData) >= 0
+                            width: chip.implicitWidth + 16
+                            height: 26
+                            radius: 13
+                            color: on ? Theme.accentDim : (chipHover.hovered ? Theme.surfaceAlt : "transparent")
+                            border.color: on ? Theme.accent : Theme.border
+                            Text {
+                                id: chip
+                                anchors.centerIn: parent
+                                text: page.iconFor(parent.modelData) + " " + page.labelFor(parent.modelData)
+                                      + " " + (feed.counts[parent.modelData] || 0)
+                                color: parent.on ? Theme.text : Theme.textMuted
+                                font.pixelSize: 12
+                            }
+                            HoverHandler { id: chipHover; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: feed.toggle(parent.modelData) }
+                        }
+                    }
+                }
+            }
+
+            ListView {
+                id: feedView
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                model: feed
+                clip: true
+                spacing: 10
+                reuseItems: true
+                cacheBuffer: 1600
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                section.property: "day"
+                section.criteria: ViewSection.FullString
+                section.labelPositioning: ViewSection.InlineLabels | ViewSection.CurrentLabelAtStart
+                section.delegate: Rectangle {
+                    required property string section
+                    width: ListView.view.width
+                    height: 30
+                    color: Theme.window
+                    z: 2
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: page.dayTitle(parent.section)
+                        color: Theme.text
+                        font.pixelSize: 13
+                        font.bold: true
+                    }
+                }
+
+                delegate: Item {
+                    id: ev
+                    required property string kind
+                    required property string type
+                    required property var timestamp
+                    required property string thumbnail
+                    required property var from
+                    required property var to
+                    readonly property bool gap: kind === "gap"
+                    readonly property bool status: type === "online" || type === "offline"
+                    readonly property bool slim: gap || status
+                    width: ListView.view.width
+                    height: slim ? 28 : caption.height + 6 + snap.height
+
+                    // "App not running" band, or a Status line.
+                    Rectangle {
+                        anchors.fill: parent
+                        visible: ev.slim
+                        radius: 4
+                        color: Theme.surfaceAlt
+                        opacity: 0.85
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.left: parent.left
+                            anchors.leftMargin: 10
+                            text: ev.gap
+                                  ? qsTr("App not running · %1–%2").arg(page.hhmm(ev.from)).arg(page.hhmm(ev.to))
+                                  : page.iconFor(ev.type) + " " + page.labelFor(ev.type) + " · "
+                                    + Qt.formatTime(new Date(ev.timestamp * 1000), "HH:mm:ss")
+                            color: ev.status && ev.type === "offline" ? Theme.danger : Theme.textMuted
+                            font.pixelSize: 12
                         }
                     }
 
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 8
-                        spacing: 6
-
-                        // Head: name, Site, ✕
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 6
+                    // The caption: type pill, date and time, ⋯.
+                    RowLayout {
+                        id: caption
+                        visible: !ev.slim
+                        width: parent.width
+                        height: 28
+                        spacing: 8
+                        Rectangle {
+                            width: pill.implicitWidth + 16
+                            height: 22
+                            radius: 11
+                            color: "transparent"
+                            border.color: page.colorFor(ev.type)
                             Text {
-                                Layout.fillWidth: true
-                                text: page.cameraName(colItem.modelData)
-                                color: Theme.text
-                                font.pixelSize: 13
-                                font.bold: true
-                                elide: Text.ElideRight
-                            }
-                            Text {
-                                text: Sites.siteOfKey(colItem.modelData)
-                                color: Theme.textMuted
-                                font.pixelSize: 11
-                            }
-                            Rectangle {
-                                width: 22; height: 22; radius: 11
-                                color: xHover.hovered ? Theme.surfaceAlt : "transparent"
-                                Text { anchors.centerIn: parent; text: "✕"; color: Theme.textMuted; font.pixelSize: 11 }
-                                HoverHandler { id: xHover; cursorShape: Qt.PointingHandCursor }
-                                TapHandler { onTapped: selection.toggle(colItem.modelData) }
-                                ToolTip.visible: xHover.hovered
-                                ToolTip.delay: 600
-                                ToolTip.text: qsTr("Remove this column")
-                            }
-                        }
-
-                        // The event type row: each type with its count for the day.
-                        Flow {
-                            Layout.fillWidth: true
-                            visible: col.hasTypes
-                            spacing: 4
-                            Repeater {
-                                model: col.supportedTypes
-                                Rectangle {
-                                    required property string modelData
-                                    readonly property bool on: col.enabledTypes.indexOf(modelData) >= 0
-                                    width: chip.implicitWidth + 14
-                                    height: 24
-                                    radius: 12
-                                    color: on ? Theme.accentDim : (chipHover.hovered ? Theme.surfaceAlt : "transparent")
-                                    border.color: on ? Theme.accent : Theme.border
-                                    Text {
-                                        id: chip
-                                        anchors.centerIn: parent
-                                        text: page.iconFor(modelData) + " " + (col.counts[modelData] || 0)
-                                        color: parent.on ? Theme.text : Theme.textMuted
-                                        font.pixelSize: 11
-                                    }
-                                    HoverHandler { id: chipHover; cursorShape: Qt.PointingHandCursor }
-                                    TapHandler { onTapped: col.toggle(parent.modelData) }
-                                    ToolTip.visible: chipHover.hovered
-                                    ToolTip.delay: 500
-                                    ToolTip.text: page.labelFor(modelData)
-                                }
-                            }
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            visible: !col.hasTypes
-                            text: qsTr("This camera reports no events.")
-                            color: Theme.textMuted
-                            font.pixelSize: 12
-                            wrapMode: Text.WordWrap
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            visible: col.keptNote !== ""
-                            text: col.keptNote
-                            color: Theme.textMuted
-                            font.pixelSize: 11
-                            font.italic: true
-                            wrapMode: Text.WordWrap
-                        }
-
-                        ListView {
-                            id: list
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            model: col
-                            clip: true
-                            spacing: 4
-                            boundsBehavior: Flickable.StopAtBounds
-                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-                            // One row per event, or an "App not running" band.
-                            delegate: Rectangle {
-                                id: rowItem
-                                required property string kind
-                                required property string type
-                                required property var timestamp
-                                required property string thumbnail
-                                required property var from
-                                required property var to
-                                readonly property bool gap: kind === "gap"
-                                width: ListView.view.width
-                                height: gap ? 26 : 48
-                                radius: 4
-                                color: gap ? Theme.surfaceAlt : (rowHover.hovered ? Theme.surfaceAlt : "transparent")
-                                opacity: gap ? 0.8 : 1
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    visible: rowItem.gap
-                                    text: qsTr("App not running · %1–%2").arg(page.hhmm(rowItem.from)).arg(page.hhmm(rowItem.to))
-                                    color: Theme.textMuted
-                                    font.pixelSize: 11
-                                }
-
-                                Rectangle {   // type colour bar
-                                    visible: !rowItem.gap
-                                    width: 3; height: parent.height - 8; radius: 1.5
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    color: page.colorFor(rowItem.type)
-                                }
-                                RowLayout {
-                                    visible: !rowItem.gap
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 8
-                                    anchors.rightMargin: 6
-                                    spacing: 8
-                                    Rectangle {
-                                        Layout.preferredWidth: 64
-                                        Layout.preferredHeight: 36
-                                        radius: 3
-                                        color: Theme.paneBackground
-                                        clip: true
-                                        Image {
-                                            anchors.fill: parent
-                                            source: !rowItem.gap && rowItem.thumbnail.length > 0 ? "file://" + rowItem.thumbnail : ""
-                                            fillMode: Image.PreserveAspectCrop
-                                            asynchronous: true
-                                            sourceSize.width: 128
-                                            visible: rowItem.thumbnail.length > 0
-                                        }
-                                        Text {
-                                            anchors.centerIn: parent
-                                            visible: rowItem.thumbnail.length === 0
-                                            text: page.iconFor(rowItem.type)
-                                            font.pixelSize: 16
-                                            opacity: 0.85
-                                        }
-                                    }
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 1
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: Qt.formatTime(new Date(rowItem.timestamp * 1000), "HH:mm:ss")
-                                            color: Theme.text
-                                            font.pixelSize: 12
-                                        }
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: page.iconFor(rowItem.type) + " " + page.labelFor(rowItem.type)
-                                            color: page.colorFor(rowItem.type)
-                                            font.pixelSize: 11
-                                        }
-                                    }
-                                    Text {
-                                        text: qsTr("View ›")
-                                        color: rowHover.hovered ? Theme.accent : Theme.textMuted
-                                        font.pixelSize: 11
-                                    }
-                                }
-                                HoverHandler { id: rowHover; enabled: !rowItem.gap; cursorShape: Qt.PointingHandCursor }
-                                TapHandler {
-                                    enabled: !rowItem.gap
-                                    onTapped: page.jumpToPlayback(Number(colItem.hc[0]), Number(colItem.hc[1]), rowItem.timestamp)
-                                }
-                            }
-
-                            Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                y: 24
-                                visible: col.hasTypes && col.count === 0
-                                text: col.enabledTypes.length === 0 ? qsTr("Every type is off")
-                                      : page.isToday ? qsTr("No events yet today") : qsTr("No events this day")
-                                color: Theme.textMuted
+                                id: pill
+                                anchors.centerIn: parent
+                                text: page.iconFor(ev.type) + " " + page.labelFor(ev.type)
+                                color: page.colorFor(ev.type)
                                 font.pixelSize: 12
                             }
                         }
+                        Text {
+                            Layout.fillWidth: true
+                            text: Qt.formatDateTime(new Date(ev.timestamp * 1000), "ddd d MMM · HH:mm:ss")
+                            color: Theme.text
+                            font.pixelSize: 12
+                        }
+                        Rectangle {
+                            width: 28; height: 24; radius: 12
+                            color: dotsHover.hovered ? Theme.surfaceAlt : "transparent"
+                            Text { anchors.centerIn: parent; text: "⋯"; color: Theme.text; font.pixelSize: 14 }
+                            HoverHandler { id: dotsHover; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: eventMenu.popup() }
+                            ThemedMenu {
+                                id: eventMenu
+                                ThemedMenuItem {
+                                    text: qsTr("Open in Playback")
+                                    onTriggered: page.jumpToPlayback(Number(page.hc[0]), Number(page.hc[1]), ev.timestamp)
+                                }
+                                ThemedMenuItem {
+                                    text: qsTr("Save snapshot")
+                                    enabled: ev.thumbnail.length > 0
+                                    onTriggered: {
+                                        const saved = Events.saveSnapshot(ev.thumbnail, page.cameraName, ev.timestamp);
+                                        toast.show(saved !== "" ? qsTr("Saved to %1").arg(saved)
+                                                                : qsTr("Couldn't save the snapshot"));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // The snapshot at full width (16:9), tap to open in Playback.
+                    Rectangle {
+                        id: snap
+                        visible: !ev.slim
+                        anchors.top: caption.bottom
+                        anchors.topMargin: 6
+                        width: parent.width
+                        height: Math.round(width * 9 / 16)
+                        radius: 4
+                        color: Theme.paneBackground
+                        clip: true
+                        Image {
+                            anchors.fill: parent
+                            source: !ev.slim && ev.thumbnail.length > 0 ? "file://" + ev.thumbnail : ""
+                            fillMode: Image.PreserveAspectFit
+                            asynchronous: true
+                            sourceSize.width: page.feedWidth
+                            visible: ev.thumbnail.length > 0
+                        }
+                        Text {
+                            anchors.centerIn: parent
+                            visible: ev.thumbnail.length === 0
+                            text: page.iconFor(ev.type)
+                            font.pixelSize: 40
+                            opacity: 0.6
+                        }
+                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                        TapHandler {
+                            enabled: !ev.slim
+                            onTapped: page.jumpToPlayback(Number(page.hc[0]), Number(page.hc[1]), ev.timestamp)
+                        }
                     }
                 }
+
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: 40
+                    visible: feedView.count === 0
+                    text: page.camera === "" ? qsTr("Pick a camera")
+                          : !feed.hasTypes ? qsTr("This camera reports no events.")
+                          : feed.enabledTypes.length === 0 ? qsTr("Every type is off")
+                          : qsTr("Nothing in the last 30 days")
+                    color: Theme.textMuted
+                    font.pixelSize: 13
+                }
             }
+        }
+    }
+
+    // ---- Right: the player panel (the clip player comes in step 22) -----------------------
+    Rectangle {
+        anchors.top: bar.bottom
+        anchors.bottom: parent.bottom
+        anchors.left: feedPane.right
+        anchors.right: parent.right
+        visible: page.showPlayer
+        color: Theme.surface
+        Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.border }
+        Text {
+            anchors.centerIn: parent
+            text: qsTr("Pick an event…")
+            color: Theme.textMuted
+            font.pixelSize: 13
+        }
+    }
+
+    // A short message at the bottom (a saved snapshot).
+    Rectangle {
+        id: toast
+        function show(text) { toastText.text = text; opacity = 1; toastTimer.restart(); }
+        anchors.horizontalCenter: feedPane.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: Theme.spacing * 3
+        width: toastText.implicitWidth + 28
+        height: 34
+        radius: 17
+        color: Theme.surfaceAlt
+        border.color: Theme.border
+        opacity: 0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+        Text { id: toastText; anchors.centerIn: parent; color: Theme.text; font.pixelSize: 12 }
+        Timer { id: toastTimer; interval: 3000; onTriggered: toast.opacity = 0 }
+    }
+
+    // TEST HOOK: RL_EVENTS_AUTOSCROLL (see main.cpp).
+    Timer {
+        id: autoScroll
+        property real last: 0
+        property real worst: 0
+        property real started: 0
+        property int over33: 0
+        property int over100: 0
+        interval: 16
+        repeat: true
+        running: typeof eventsAutoScroll !== "undefined" && eventsAutoScroll && page.visible
+                 && feedView.count > 0
+        onTriggered: {
+            const t = Date.now();
+            if (started === 0) started = t;
+            if (last > 0) {
+                const gap = t - last;
+                worst = Math.max(worst, gap);
+                if (gap > 33) over33++;
+                if (gap > 100) {
+                    over100++;
+                    console.log("autoscroll: slow step", gap, "ms at", ((t - started) / 1000).toFixed(1), "s");
+                }
+            }
+            last = t;
+            if (feedView.atYEnd && feedView.contentY > 0) {
+                console.log("autoscroll: rows", feedView.count, "height", Math.round(feedView.contentHeight),
+                            "seconds", ((t - started) / 1000).toFixed(1), "worst step ms", worst,
+                            "steps over 33 ms", over33, "over 100 ms", over100);
+                Qt.quit();
+                return;
+            }
+            feedView.contentY += 60;
         }
     }
 
@@ -588,11 +626,5 @@ Item {
         detail: qsTr("Every recorder's event history and thumbnails go. Recordings are not affected.")
         confirmLabel: qsTr("Delete")
         onConfirmed: Events.clear()
-    }
-
-    UndoToast {
-        id: undoToast
-        onUndo: selection.undo()
-        onExpired: selection.dropUndo()
     }
 }

@@ -16,6 +16,7 @@
 namespace rl {
 
 class DeviceManager;
+class EventSwitches;
 
 // The event inbox: persists detection events (from DeviceManager's poller) and
 // exposes the newest of them to QML, with an unread counter. The store keeps its own history (motion 24 h; everything else 30 days under a
@@ -52,6 +53,8 @@ public:
     int unread() const { return m_unread; }
     // The store, for the Events page's columns (EventFeed), which query it.
     Database *database() const { return m_db; }
+    // The event switches (DeviceManager's), for the Events page's models.
+    EventSwitches *switches() const;
     static constexpr int kListLimit = 500;
     int listLimit() const { return kListLimit; }
 
@@ -69,6 +72,12 @@ public:
     // { "hostId": { type: count } }.
     Q_INVOKABLE QVariantMap dayCountsByHost(qint64 dayStart) const;
     Q_INVOKABLE void clear();
+    // Whether this camera's event type is switched off (not logged at all).
+    Q_INVOKABLE bool isSwitchedOff(qint64 hostId, int channel, const QString &type) const;
+    // Copies an event's snapshot to ~/Pictures/Reolink as "<camera> <date time>.jpg" (never
+    // over an existing file). The saved path, or "" when it couldn't be saved.
+    Q_INVOKABLE QString saveSnapshot(const QString &thumbnail, const QString &camera,
+                                     qint64 timestamp) const;
     // Event switches. What switching a camera's event type off would delete:
     // { count, bytes } (stored events, snapshot bytes on disk).
     Q_INVOKABLE QVariantMap switchStats(qint64 hostId, int channel, const QString &type) const;
@@ -111,6 +120,8 @@ signals:
     // Stored events changed: one recorder's (an event filed, a thumbnail landed), or
     // anyone's (hostId -1: a purge, a trim, a clear, a history sync).
     void storedChanged(qint64 hostId);
+    // A camera's event type was switched off or on.
+    void switchesChanged();
     // The user clicked a desktop notification — jump to this event's playback.
     void eventActivated(qint64 hostId, int channel, qint64 timestamp);
 

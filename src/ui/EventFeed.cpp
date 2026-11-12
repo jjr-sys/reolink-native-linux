@@ -54,14 +54,16 @@ QVariant EventFeed::data(const QModelIndex &index, int role) const
     case ThumbnailRole: return r.thumbnail;
     case FromRole: return r.from;
     case ToRole: return r.to;
+    case DayRole: return r.day;
     default: return {};
     }
 }
 
 QHash<int, QByteArray> EventFeed::roleNames() const
 {
-    return {{KindRole, "kind"},       {TypeRole, "type"}, {TimestampRole, "timestamp"},
-            {ThumbnailRole, "thumbnail"}, {FromRole, "from"}, {ToRole, "to"}};
+    return {{KindRole, "kind"},           {TypeRole, "type"}, {TimestampRole, "timestamp"},
+            {ThumbnailRole, "thumbnail"}, {FromRole, "from"}, {ToRole, "to"},
+            {DayRole, "day"}};
 }
 
 EventManager *EventFeed::events() const
@@ -107,15 +109,6 @@ void EventFeed::setCameraKey(const QString &key)
     refresh();
 }
 
-void EventFeed::setDayStart(qint64 dayStart)
-{
-    if (m_dayStart == dayStart)
-        return;
-    m_dayStart = dayStart;
-    emit dayStartChanged();
-    refresh();
-}
-
 void EventFeed::setSupportedTypes(const QStringList &types)
 {
     if (m_supported == types)
@@ -131,6 +124,9 @@ QStringList EventFeed::defaultTypes(const QStringList &supported)
     for (const QString &t : supported)
         if (t != kMotion && t != kStatus)
             out << t;
+    // A camera that can only log Status (Motion aside) would otherwise open empty.
+    if (out.isEmpty() && supported.contains(kStatus))
+        out << kStatus;
     return out;
 }
 
@@ -155,6 +151,13 @@ void EventFeed::restoreTypes(const QStringList &types)
     setEnabled(types);
 }
 
+void EventFeed::useDefaultTypes()
+{
+    m_chosen = false;
+    m_wanted.clear();
+    setEnabled(defaultTypes(m_supported));
+}
+
 // Kept to the supported types, in their display order.
 void EventFeed::setEnabled(const QStringList &types)
 {
@@ -169,20 +172,39 @@ void EventFeed::setEnabled(const QStringList &types)
     refresh();
 }
 
-// New events arrive at the top: when the old rows are the tail of the new ones, insert the
-// new ones and update thumbnails in place, so a scrolled list keeps its place. Anything
-// else (a day or type change, a purge) resets the list.
+// New events arrive at the top and old ones leave the window at the bottom: when the old
+// rows are still a run inside the new ones, insert the new rows above, remove the gone
+// ones below, and update thumbnails and gap starts in place, so a scrolled feed keeps its
+// place. Anything else (a camera or type change, a purge) resets the list.
 void EventFeed::applyRows(const QVector<Row> &rows)
 {
+    // A gap is known by its end: its start moves as the window slides.
     const auto same = [](const Row &a, const Row &b) {
-        return a.gap == b.gap && a.ts == b.ts && a.from == b.from && a.type == b.type;
+        return a.gap == b.gap && a.ts == b.ts && a.type == b.type;
     };
-    const qsizetype added = rows.size() - m_rows.size();
-    if (added < 0 || !std::equal(m_rows.cbegin(), m_rows.cend(), rows.cbegin() + added, same)) {
+    qsizetype added = -1; // where the old first row sits in the new rows
+    if (m_rows.isEmpty())
+        added = rows.size();
+    else
+        for (qsizetype i = 0; i < rows.size(); ++i)
+            if (same(rows.at(i), m_rows.first())) {
+                added = i;
+                break;
+            }
+    const qsizetype kept = added < 0 ? 0 : qMin(m_rows.size(), rows.size() - added);
+    const bool tailOnlyGone =
+        added >= 0 && added + kept == rows.size()
+        && std::equal(m_rows.cbegin(), m_rows.cbegin() + kept, rows.cbegin() + added, same);
+    if (!tailOnlyGone) {
         beginResetModel();
         m_rows = rows;
         endResetModel();
         return;
+    }
+    if (kept < m_rows.size()) {
+        beginRemoveRows({}, int(kept), int(m_rows.size()) - 1);
+        m_rows.resize(kept);
+        endRemoveRows();
     }
     if (added > 0) {
         beginInsertRows({}, 0, int(added) - 1);
@@ -190,10 +212,18 @@ void EventFeed::applyRows(const QVector<Row> &rows)
         endInsertRows();
     }
     for (qsizetype i = added; i < rows.size(); ++i) {
-        if (m_rows.at(i).thumbnail == rows.at(i).thumbnail)
-            continue;
-        m_rows[i].thumbnail = rows.at(i).thumbnail;
-        emit dataChanged(index(int(i)), index(int(i)), {ThumbnailRole});
+        Row &r = m_rows[i];
+        QList<int> roles;
+        if (r.thumbnail != rows.at(i).thumbnail) {
+            r.thumbnail = rows.at(i).thumbnail;
+            roles << ThumbnailRole;
+        }
+        if (r.from != rows.at(i).from) {
+            r.from = rows.at(i).from;
+            roles << FromRole;
+        }
+        if (!roles.isEmpty())
+            emit dataChanged(index(int(i)), index(int(i)), roles);
     }
 }
 
@@ -207,12 +237,16 @@ void EventFeed::refresh()
     m_refreshSoon.stop();
     QVector<Row> rows;
     QVariantMap counts;
-    QString note;
-    if (m_db && m_host >= 0 && m_dayStart > 0 && hasTypes()) {
-        const qint64 dayEnd = device::dayContaining(m_dayStart, QTimeZone::systemTimeZone()).to;
+    if (m_db && m_host >= 0 && hasTypes()) {
         const qint64 t = now();
+        const qint64 from = t - device::kOtherKeepSecs;
+        const qint64 to = t + 86400; // a recorder's clock may run a little ahead
+        const QTimeZone zone = QTimeZone::systemTimeZone();
+        const auto dayOf = [&zone](qint64 ts) {
+            return QDateTime::fromSecsSinceEpoch(ts, zone).date().toString(Qt::ISODate);
+        };
 
-        const QHash<QString, int> stored = m_db->eventCountsBetween(m_host, m_channel, m_dayStart, dayEnd);
+        const QHash<QString, int> stored = m_db->eventCountsBetween(m_host, m_channel, from, to);
         for (const QString &type : m_supported) {
             int n = 0;
             for (const QString &s : storedTypes({type}))
@@ -221,24 +255,17 @@ void EventFeed::refresh()
         }
 
         if (!m_enabled.isEmpty())
-            for (const EventRecord &e : m_db->eventsBetween(m_host, m_channel, m_dayStart, dayEnd,
+            for (const EventRecord &e : m_db->eventsBetween(m_host, m_channel, from, to,
                                                             storedTypes(m_enabled)))
-                rows.append({false, e.type, e.thumbnail, e.timestamp, 0, 0});
-        const auto gaps = device::storedNotRunningGaps(*m_db, m_dayStart, dayEnd, t);
-        for (const device::TimeSpan &g : gaps)
-            rows.append({true, {}, {}, g.to, g.from, g.to});
+                rows.append({false, e.type, e.thumbnail, dayOf(e.timestamp), e.timestamp, 0, 0});
+        for (const device::TimeSpan &g : device::storedNotRunningGaps(*m_db, from, t, t))
+            rows.append({true, {}, {}, dayOf(g.to - 1), g.to, g.from, g.to});
         // Newest first; a gap sits by its end, above the events before it.
         std::stable_sort(rows.begin(), rows.end(),
                          [](const Row &a, const Row &b) { return a.ts > b.ts; });
-
-        if (dayEnd <= t - device::kOtherKeepSecs)
-            note = tr("Events are kept for %1 days.").arg(device::kOtherKeepSecs / 86400);
-        else if (m_enabled.contains(kMotion) && m_dayStart < t - device::kMotionKeepSecs)
-            note = tr("Motion is kept for %1 hours.").arg(device::kMotionKeepSecs / 3600);
     }
     applyRows(rows);
     m_counts = counts;
-    m_keptNote = note;
     emit refreshed();
 }
 

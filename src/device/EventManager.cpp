@@ -12,7 +12,9 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QRegularExpression>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QTimeZone>
 #include <QtConcurrent/QtConcurrent>
 
@@ -55,6 +57,8 @@ EventManager::EventManager(Database *db, DeviceManager *devices, QObject *parent
             [this] { m_db->touchAppRun(m_runId, QDateTime::currentSecsSinceEpoch()); });
     m_runTimer.start();
     connect(m_devices, &DeviceManager::detectionEvent, this, &EventManager::onDetection);
+    connect(m_devices->eventSwitches(), &EventSwitches::changed, this,
+            &EventManager::switchesChanged);
     connect(&m_notifier, &Notifier::activated, this, &EventManager::eventActivated);
     connect(m_devices, &DeviceManager::eventThumbnailReady, this,
             &EventManager::onThumbnailReady);
@@ -368,6 +372,34 @@ void EventManager::clear()
     m_unread = 0;
     emit unreadChanged();
     reload();
+}
+
+EventSwitches *EventManager::switches() const
+{
+    return m_devices->eventSwitches();
+}
+
+bool EventManager::isSwitchedOff(qint64 hostId, int channel, const QString &type) const
+{
+    return m_devices->eventSwitches()->isOff(hostId, channel, type);
+}
+
+QString EventManager::saveSnapshot(const QString &thumbnail, const QString &camera,
+                                   qint64 timestamp) const
+{
+    const QString dir =
+        QStandardPaths::writableLocation(QStandardPaths::PicturesLocation) + QStringLiteral("/Reolink");
+    if (thumbnail.isEmpty() || !QFile::exists(thumbnail) || !QDir().mkpath(dir))
+        return {};
+    QString name = camera.isEmpty() ? tr("Camera") : camera;
+    name.replace(QRegularExpression(QStringLiteral("[/\\\\:*?\"<>|]")), QStringLiteral("_"));
+    const QString base = dir + QLatin1Char('/') + name + QLatin1Char(' ')
+                         + QDateTime::fromSecsSinceEpoch(timestamp).toString(
+                             QStringLiteral("yyyy-MM-dd HH.mm.ss"));
+    QString path = base + QStringLiteral(".jpg");
+    for (int n = 2; QFile::exists(path); ++n)
+        path = base + QStringLiteral(" (%1).jpg").arg(n);
+    return QFile::copy(thumbnail, path) ? path : QString();
 }
 
 QVariantMap EventManager::switchStats(qint64 hostId, int channel, const QString &type) const

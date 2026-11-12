@@ -8,11 +8,14 @@
 #include <QTimeZone>
 #include <QtTest>
 
+#include <ctime>
+
 using namespace rl;
 using namespace rl::device;
 
-// One Events column (wayfinder/site-tabs-redesign, step 6): a camera's events for one local
-// day, filtered by its own type row, with "app not running" bands among them.
+// One camera's Events feed (wayfinder/events-feed step 18): everything kept (30 days) for
+// one camera, newest first, filtered by its type chips, each row keyed by its local day for
+// the sticky day headers, with "app not running" bands among the events.
 class TestEventFeed : public QObject
 {
     Q_OBJECT
@@ -21,6 +24,7 @@ class TestEventFeed : public QObject
     std::unique_ptr<Database> m_db;
     int m_n = 0;
     TimeSpan m_day, m_prevDay;
+    qint64 m_now = 0; // an hour after the end of m_day
 
     static const QStringList kAll() { return {"person", "vehicle", "pet", "motion", "status"}; }
 
@@ -34,70 +38,130 @@ class TestEventFeed : public QObject
         e.camera = QStringLiteral("Kitchen");
         QVERIFY(m_db->addEvent(e) > 0);
     }
-    // A column on host 1 channel 0, the test day, every type supported, with the whole
-    // day covered by one app run unless a test says otherwise.
-    void setUp(EventFeed &c, const QStringList &supported = kAll())
+    // A feed of host 1 channel 0, every type supported, the clock an hour after the test
+    // day, with one app run covering everything unless a test says otherwise.
+    void setUp(EventFeed &f, const QStringList &supported = kAll())
     {
-        c.setDatabase(m_db.get());
-        c.setNow(m_day.to + 3600);
-        c.setSupportedTypes(supported);
-        c.setCameraKey(QStringLiteral("1:0"));
-        c.setDayStart(m_day.from);
+        f.setDatabase(m_db.get());
+        f.setNow(m_now);
+        f.setSupportedTypes(supported);
+        f.setCameraKey(QStringLiteral("1:0"));
     }
-    QStringList typesOf(const EventFeed &c) const
+    static QStringList rows(const EventFeed &f, int role = EventFeed::TypeRole)
     {
         QStringList out;
-        for (int i = 0; i < c.rowCount(); ++i)
-            out << c.data(c.index(i), EventFeed::KindRole).toString() + QLatin1Char(':')
-                       + c.data(c.index(i), EventFeed::TypeRole).toString();
+        for (int i = 0; i < f.rowCount(); ++i)
+            out << f.data(f.index(i), EventFeed::KindRole).toString() + QLatin1Char(':')
+                       + f.data(f.index(i), role).toString();
+        return out;
+    }
+    static QStringList days(const EventFeed &f)
+    {
+        QStringList out;
+        for (int i = 0; i < f.rowCount(); ++i)
+            out << f.data(f.index(i), EventFeed::DayRole).toString();
         return out;
     }
 
 private slots:
+    void initTestCase()
+    {
+        // Day keys follow local time; Sydney has a daylight-saving change to test against.
+        qputenv("TZ", "Australia/Sydney");
+        tzset();
+    }
+
     void init()
     {
         QVERIFY(m_dir.isValid());
         m_db = std::make_unique<Database>(m_dir.filePath(QStringLiteral("t%1.db").arg(++m_n)),
-                                          QStringLiteral("col%1").arg(m_n));
+                                          QStringLiteral("feed%1").arg(m_n));
         QVERIFY(m_db->open());
         const QTimeZone zone = QTimeZone::systemTimeZone();
         m_day = localDay(QDate(2026, 11, 5), zone);
         m_prevDay = localDay(QDate(2026, 11, 4), zone);
-        const qint64 run = m_db->beginAppRun(m_prevDay.from);
-        QVERIFY(m_db->touchAppRun(run, m_day.to + 3600));
+        m_now = m_day.to + 3600;
+        const qint64 run = m_db->beginAppRun(m_now - kOtherKeepSecs - 86400);
+        QVERIFY(m_db->touchAppRun(run, m_now));
     }
     void cleanup() { m_db.reset(); }
 
     void defaultTypesAreAllButMotionAndStatus()
     {
         QCOMPARE(EventFeed::defaultTypes(kAll()), QStringList({"person", "vehicle", "pet"}));
-        EventFeed c;
-        setUp(c);
-        QCOMPARE(c.enabledTypes(), QStringList({"person", "vehicle", "pet"}));
-        QVERIFY(c.hasTypes());
+        // A camera that can only log Status (and Motion, off by default) shows Status.
+        QCOMPARE(EventFeed::defaultTypes({"motion", "status"}), QStringList({"status"}));
+        QCOMPARE(EventFeed::defaultTypes({"status"}), QStringList({"status"}));
+        QCOMPARE(EventFeed::defaultTypes({"motion"}), QStringList());
+        EventFeed f;
+        setUp(f);
+        QCOMPARE(f.enabledTypes(), QStringList({"person", "vehicle", "pet"}));
+        QVERIFY(f.hasTypes());
     }
 
-    // Each button shows the day's count for its type, on or off; Status counts both ways.
-    void countsEveryTypeForTheDay()
+    // One camera only, everything kept, newest first: not one day.
+    void oneCameraOverTheWholeKeptWindow()
     {
         add(1, 0, m_day.from + 100, "person");
-        add(1, 0, m_day.from + 200, "person");
+        add(1, 0, m_prevDay.from + 100, "vehicle");
+        add(1, 0, m_now - kOtherKeepSecs + 60, "pet");   // just inside what is kept
+        add(1, 0, m_now - kOtherKeepSecs - 60, "person"); // just outside
+        add(1, 1, m_day.from + 200, "person");            // another camera
+        add(2, 0, m_day.from + 300, "person");            // another recorder
+        EventFeed f;
+        setUp(f);
+        QCOMPARE(rows(f), QStringList({"event:person", "event:vehicle", "event:pet"}));
+    }
+
+    // Each type chip shows the kept window's count for its type, on or off; Status counts
+    // both ways.
+    void countsEveryTypeOverTheWindow()
+    {
+        add(1, 0, m_day.from + 100, "person");
+        add(1, 0, m_prevDay.from + 200, "person");
         add(1, 0, m_day.from + 300, "motion");
         add(1, 0, m_day.from + 400, "offline");
         add(1, 0, m_day.from + 500, "online");
-        add(1, 1, m_day.from + 600, "person");   // another camera
-        add(1, 0, m_prevDay.from + 10, "person"); // another day
-        EventFeed c;
-        setUp(c);
-        const QVariantMap counts = c.counts();
+        add(1, 1, m_day.from + 600, "person"); // another camera
+        EventFeed f;
+        setUp(f);
+        const QVariantMap counts = f.counts();
         QCOMPARE(counts.value("person").toInt(), 2);
         QCOMPARE(counts.value("motion").toInt(), 1);
         QCOMPARE(counts.value("status").toInt(), 2);
         QCOMPARE(counts.value("vehicle").toInt(), 0);
-        QCOMPARE(typesOf(c), QStringList({"event:person", "event:person"}));
+        QCOMPARE(rows(f), QStringList({"event:person", "event:person"}));
     }
 
-    void togglingATypeFiltersThatColumnOnly()
+    // Each row carries its local day, for the sticky headers; midnight splits them.
+    void rowsAreKeyedByLocalDay()
+    {
+        add(1, 0, m_day.from + 1, "person");     // 00:00:01 on the 5th
+        add(1, 0, m_day.from - 1, "person");     // 23:59:59 on the 4th
+        add(1, 0, m_prevDay.from + 3600, "vehicle");
+        EventFeed f;
+        setUp(f);
+        QCOMPARE(days(f), QStringList({"2026-11-05", "2026-11-04", "2026-11-04"}));
+    }
+
+    // Sydney's clocks went forward at 02:00 on 4 October 2026: that day is 23 hours long,
+    // and an event either side of the change is still on the same day.
+    void dayKeysFollowDaylightSaving()
+    {
+        const QTimeZone zone = QTimeZone::systemTimeZone();
+        const QDateTime before(QDate(2026, 10, 4), QTime(1, 30), zone);
+        const QDateTime after(QDate(2026, 10, 4), QTime(23, 30), zone);
+        const QDateTime nextDay(QDate(2026, 10, 5), QTime(0, 30), zone);
+        m_now = nextDay.toSecsSinceEpoch() + 3600;
+        add(1, 0, before.toSecsSinceEpoch(), "person");
+        add(1, 0, after.toSecsSinceEpoch(), "person");
+        add(1, 0, nextDay.toSecsSinceEpoch(), "person");
+        EventFeed f;
+        setUp(f);
+        QCOMPARE(days(f), QStringList({"2026-10-05", "2026-10-04", "2026-10-04"}));
+    }
+
+    void togglingATypeFiltersThatFeedOnly()
     {
         add(1, 0, m_day.from + 100, "person");
         add(1, 0, m_day.from + 200, "motion");
@@ -108,12 +172,12 @@ private slots:
         QSignalSpy toggled(&a, &EventFeed::typesToggled);
         a.toggle(QStringLiteral("motion"));
         QCOMPARE(toggled.count(), 1);
-        QCOMPARE(typesOf(a), QStringList({"event:motion", "event:person"}));
-        QCOMPARE(typesOf(b), QStringList({"event:person"}));
+        QCOMPARE(rows(a), QStringList({"event:motion", "event:person"}));
+        QCOMPARE(rows(b), QStringList({"event:person"}));
         a.toggle(QStringLiteral("status"));
-        QCOMPARE(typesOf(a), QStringList({"event:offline", "event:motion", "event:person"}));
+        QCOMPARE(rows(a), QStringList({"event:offline", "event:motion", "event:person"}));
         a.toggle(QStringLiteral("person"));
-        QCOMPARE(typesOf(a), QStringList({"event:offline", "event:motion"}));
+        QCOMPARE(rows(a), QStringList({"event:offline", "event:motion"}));
         // A type the camera doesn't support can't be turned on.
         EventFeed c;
         setUp(c, {"person", "motion"});
@@ -124,10 +188,10 @@ private slots:
     // A remembered set is kept to what the camera supports now, in display order.
     void restoredTypesFollowSupport()
     {
-        EventFeed c;
-        setUp(c, {"person", "vehicle", "motion", "status"});
-        c.restoreTypes({"motion", "pet", "person"});
-        QCOMPARE(c.enabledTypes(), QStringList({"person", "motion"}));
+        EventFeed f;
+        setUp(f, {"person", "vehicle", "motion", "status"});
+        f.restoreTypes({"motion", "pet", "person"});
+        QCOMPARE(f.enabledTypes(), QStringList({"person", "motion"}));
 
         // Remembered before the camera's types are known (it answers late): kept once they are.
         EventFeed late;
@@ -137,118 +201,118 @@ private slots:
         QCOMPARE(late.enabledTypes(), QStringList({"person", "motion"}));
     }
 
+    // Another camera with nothing remembered goes back to the defaults, and keeps
+    // following them as its types become known.
+    void useDefaultTypesFollowsSupport()
+    {
+        EventFeed f;
+        setUp(f, {"person", "motion"});
+        f.restoreTypes({"motion"});
+        f.useDefaultTypes();
+        QCOMPARE(f.enabledTypes(), QStringList({"person"}));
+        f.setSupportedTypes({"person", "vehicle", "motion", "status"});
+        QCOMPARE(f.enabledTypes(), QStringList({"person", "vehicle"}));
+    }
+
     // Toggling keeps a remembered type the camera hasn't reported yet.
     void togglingKeepsTypesNotYetSupported()
     {
-        EventFeed c;
-        setUp(c, {"person", "motion"});
-        c.restoreTypes({"person", "vehicle"});
-        QSignalSpy toggled(&c, &EventFeed::typesToggled);
-        c.toggle(QStringLiteral("motion"));
+        EventFeed f;
+        setUp(f, {"person", "motion"});
+        f.restoreTypes({"person", "vehicle"});
+        QSignalSpy toggled(&f, &EventFeed::typesToggled);
+        f.toggle(QStringLiteral("motion"));
         QCOMPARE(toggled.first().first().toStringList(), QStringList({"person", "vehicle", "motion"}));
-        c.setSupportedTypes({"person", "vehicle", "motion"});
-        QCOMPARE(c.enabledTypes(), QStringList({"person", "vehicle", "motion"}));
+        f.setSupportedTypes({"person", "vehicle", "motion"});
+        QCOMPARE(f.enabledTypes(), QStringList({"person", "vehicle", "motion"}));
     }
 
-    // New events go in at the top without resetting the list, so a scrolled column stays put.
+    // New events go in at the top without resetting the list, so a scrolled feed stays put.
     void newEventsInsertWithoutReset()
     {
         add(1, 0, m_day.from + 100, "person");
-        EventFeed c;
-        setUp(c);
-        QSignalSpy reset(&c, &QAbstractItemModel::modelReset);
-        QSignalSpy inserted(&c, &QAbstractItemModel::rowsInserted);
+        EventFeed f;
+        setUp(f);
+        QSignalSpy reset(&f, &QAbstractItemModel::modelReset);
+        QSignalSpy inserted(&f, &QAbstractItemModel::rowsInserted);
         add(1, 0, m_day.from + 200, "person");
         add(1, 0, m_day.from + 300, "vehicle");
-        c.refresh();
+        f.refresh();
         QCOMPARE(reset.count(), 0);
         QCOMPARE(inserted.count(), 1);
-        QCOMPARE(typesOf(c), QStringList({"event:vehicle", "event:person", "event:person"}));
+        QCOMPARE(rows(f), QStringList({"event:vehicle", "event:person", "event:person"}));
         // Nothing new: nothing happens.
-        c.refresh();
+        f.refresh();
         QCOMPARE(reset.count(), 0);
         QCOMPARE(inserted.count(), 1);
+    }
+
+    // The clock moving on (a refresh a minute later) doesn't reset a scrolled feed either.
+    // An old event leaving the window goes from the bottom in place.
+    void theClockMovingOnDoesNotReset()
+    {
+        add(1, 0, m_day.from + 100, "person");
+        add(1, 0, m_now - kOtherKeepSecs + 30, "vehicle"); // leaves within the minute
+        EventFeed f;
+        setUp(f);
+        QCOMPARE(rows(f), QStringList({"event:person", "event:vehicle"}));
+        QSignalSpy reset(&f, &QAbstractItemModel::modelReset);
+        QSignalSpy removed(&f, &QAbstractItemModel::rowsRemoved);
+        f.setNow(m_now + 60);
+        f.refresh();
+        QCOMPARE(reset.count(), 0);
+        QCOMPARE(removed.count(), 1);
+        QCOMPARE(rows(f), QStringList({"event:person"}));
+    }
+
+    void switchingCameraQueriesAgain()
+    {
+        add(1, 0, m_day.from + 100, "person");
+        add(1, 3, m_prevDay.from + 100, "vehicle");
+        EventFeed f;
+        setUp(f);
+        QCOMPARE(rows(f), QStringList({"event:person"}));
+        f.setCameraKey(QStringLiteral("1:3"));
+        QCOMPARE(rows(f), QStringList({"event:vehicle"}));
+        QCOMPARE(f.counts().value("person").toInt(), 0);
     }
 
     void aCameraWithNoTypesSaysSo()
     {
         add(1, 0, m_day.from + 100, "motion");
-        EventFeed c;
-        setUp(c, {});
-        QVERIFY(!c.hasTypes());
-        QCOMPARE(c.rowCount(), 0);
+        EventFeed f;
+        setUp(f, {});
+        QVERIFY(!f.hasTypes());
+        QCOMPARE(f.rowCount(), 0);
     }
 
-    void switchingDaysQueriesAgain()
-    {
-        add(1, 0, m_day.from + 100, "person");
-        add(1, 0, m_prevDay.from + 100, "vehicle");
-        add(1, 0, m_prevDay.from + 200, "vehicle");
-        EventFeed c;
-        setUp(c);
-        QCOMPARE(typesOf(c), QStringList({"event:person"}));
-        c.setDayStart(m_prevDay.from);
-        QCOMPARE(typesOf(c), QStringList({"event:vehicle", "event:vehicle"}));
-        QCOMPARE(c.counts().value("vehicle").toInt(), 2);
-        QCOMPARE(c.counts().value("person").toInt(), 0);
-        // A new event stored on the shown day appears on refresh.
-        add(1, 0, m_prevDay.from + 300, "person");
-        c.refresh();
-        QCOMPARE(typesOf(c), QStringList({"event:person", "event:vehicle", "event:vehicle"}));
-    }
-
-    // The band sits where the app wasn't running, newest first among the events.
+    // The band sits where the app wasn't running, newest first among the events, keyed by
+    // the day it ends on.
     void gapBandIsPlacedFromTheRuns()
     {
-        // init's run covers everything; use a fresh store with runs 01:00–03:00 and
-        // 05:00–(day end + 1 h): not running before 01:00 and from 03:00 to 05:00.
         cleanup();
         m_db = std::make_unique<Database>(m_dir.filePath(QStringLiteral("gap%1.db").arg(++m_n)),
-                                          QStringLiteral("col%1").arg(m_n));
+                                          QStringLiteral("feed%1").arg(m_n));
         QVERIFY(m_db->open());
         const qint64 h = 3600;
-        // The first recorded run, the evening before.
+        // Runs: the evening before 20:00–21:00, then 01:00–03:00, then 05:00 to now.
         QVERIFY(m_db->touchAppRun(m_db->beginAppRun(m_prevDay.from + 20 * h), m_prevDay.from + 21 * h));
         QVERIFY(m_db->touchAppRun(m_db->beginAppRun(m_day.from + 1 * h), m_day.from + 3 * h));
-        QVERIFY(m_db->touchAppRun(m_db->beginAppRun(m_day.from + 5 * h), m_day.to + h));
+        QVERIFY(m_db->touchAppRun(m_db->beginAppRun(m_day.from + 5 * h), m_now));
         add(1, 0, m_day.from + 2 * h, "person");
         add(1, 0, m_day.from + 6 * h, "vehicle");
-        EventFeed c;
-        setUp(c);
-        QCOMPARE(typesOf(c), QStringList({"event:vehicle", "gap:", "event:person", "gap:"}));
-        QCOMPARE(c.data(c.index(1), EventFeed::FromRole).toLongLong(), m_day.from + 3 * h);
-        QCOMPARE(c.data(c.index(1), EventFeed::ToRole).toLongLong(), m_day.from + 5 * h);
-        QCOMPARE(c.data(c.index(3), EventFeed::FromRole).toLongLong(), m_day.from);
-        QCOMPARE(c.data(c.index(3), EventFeed::ToRole).toLongLong(), m_day.from + 1 * h);
-        // Today: nothing after now is a gap.
-        c.setNow(m_day.from + 4 * h);
-        c.refresh();
-        QCOMPARE(c.data(c.index(1), EventFeed::ToRole).toLongLong(), m_day.from + 4 * h);
-
-        // Before the first recorded run (events from a build that kept no runs) is
-        // unknown, so no band: the day before only has one from 21:00.
-        add(1, 0, m_prevDay.from + 2 * h, "person");
-        c.setDayStart(m_prevDay.from);
-        QCOMPARE(typesOf(c), QStringList({"gap:", "event:person"}));
-        QCOMPARE(c.data(c.index(0), EventFeed::FromRole).toLongLong(), m_prevDay.from + 21 * h);
+        EventFeed f;
+        setUp(f);
+        QCOMPARE(rows(f), QStringList({"event:vehicle", "gap:", "event:person", "gap:"}));
+        QCOMPARE(f.data(f.index(1), EventFeed::FromRole).toLongLong(), m_day.from + 3 * h);
+        QCOMPARE(f.data(f.index(1), EventFeed::ToRole).toLongLong(), m_day.from + 5 * h);
+        // The overnight gap, 21:00 the 4th to 01:00 the 5th, sits under the 5th.
+        QCOMPARE(f.data(f.index(3), EventFeed::FromRole).toLongLong(), m_prevDay.from + 21 * h);
+        QCOMPARE(f.data(f.index(3), EventFeed::ToRole).toLongLong(), m_day.from + 1 * h);
+        QCOMPARE(days(f), QStringList({"2026-11-05", "2026-11-05", "2026-11-05", "2026-11-05"}));
     }
 
-    // The column says when the day is past what is kept.
-    void notesADayNotKept()
-    {
-        EventFeed c;
-        setUp(c);
-        QVERIFY(c.keptNote().isEmpty());
-        c.toggle(QStringLiteral("motion"));
-        c.setNow(m_day.to + kMotionKeepSecs + 10);
-        c.refresh();
-        QVERIFY(c.keptNote().contains(QStringLiteral("24 hours")));
-        c.setNow(m_day.to + kOtherKeepSecs + 10);
-        c.refresh();
-        QVERIFY(c.keptNote().contains(QStringLiteral("30 days")));
-    }
-
-    // Today's counts by recorder and type, for the nothing-selected view.
+    // Today's counts by recorder and type (the Site cards).
     void countsByHostForADay()
     {
         add(1, 0, m_day.from + 1, "person");
