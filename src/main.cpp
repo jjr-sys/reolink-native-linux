@@ -307,7 +307,8 @@ int main(int argc, char *argv[])
             const QVariantMap c = devices.cameraInfo(0);
             // RL_TEST_NOTIFY_TYPE picks the detection type (default person), so a
             // switched-off pair can be checked to go nowhere.
-            const QString type = qEnvironmentVariable("RL_TEST_NOTIFY_TYPE", QStringLiteral("person"));
+            const QString type =
+                qEnvironmentVariable("RL_TEST_NOTIFY_TYPE", QStringLiteral("person"));
             devices.reportDetection(c.value(QStringLiteral("hostId")).toLongLong(),
                                     c.value(QStringLiteral("channel")).toInt(), type,
                                     c.value(QStringLiteral("name")).toString());

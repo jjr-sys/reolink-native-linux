@@ -178,14 +178,18 @@ QVector<EventSwitchKey> Database::switchedOffEvents() const
 bool Database::setEventSwitchedOff(const EventSwitchKey &key, bool off)
 {
     QSqlQuery q(db());
-    q.prepare(off ? QStringLiteral("INSERT OR IGNORE INTO event_switches_off (host_id, channel, type)"
-                                   " VALUES (:h, :c, :t)")
+    q.prepare(off ? QStringLiteral("INSERT OR IGNORE INTO event_switches_off"
+                                   " (host_id, channel, type) VALUES (:h, :c, :t)")
                   : QStringLiteral("DELETE FROM event_switches_off"
                                    " WHERE host_id = :h AND channel = :c AND type = :t"));
     q.bindValue(QStringLiteral(":h"), key.hostId);
     q.bindValue(QStringLiteral(":c"), key.channel);
     q.bindValue(QStringLiteral(":t"), key.type);
-    return q.exec();
+    if (!q.exec()) {
+        m_lastError = q.lastError().text();
+        return false;
+    }
+    return true;
 }
 
 qint64 Database::addEvent(const EventRecord &rec)
@@ -483,13 +487,21 @@ int Database::countEvents(qint64 hostId, int channel, const QString &type,
     return n;
 }
 
-QStringList Database::deleteEvents(qint64 hostId, int channel, const QString &type)
+bool Database::deleteEvents(qint64 hostId, int channel, const QString &type,
+                            QStringList *thumbnails)
 {
-    return deleteEventsWhere(db(), QStringLiteral("host_id = :h AND channel = :c AND type = :t"),
-                             {{QStringLiteral(":h"), hostId},
-                              {QStringLiteral(":c"), channel},
-                              {QStringLiteral(":t"), type}},
-                             &m_lastError);
+    QString error;
+    const QStringList thumbs = deleteEventsWhere(
+        db(), QStringLiteral("host_id = :h AND channel = :c AND type = :t"),
+        {{QStringLiteral(":h"), hostId}, {QStringLiteral(":c"), channel}, {QStringLiteral(":t"), type}},
+        &error);
+    if (!error.isEmpty()) {
+        m_lastError = error;
+        return false; // the rows are still there, so their snapshots must stay too
+    }
+    if (thumbnails)
+        *thumbnails = thumbs;
+    return true;
 }
 
 qint64 Database::beginAppRun(qint64 now)

@@ -380,11 +380,13 @@ QVariantMap EventManager::switchStats(qint64 hostId, int channel, const QString 
 
 bool EventManager::switchOff(qint64 hostId, int channel, const QString &type)
 {
-    // Recorded first: if the switch can't be saved, nothing is deleted.
+    // Recorded first: if the switch can't be saved, nothing is deleted. If the delete
+    // fails the pair stays off (nothing new is stored) and the caller is told.
     if (!m_devices->eventSwitches()->setOff(hostId, channel, type, true))
         return false;
-    const QStringList thumbs =
-        m_db->deleteEvents(hostId, channel, EventSwitches::storedType(type));
+    QStringList thumbs;
+    if (!m_db->deleteEvents(hostId, channel, EventSwitches::storedType(type), &thumbs))
+        return false;
     m_cappedCount.remove(hostId); // recounted on the recorder's next event
     dropThumbnails(thumbs);
     reload();

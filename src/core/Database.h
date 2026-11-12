@@ -114,10 +114,12 @@ public:
     // the thumbnail paths of the removed rows. Motion is left to the age purge.
     QStringList trimHostEvents(qint64 hostId, int keep);
     // One camera's stored events of one type: how many, with their snapshot paths
-    // appended to `thumbnails`; and deleting them, returning those paths.
+    // appended to `thumbnails`; and deleting them, giving the removed rows' snapshot
+    // paths. False (thumbnails untouched) when the delete fails.
     int countEvents(qint64 hostId, int channel, const QString &type,
                     QStringList *thumbnails = nullptr) const;
-    QStringList deleteEvents(qint64 hostId, int channel, const QString &type);
+    bool deleteEvents(qint64 hostId, int channel, const QString &type,
+                      QStringList *thumbnails = nullptr);
     // False when the event no longer exists (trimmed while its thumbnail was on the way).
     bool setEventThumbnail(qint64 id, const QString &path);
     bool setEventCamera(qint64 id, const QString &camera);

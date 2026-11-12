@@ -72,7 +72,8 @@ public:
     // { count, bytes } (stored events, snapshot bytes on disk).
     Q_INVOKABLE QVariantMap switchStats(qint64 hostId, int channel, const QString &type) const;
     // Switches the pair off, then deletes its stored events and their snapshots. False
-    // (nothing changes) for Status or when the switch can't be saved.
+    // when Status (nothing changes), when the switch can't be saved (nothing changes),
+    // or when the delete fails (the pair is off, its stored events remain).
     Q_INVOKABLE bool switchOff(qint64 hostId, int channel, const QString &type);
     // Switches the pair back on: it logs afresh from now (what was deleted stays gone).
     Q_INVOKABLE bool switchOn(qint64 hostId, int channel, const QString &type);

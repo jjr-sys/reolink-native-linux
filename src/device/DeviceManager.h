@@ -93,17 +93,17 @@ public:
     QVariant data(const QModelIndex &index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
 
-    // Camera/NVR by IP or hostname. Validates asynchronously; the row appears
-    // immediately with status "connecting…".
-    // Probe a device WITHOUT persisting anything: the Add Device dialog calls
-    // this first so a typo'd address or rejected password becomes an inline
-    // error instead of a phantom "connecting…" row. Result via testDeviceResult.
     // The event switches: which (recorder, camera, type) pairs are not logged at all.
     EventSwitches *eventSwitches() const { return m_eventSwitches; }
     // The one door every detection goes through on its way to the inbox, the
     // notifications and the Live highlights: a switched-off pair stops here.
     void reportDetection(qint64 hostId, int channel, const QString &type, const QString &camera);
 
+    // Camera/NVR by IP or hostname. Validates asynchronously; the row appears
+    // immediately with status "connecting…".
+    // Probe a device WITHOUT persisting anything: the Add Device dialog calls
+    // this first so a typo'd address or rejected password becomes an inline
+    // error instead of a phantom "connecting…" row. Result via testDeviceResult.
     Q_INVOKABLE void testDevice(const QString &addr, const QString &username,
                                 const QString &password, bool https, int port);
     // User-driven revalidation of a host (sidebar "Reconnect").
