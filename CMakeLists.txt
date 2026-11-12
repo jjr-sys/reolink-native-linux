@@ -27,6 +27,7 @@ add_library(reolink_core STATIC
     src/core/Log.h src/core/Log.cpp
     src/core/Paths.h src/core/Paths.cpp
     src/core/Database.h src/core/Database.cpp
+    src/core/SeenStore.h src/core/LocalSeenStore.h src/core/LocalSeenStore.cpp
     src/core/CredentialStore.h src/core/CredentialStore.cpp
     src/core/Notifier.h src/core/Notifier.cpp
     src/core/Updater.h src/core/Updater.cpp
@@ -72,6 +73,7 @@ add_library(reolink_core STATIC
     src/device/EventHistory.h src/device/EventHistory.cpp
     src/device/EventManager.h src/device/EventManager.cpp
     src/device/EventSwitches.h src/device/EventSwitches.cpp
+    src/device/UnseenCounts.h src/device/UnseenCounts.cpp
     src/device/FirstSwitchOffs.h src/device/FirstSwitchOffs.cpp
     src/media/LatestValueMailbox.h src/media/StreamPlayer.h src/media/StreamPlayer.cpp
     src/media/HttpAuth.h src/media/HttpAuth.cpp
@@ -250,7 +252,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection test_sitebudget test_savedselections test_playbackgroup test_bcdownload test_bcmp4writer test_bcclipsave test_eventhistory test_eventfeed test_frigatevod test_eventswitches test_firstswitchoffs test_eventcameralist test_datebar)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection test_sitebudget test_savedselections test_playbackgroup test_bcdownload test_bcmp4writer test_bcclipsave test_eventhistory test_eventfeed test_frigatevod test_eventswitches test_firstswitchoffs test_eventcameralist test_datebar test_unseencounts)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})

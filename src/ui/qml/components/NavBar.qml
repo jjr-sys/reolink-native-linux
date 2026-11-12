@@ -86,9 +86,9 @@ Rectangle {
                     color: root.currentIndex === parent.index ? Theme.text : Theme.textMuted
                     font.pixelSize: 14
                 }
-                // Unread badge on the Events tab (index 2).
+                // Unseen badge on the Events tab (index 2): events not yet seen on any camera.
                 Rectangle {
-                    visible: parent.index === 2 && Events.unread > 0
+                    visible: parent.index === 2 && Unseen.total > 0
                     anchors.left: tabLabel.right
                     anchors.leftMargin: 2
                     anchors.verticalCenter: tabLabel.verticalCenter
@@ -100,7 +100,7 @@ Rectangle {
                     Text {
                         id: badgeText
                         anchors.centerIn: parent
-                        text: Events.unread > 99 ? "99+" : Events.unread
+                        text: Unseen.total > 99 ? "99+" : Unseen.total
                         color: "white"
                         font.pixelSize: 10
                         font.bold: true

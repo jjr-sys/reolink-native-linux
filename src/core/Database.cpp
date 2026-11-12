@@ -123,12 +123,32 @@ bool Database::migrate()
                        " PRIMARY KEY (host_id, channel, type))"),
     };
 
+    // Unseen counts (wayfinder/events-feed step 20): when each camera was last opened in the
+    // Events page on this desktop. Every camera already known starts seen now, so the
+    // upgrade shows nothing unseen; a camera added later has no row, which counts all it
+    // logs (the same as starting it when first seen, since it has logged nothing before).
+    static const QStringList migrationsV5 = {
+        QStringLiteral("CREATE TABLE IF NOT EXISTS camera_seen ("
+                       " host_id INTEGER NOT NULL,"
+                       " channel INTEGER NOT NULL,"
+                       " seen_at INTEGER NOT NULL,"
+                       " PRIMARY KEY (host_id, channel))"),
+        // A recorder whose clock runs ahead has events stamped after now: seen up to them.
+        QStringLiteral("INSERT OR IGNORE INTO camera_seen (host_id, channel, seen_at)"
+                       " SELECT host_id, channel,"
+                       " MAX(MAX(ts), CAST(strftime('%s', 'now') AS INTEGER))"
+                       " FROM events GROUP BY host_id, channel"),
+        QStringLiteral("INSERT OR IGNORE INTO camera_seen (host_id, channel, seen_at)"
+                       " SELECT host_id, idx, CAST(strftime('%s', 'now') AS INTEGER) FROM channels"),
+    };
+
     // Ordered migrations; each bumps the stored version by one.
     const QVector<QPair<int, const QStringList *>> steps = {
         {1, &migrationsV1},
         {2, &migrationsV2},
         {3, &migrationsV3},
         {4, &migrationsV4},
+        {5, &migrationsV5},
     };
 
     const int current = schemaVersion();
@@ -379,6 +399,55 @@ QHash<QPair<qint64, int>, qint64> Database::lastEventTimes() const
                               " GROUP BY host_id, channel")))
         while (q.next())
             out.insert({q.value(0).toLongLong(), q.value(1).toInt()}, q.value(2).toLongLong());
+    return out;
+}
+
+QHash<QPair<qint64, int>, qint64> Database::cameraSeenTimes() const
+{
+    QHash<QPair<qint64, int>, qint64> out;
+    QSqlQuery q(db());
+    if (q.exec(QStringLiteral("SELECT host_id, channel, seen_at FROM camera_seen")))
+        while (q.next())
+            out.insert({q.value(0).toLongLong(), q.value(1).toInt()}, q.value(2).toLongLong());
+    return out;
+}
+
+bool Database::setCameraSeen(qint64 hostId, int channel, qint64 at)
+{
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("INSERT INTO camera_seen (host_id, channel, seen_at) VALUES (:h, :c, :t)"
+                             " ON CONFLICT (host_id, channel) DO UPDATE SET seen_at = excluded.seen_at"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":c"), channel);
+    q.bindValue(QStringLiteral(":t"), at);
+    if (!q.exec()) {
+        m_lastError = q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+QHash<QString, int> Database::eventCountsAfter(qint64 hostId, int channel, qint64 after,
+                                               const QStringList &types) const
+{
+    QHash<QString, int> out;
+    if (types.isEmpty())
+        return out;
+    QStringList marks;
+    for (int i = 0; i < types.size(); ++i)
+        marks << QStringLiteral(":t%1").arg(i);
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT type, COUNT(*) FROM events WHERE host_id = :h AND channel = :c"
+                             " AND ts > :after AND type IN (%1) GROUP BY type")
+                  .arg(marks.join(QStringLiteral(", "))));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":c"), channel);
+    q.bindValue(QStringLiteral(":after"), after);
+    for (int i = 0; i < types.size(); ++i)
+        q.bindValue(marks.at(i), types.at(i));
+    if (q.exec())
+        while (q.next())
+            out.insert(q.value(0).toString(), q.value(1).toInt());
     return out;
 }
 

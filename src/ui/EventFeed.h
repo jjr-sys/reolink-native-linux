@@ -37,6 +37,12 @@ class EventFeed : public QAbstractListModel
     Q_PROPERTY(bool hasTypes READ hasTypes NOTIFY supportedTypesChanged)
     Q_PROPERTY(QVariantMap counts READ counts NOTIFY refreshed)
     Q_PROPERTY(int count READ count NOTIFY refreshed)
+    // Step 20: the time the camera had been seen up to when it was opened; 0 when it had
+    // never been opened (everything is new), -1 for none (nothing is marked).
+    // Rows newer than it are new; the "Seen up to here" line sits on row newUntilRow,
+    // and the date bar's band covers rows [0, newUntilRow).
+    Q_PROPERTY(qint64 seenLine READ seenLine WRITE setSeenLine NOTIFY seenLineChanged)
+    Q_PROPERTY(int newUntilRow READ newUntilRow NOTIFY newUntilRowChanged)
 
 public:
     enum Role {
@@ -48,6 +54,8 @@ public:
         ToRole,
         DayRole,                     // local day, "yyyy-MM-dd" (a gap: the day it ends on)
         IdRole,                      // the stored event's id (-1 for a gap)
+        NewRole,                     // an event after seenLine (a blue dot)
+        SeenLineRole,                // the "Seen up to here" line sits above this row
     };
 
     explicit EventFeed(QObject *parent = nullptr);
@@ -70,6 +78,9 @@ public:
     bool hasTypes() const { return !m_supported.isEmpty(); }
     QVariantMap counts() const { return m_counts; }
     int count() const { return int(m_rows.size()); }
+    qint64 seenLine() const { return m_seenLine; }
+    void setSeenLine(qint64 t);
+    int newUntilRow() const { return m_newUntilRow; }
 
     Q_INVOKABLE static QStringList defaultTypes(const QStringList &supported);
     // Turn a type on or off; emits typesToggled so the page can remember the set.
@@ -89,6 +100,8 @@ signals:
     void enabledTypesChanged();
     void typesToggled(const QStringList &types);
     void refreshed();
+    void seenLineChanged();
+    void newUntilRowChanged();
 
 private:
     struct Row
@@ -101,6 +114,7 @@ private:
     void setEnabled(const QStringList &types);
     void applyRows(const QVector<Row> &rows);
     qint64 now() const;
+    void updateNewRows(bool lineMoved);
 
     QPointer<EventManager> m_events;
     Database *m_db = nullptr;
@@ -114,6 +128,8 @@ private:
     QStringList m_wanted;       // the chosen set, before it is kept to the supported types
     QVariantMap m_counts;
     QVector<Row> m_rows;
+    qint64 m_seenLine = -1;
+    int m_newUntilRow = 0;
 };
 
 } // namespace rl

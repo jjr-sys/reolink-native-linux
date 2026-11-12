@@ -247,6 +247,80 @@ private slots:
         QCOMPARE(inserted.count(), 1);
     }
 
+    // Unseen counts (step 20): events after the time the camera had been seen up to are
+    // new (blue dot); the "Seen up to here" line sits on the first row at or before it,
+    // and the date bar's band covers the rows above (newUntilRow).
+    void seenLineMarksNewRows()
+    {
+        add(1, 0, m_day.from + 100, "person");
+        add(1, 0, m_day.from + 200, "vehicle");
+        add(1, 0, m_day.from + 300, "pet");
+        add(1, 0, m_day.from + 400, "person");
+        EventFeed f;
+        setUp(f);
+        QCOMPARE(f.newUntilRow(), 0);
+        QCOMPARE(rows(f, EventFeed::NewRole),
+                 QStringList({"event:false", "event:false", "event:false", "event:false"}));
+
+        QSignalSpy changed(&f, &QAbstractItemModel::dataChanged);
+        f.setSeenLine(m_day.from + 200); // at the vehicle: it was seen
+        QVERIFY(changed.count() > 0);
+        QCOMPARE(f.newUntilRow(), 2);
+        QCOMPARE(rows(f, EventFeed::NewRole),
+                 QStringList({"event:true", "event:true", "event:false", "event:false"}));
+        QCOMPARE(rows(f, EventFeed::SeenLineRole),
+                 QStringList({"event:false", "event:false", "event:true", "event:false"}));
+
+        // A new event slides in at the top: new, and the line stays on the same event.
+        add(1, 0, m_day.from + 500, "vehicle");
+        f.refresh();
+        QCOMPARE(f.newUntilRow(), 3);
+        QCOMPARE(rows(f, EventFeed::SeenLineRole),
+                 QStringList({"event:false", "event:false", "event:false", "event:true",
+                              "event:false"}));
+
+        // Everything new: the band covers the whole feed, with no line to draw.
+        f.setSeenLine(m_day.from + 50);
+        QCOMPARE(f.newUntilRow(), 5);
+        QVERIFY(!rows(f, EventFeed::SeenLineRole).contains("event:true"));
+        // The feed shrinking under an all-new band (a chip turned off) stays in range.
+        QTest::failOnWarning(QRegularExpression(QStringLiteral(".*")));
+        f.toggle(QStringLiteral("person"));
+        QCOMPARE(f.newUntilRow(), 3);
+        f.toggle(QStringLiteral("person"));
+        QCOMPARE(f.newUntilRow(), 5);
+        // Nothing new: no band, no line.
+        f.setSeenLine(m_day.from + 900);
+        QCOMPARE(f.newUntilRow(), 0);
+        QVERIFY(!rows(f, EventFeed::SeenLineRole).contains("event:true"));
+        // Never opened: everything is new, with no line. None open: nothing marked.
+        f.setSeenLine(0);
+        QCOMPARE(f.newUntilRow(), 5);
+        QVERIFY(!rows(f, EventFeed::SeenLineRole).contains("event:true"));
+        f.setSeenLine(-1);
+        QCOMPARE(f.newUntilRow(), 0);
+    }
+
+    // A gap (app not running) is never new itself, but sits inside the band.
+    void aGapAmongNewRowsIsNotNew()
+    {
+        cleanup();
+        m_db = std::make_unique<Database>(m_dir.filePath(QStringLiteral("gap%1.db").arg(++m_n)),
+                                          QStringLiteral("feed%1").arg(m_n));
+        QVERIFY(m_db->open());
+        const qint64 h = 3600;
+        QVERIFY(m_db->touchAppRun(m_db->beginAppRun(m_now - kOtherKeepSecs - 86400), m_day.from + 3 * h));
+        QVERIFY(m_db->touchAppRun(m_db->beginAppRun(m_day.from + 5 * h), m_now));
+        add(1, 0, m_day.from + 2 * h, "person");
+        add(1, 0, m_day.from + 6 * h, "vehicle");
+        EventFeed f;
+        setUp(f);
+        f.setSeenLine(m_day.from + 2 * h);
+        QCOMPARE(rows(f, EventFeed::NewRole),
+                 QStringList({"event:true", "gap:false", "event:false"}));
+        QCOMPARE(f.newUntilRow(), 2);
+    }
+
     // Two events of a type in the same second are told apart: a new one in that second
     // goes in at the top, and a snapshot lands on its own row.
     void sameSecondEventsAreToldApart()

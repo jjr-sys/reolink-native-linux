@@ -1,5 +1,6 @@
 #include "core/CredentialStore.h"
 #include "core/Database.h"
+#include "core/LocalSeenStore.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/SingleInstance.h"
@@ -12,6 +13,7 @@
 #include "device/Highlights.h"
 #include "media/AlertSounds.h"
 #include "device/EventManager.h"
+#include "device/UnseenCounts.h"
 #include "device/FrigateApi.h"
 #include "media/StreamPlayer.h"
 #include "media/LiveStream.h"
@@ -178,6 +180,11 @@ int main(int argc, char *argv[])
     rl::CredentialStore credentials;
     rl::DeviceManager devices(&database, &credentials);
     rl::EventManager events(&database, &devices);
+    // Unseen counts (wayfinder/events-feed step 20): seen times kept on this desktop.
+    rl::LocalSeenStore seenStore(&database);
+    rl::UnseenCounts unseen;
+    unseen.setStore(&seenStore);
+    unseen.setEvents(&events);
     rl::Highlights highlights(&devices);
     rl::AlertSounds alertSounds;
     QObject::connect(&highlights, &rl::Highlights::soundRequested, &alertSounds,
@@ -209,6 +216,7 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Events", &events);
+    qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Unseen", &unseen);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Highlights", &highlights);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "AlertSounds", &alertSounds);
     // RL_MOCK_DETECTIONS="person:1:3@2;motion:1:4@4" plays scripted detections into Highlights.
@@ -295,8 +303,10 @@ int main(int argc, char *argv[])
     // starting its own app; it forwarded its activation token so this raise is
     // allowed rather than suppressed as focus stealing.
     QObject::connect(&instance, &rl::SingleInstance::activationRequested, &app, raiseWindow);
-    QObject::connect(&events, &rl::EventManager::unreadChanged, &tray,
-                     [&tray, &events] { tray.setUnread(events.unread()); });
+    // The tray shows the unseen total across every camera (it was events since startup).
+    QObject::connect(&unseen, &rl::UnseenCounts::changed, &tray,
+                     [&tray, &unseen] { tray.setUnread(unseen.total()); });
+    tray.setUnread(unseen.total());
     // With the window closed the app lives in the tray; don't exit.
     app.setQuitOnLastWindowClosed(!tray.available());
 

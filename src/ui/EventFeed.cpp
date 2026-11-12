@@ -56,6 +56,8 @@ QVariant EventFeed::data(const QModelIndex &index, int role) const
     case ToRole: return r.to;
     case DayRole: return r.day;
     case IdRole: return r.id;
+    case NewRole: return !r.gap && index.row() < m_newUntilRow;
+    case SeenLineRole: return index.row() == m_newUntilRow && m_newUntilRow > 0;
     default: return {};
     }
 }
@@ -64,7 +66,8 @@ QHash<int, QByteArray> EventFeed::roleNames() const
 {
     return {{KindRole, "kind"},           {TypeRole, "type"}, {TimestampRole, "timestamp"},
             {ThumbnailRole, "thumbnail"}, {FromRole, "from"}, {ToRole, "to"},
-            {DayRole, "day"}, {IdRole, "eventId"}};
+            {DayRole, "day"}, {IdRole, "eventId"}, {NewRole, "isNew"},
+            {SeenLineRole, "seenLineAbove"}};
 }
 
 EventManager *EventFeed::events() const
@@ -233,6 +236,38 @@ qint64 EventFeed::timestampAt(int row) const
     return row >= 0 && row < m_rows.size() ? m_rows.at(row).ts : 0;
 }
 
+void EventFeed::setSeenLine(qint64 t)
+{
+    if (m_seenLine == t)
+        return;
+    m_seenLine = t;
+    emit seenLineChanged();
+    updateNewRows(true);
+}
+
+// Rows are newest first, so the new ones are a run at the top: up to the first row at or
+// before the seen line. A gap is never new itself but can sit inside that run.
+void EventFeed::updateNewRows(bool lineMoved)
+{
+    int until = 0;
+    if (m_seenLine >= 0) // 0: never opened, so everything is new
+        while (until < m_rows.size() && m_rows.at(until).ts > m_seenLine)
+            ++until;
+    if (!lineMoved && until == m_newUntilRow)
+        return;
+    const int before = m_newUntilRow;
+    m_newUntilRow = until;
+    const int last = int(m_rows.size()) - 1;
+    if (lineMoved && last >= 0)
+        emit dataChanged(index(0), index(last), {NewRole, SeenLineRole});
+    else if (!lineMoved && qMin(before, until) <= last) // rows came in above or went: the
+        // line moved with its row; mark the rows between its old and new place
+        emit dataChanged(index(qMin(before, until)), index(qMin(last, qMax(before, until))),
+                         {NewRole, SeenLineRole});
+    if (until != before)
+        emit newUntilRowChanged();
+}
+
 qint64 EventFeed::now() const
 {
     return m_now > 0 ? m_now : QDateTime::currentSecsSinceEpoch();
@@ -271,6 +306,7 @@ void EventFeed::refresh()
                          [](const Row &a, const Row &b) { return a.ts > b.ts; });
     }
     applyRows(rows);
+    updateNewRows(false);
     m_counts = counts;
     emit refreshed();
 }

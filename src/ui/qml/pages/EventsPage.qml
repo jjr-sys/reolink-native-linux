@@ -9,7 +9,8 @@ import ReolinkApp.Core
 // Site's cameras, the most recently active first; in the middle one camera's feed over
 // everything kept (30 days), newest first, a full-width snapshot under each caption line,
 // sticky day headers; on the right the player panel (the clip player comes in step 22).
-// The camera's type chips filter its feed and are remembered per camera.
+// The camera's type chips filter its feed and are remembered per camera. Step 20 adds the
+// unseen counts: bubbles per camera and Site, blue dots, "Seen up to here", a date-bar band.
 Item {
     id: page
     signal jumpToPlayback(var hostId, var channel, var timestamp)
@@ -117,6 +118,10 @@ Item {
     function chooseCamera() {
         if (page.camera !== "" && !page.autoChosen && cameraList.contains(page.camera))
             return;
+        // On screen the shown camera stays put: following the most active camera there would
+        // open (and mark seen) each camera as it logs, and its bubbles would never show.
+        if (page.camera !== "" && page.onScreen && cameraList.contains(page.camera))
+            return;
         var m = {};
         try { m = JSON.parse(store.cameras); } catch (e) { m = {}; }
         const remembered = m[page.site] || "";
@@ -182,9 +187,16 @@ Item {
     Settings { id: typeStore; category: "eventTypes" }
     function typeKey(key) { return "c" + key.replace(":", "_"); }
 
+    // Unseen counts (step 20): the camera on screen is the one opened; it stays seen while
+    // it is open, and its feed marks what was new when it was opened.
+    readonly property bool onScreen: page.visible && Window.visibility !== Window.Hidden
+                                     && Window.visibility !== Window.Minimized
+    Binding { target: Unseen; property: "openCamera"; value: page.onScreen ? page.camera : "" }
+
     EventFeed {
         id: feed
         events: Events
+        seenLine: Unseen.openCamera === page.camera ? Unseen.seenLine : -1
         cameraKey: page.camera
         supportedTypes: page.cameraTypes
         onTypesToggled: (types) => typeStore.setValue(page.typeKey(page.camera), types.join(","))
@@ -245,25 +257,52 @@ Item {
             Repeater {
                 model: Sites.list
                 Rectangle {
+                    id: siteTab
                     required property string modelData
                     readonly property bool current: modelData === page.site
-                    width: siteText.implicitWidth + 28
+                    // The Site's unseen total (step 20), in a grey bubble after its name.
+                    readonly property int unseen: {
+                        Unseen.revision; Sites.revision;
+                        return Unseen.totalForHosts(Sites.hostsOf(modelData));
+                    }
+                    width: siteLabel.implicitWidth + 28
                     height: 28
                     radius: 14
                     color: current ? Theme.accentDim : (siteHover.hovered ? Theme.surfaceAlt : Theme.surface)
                     border.color: current ? Theme.accent : Theme.border
-                    Text {
-                        id: siteText
+                    Row {
+                        id: siteLabel
                         anchors.centerIn: parent
-                        text: parent.modelData
-                        color: parent.current ? Theme.text : Theme.textMuted
-                        font.pixelSize: 13
+                        spacing: 6
+                        Text {
+                            id: siteText
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: siteTab.modelData
+                            color: siteTab.current ? Theme.text : Theme.textMuted
+                            font.pixelSize: 13
+                        }
+                        Rectangle {
+                            visible: siteTab.unseen > 0
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.max(18, siteCount.implicitWidth + 10)
+                            height: 18
+                            radius: 9
+                            color: Theme.textMuted
+                            Text {
+                                id: siteCount
+                                anchors.centerIn: parent
+                                text: siteTab.unseen > 99 ? "99+" : siteTab.unseen
+                                color: Theme.surface
+                                font.pixelSize: 11
+                                font.bold: true
+                            }
+                        }
                     }
                     HoverHandler { id: siteHover; cursorShape: Qt.PointingHandCursor }
-                    TapHandler { onTapped: page.pickSite(parent.modelData) }
+                    TapHandler { onTapped: page.pickSite(siteTab.modelData) }
                     TapHandler {
                         acceptedButtons: Qt.RightButton
-                        onTapped: if (page.menus) page.menus.popupSite(parent.modelData)
+                        onTapped: if (page.menus) page.menus.popupSite(siteTab.modelData)
                     }
                 }
             }
@@ -295,15 +334,21 @@ Item {
                 required property var last
                 required property bool statusOnly
                 readonly property bool current: key === page.camera
+                // { type: n } of its unseen events (step 20), in bubble order.
+                readonly property var unseen: { Unseen.revision; return Unseen.countsFor(key); }
+                readonly property var unseenTypes: Unseen.countedTypes().filter(t => (unseen[t] || 0) > 0)
                 width: ListView.view.width
                 height: 48
                 radius: Theme.radius
                 color: current ? Theme.accentDim : (camHover.hovered ? Theme.surfaceAlt : "transparent")
                 border.color: current ? Theme.accent : "transparent"
                 ColumnLayout {
-                    anchors.fill: parent
+                    anchors.left: parent.left
+                    anchors.right: bubbles.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
                     anchors.leftMargin: 10
-                    anchors.rightMargin: 10
+                    anchors.rightMargin: 6
                     spacing: 1
                     Item { Layout.fillHeight: true }
                     Text {
@@ -322,6 +367,43 @@ Item {
                         elide: Text.ElideRight
                     }
                     Item { Layout.fillHeight: true }
+                }
+                // Coloured bubbles of unseen events per type (99+), or ✓ when nothing is new.
+                Row {
+                    id: bubbles
+                    anchors.right: parent.right
+                    anchors.rightMargin: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 3
+                    Repeater {
+                        model: camRow.unseenTypes
+                        Rectangle {
+                            required property string modelData
+                            readonly property int n: camRow.unseen[modelData] || 0
+                            width: Math.max(20, bubbleText.implicitWidth + 10)
+                            height: 20
+                            radius: 10
+                            color: page.colorFor(modelData)
+                            Text {
+                                id: bubbleText
+                                anchors.centerIn: parent
+                                text: parent.n > 99 ? "99+" : parent.n
+                                color: "white"
+                                font.pixelSize: 11
+                                font.bold: true
+                            }
+                            ToolTip.visible: bubbleHover.hovered
+                            ToolTip.delay: 400
+                            ToolTip.text: qsTr("%1 new: %2").arg(page.labelFor(modelData)).arg(n)
+                            HoverHandler { id: bubbleHover }
+                        }
+                    }
+                    Text {
+                        visible: camRow.unseenTypes.length === 0 && !camRow.statusOnly
+                        text: "✓"
+                        color: Theme.textMuted
+                        font.pixelSize: 13
+                    }
                 }
                 HoverHandler { id: camHover; cursorShape: Qt.PointingHandCursor }
                 TapHandler { onTapped: page.pickCamera(camRow.key) }
@@ -439,11 +521,47 @@ Item {
                     required property string thumbnail
                     required property var from
                     required property var to
+                    required property bool isNew          // after the seen line: a blue dot
+                    required property bool seenLineAbove  // "Seen up to here" sits above it
                     readonly property bool gap: kind === "gap"
                     readonly property bool status: type === "online" || type === "offline"
                     readonly property bool slim: gap || status
                     width: ListView.view.width
                     height: slim ? 28 : caption.height + 6 + snap.height
+                    z: seenLineAbove ? 1 : 0   // the line is drawn in the spacing above
+
+                    // "Seen up to here" (step 20): where the person had looked up to when they
+                    // opened the camera, drawn across the spacing above this row so the rows
+                    // keep the heights the date bar lays out.
+                    Item {
+                        visible: ev.seenLineAbove
+                        width: parent.width
+                        height: feedView.spacing
+                        // Above the day header when the row starts a day, not under it.
+                        y: -feedView.spacing
+                           - (ev.ListView.section !== ev.ListView.previousSection ? dateBar.headerHeight : 0)
+                        Rectangle {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.width
+                            height: 1
+                            color: Theme.accent
+                        }
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: seenText.implicitWidth + 16
+                            height: 16
+                            radius: 8
+                            color: Theme.accent
+                            Text {
+                                id: seenText
+                                anchors.centerIn: parent
+                                text: qsTr("Seen up to here")
+                                color: "white"
+                                font.pixelSize: 10
+                                font.bold: true
+                            }
+                        }
+                    }
 
                     // "App not running" band, or a Status line.
                     Rectangle {
@@ -472,6 +590,12 @@ Item {
                         width: parent.width
                         height: 28
                         spacing: 8
+                        Rectangle {   // new since the camera was last opened
+                            visible: ev.isNew
+                            Layout.leftMargin: 2
+                            width: 8; height: 8; radius: 4
+                            color: Theme.accent
+                        }
                         Rectangle {
                             width: pill.implicitWidth + 16
                             height: 22
@@ -672,6 +796,16 @@ Item {
             }
         }
 
+        Rectangle {   // the band over the new part of the feed (step 20)
+            visible: feed.newUntilRow > 0
+            x: parent.width - 4
+            width: 4
+            radius: 2
+            color: Theme.accent
+            opacity: 0.45
+            y: 0
+            height: Math.max(4, dateBar.total > 0 ? dateBar.barY(feed.newUntilRow, 0) : 0)
+        }
         Rectangle {   // the thumb: the visible part of the feed
             readonly property var viewTop: page.viewTop
             x: 0

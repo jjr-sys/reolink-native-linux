@@ -107,6 +107,12 @@ public:
     QHash<QPair<qint64, int>, QString> eventCameraNames() const;
     // Every camera's newest stored detection time (Status doesn't count), by (host, channel).
     QHash<QPair<qint64, int>, qint64> lastEventTimes() const;
+    // When each camera was last opened in the Events page (unseen counts, schema v5).
+    QHash<QPair<qint64, int>, qint64> cameraSeenTimes() const;
+    bool setCameraSeen(qint64 hostId, int channel, qint64 at);
+    // A camera's events of the given stored types after `after`, by type.
+    QHash<QString, int> eventCountsAfter(qint64 hostId, int channel, qint64 after,
+                                         const QStringList &types) const;
     bool renameEventCamera(qint64 hostId, const QString &from, const QString &to);
     bool clearEvents();
     // Age-based retention at `now`: motion older than `motionKeepSecs`, everything else

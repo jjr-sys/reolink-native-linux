@@ -22,6 +22,16 @@ While the project is pre-1.0, minor versions may still change behaviour.
   what it deletes (events and snapshot size). Switch off applies them all; Cancel
   keeps everything logging. Either way it isn't asked again. Without the setting
   nothing is shown.
+- **Events: unseen counts.** Each camera in the Events camera list shows coloured
+  bubbles of the events it has logged since it was last opened on this desktop
+  (blue Person, amber Vehicle, green Pet, red Visitor; 99+), or ✓ when nothing is
+  new; Motion and Status don't count, nor do switched-off types. Opening a camera
+  marks it seen, and it stays seen while it is on screen. Each Site tab shows its
+  total, and the Events tab's badge and the tray tooltip show the total across every
+  camera, kept across restarts (they used to count events since the app started). In
+  the feed, new events carry a blue dot, a "Seen up to here" line marks where you had
+  looked up to, and a band on the date bar covers the new part. Upgrading starts
+  every camera already known as seen (database schema v5).
 
 ### Changed
 
