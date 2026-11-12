@@ -228,6 +228,11 @@ void EventFeed::applyRows(const QVector<Row> &rows)
     }
 }
 
+qint64 EventFeed::timestampAt(int row) const
+{
+    return row >= 0 && row < m_rows.size() ? m_rows.at(row).ts : 0;
+}
+
 qint64 EventFeed::now() const
 {
     return m_now > 0 ? m_now : QDateTime::currentSecsSinceEpoch();

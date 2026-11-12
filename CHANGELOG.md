@@ -37,6 +37,11 @@ While the project is pre-1.0, minor versions may still change behaviour.
   a Site tab or a camera for its menu. This replaces the per-camera columns, the day
   picker, the camera drawer (with Clear all and Undo) and the day's counts by Site shown
   when nothing was picked.
+- **Events date bar.** A bar beside the feed marks where each day starts (Today,
+  Yest., then weekday and date, with the month where it changes); labels stack so they
+  never overlap, and on a full month every day keeps a tick with every second one
+  labelled. A thumb shows the visible part; press or drag on the bar to jump; while
+  the feed moves, a bubble shows the date and time of the top event.
 - **Events keep a month.** Motion is now kept for 24 hours and no longer counts
   toward the per-recorder limit, which rises from 10,000 to 50,000. Person, Vehicle,
   Pet, Visitor and Status events stay for 30 days on every Site, even the busy ones.

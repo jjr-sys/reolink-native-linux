@@ -17,6 +17,7 @@ Item {
 
     readonly property int listWidth: 260
     readonly property int feedWidth: 560
+    readonly property int railWidth: 44     // the date bar beside the feed
     readonly property bool showPlayer: width >= 1150
 
     onVisibleChanged: if (visible) { Events.markAllRead(); page.now = new Date(); }
@@ -350,9 +351,10 @@ Item {
         anchors.top: bar.bottom
         anchors.bottom: parent.bottom
         anchors.left: listPane.right
-        width: page.feedWidth + Theme.spacing * 4
+        width: page.feedWidth + page.railWidth + Theme.spacing * 4
 
         ColumnLayout {
+            id: feedColumn
             anchors.fill: parent
             anchors.margins: Theme.spacing * 2
             anchors.topMargin: Theme.spacing
@@ -403,13 +405,13 @@ Item {
                 id: feedView
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                Layout.rightMargin: page.railWidth   // the date bar sits there
                 model: feed
                 clip: true
                 spacing: 10
                 reuseItems: true
                 cacheBuffer: 1600
                 boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
                 section.property: "day"
                 section.criteria: ViewSection.FullString
@@ -562,6 +564,156 @@ Item {
                 }
             }
         }
+    }
+
+    // ---- The date bar beside the feed (wayfinder/events-feed step 19) ----------------------
+    // Day marks where each day starts in the feed, labels stacked so they never overlap, a
+    // thumb for the visible part; press or drag to jump; a bubble with the top event's date
+    // and time while the feed moves. Geometry comes from EventDateBar (the feed's own rows).
+    readonly property string todayKey: Qt.formatDate(page.now, "yyyy-MM-dd")
+    readonly property string yesterdayKey: Qt.formatDate(new Date(page.now.getTime() - 86400000), "yyyy-MM-dd")
+    EventDateBar {
+        id: dateBar
+        feed: feed
+        eventHeight: 28 + 6 + Math.round(feedView.width * 9 / 16)
+        slimHeight: 28
+        headerHeight: 30
+        spacing: feedView.spacing
+        barHeight: rail.height
+        minGap: 26
+        keep: [page.todayKey, page.yesterdayKey]
+    }
+    // The row at the top of the view and how far into it the view is scrolled.
+    function topOfView() {
+        feedView.contentY;   // re-evaluate as it scrolls
+        for (const dy of [1, 31, 61]) {
+            const i = feedView.indexAt(20, feedView.contentY + dy);
+            if (i >= 0) {
+                const item = feedView.itemAtIndex(i);
+                return { row: i, offset: item ? Math.max(0, feedView.contentY - item.y) : 0 };
+            }
+        }
+        return { row: 0, offset: 0 };
+    }
+    function jumpTo(y) {
+        const row = dateBar.rowAtBar(y, feedView.height);
+        if (row >= 0)
+            feedView.positionViewAtIndex(row, ListView.Beginning);
+        bubbleHide.restart();
+    }
+    // A mark's label: Today, Yest., or the weekday over the day number, with the month on
+    // the 1st and where the month changes from the label above.
+    function markLabel(day, above) {
+        if (day === page.todayKey) return { top: qsTr("Today"), bottom: "" };
+        if (day === page.yesterdayKey) return { top: qsTr("Yest."), bottom: "" };
+        const p = day.split("-");
+        const d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+        const newMonth = d.getDate() === 1 || (above !== "" && above.substring(0, 7) !== day.substring(0, 7));
+        return { top: Qt.formatDate(d, "ddd"), bottom: d.getDate() + (newMonth ? " " + Qt.formatDate(d, "MMM") : "") };
+    }
+    Rectangle {
+        id: rail
+        x: feedPane.x + feedColumn.x + feedView.x + feedView.width
+        y: feedPane.y + feedColumn.y + feedView.y
+        width: page.railWidth
+        height: feedView.height
+        visible: feedView.count > 0
+        color: Theme.surface
+        border.color: Theme.border
+        radius: 4
+
+        Repeater {
+            model: dateBar.marks
+            Item {
+                required property var modelData
+                required property int index
+                anchors.fill: parent
+                Rectangle {   // the tick where the day starts
+                    x: modelData.labelled ? 3 : parent.width - 10
+                    width: modelData.labelled ? parent.width - 6 : 7
+                    y: modelData.tickY
+                    height: 1
+                    color: Theme.border
+                }
+                Column {
+                    visible: modelData.labelled
+                    x: 3
+                    width: parent.width - 6
+                    y: modelData.y + 1
+                    readonly property var label: {
+                        var above = "";
+                        for (var j = index - 1; j >= 0; --j)
+                            if (dateBar.marks[j].labelled) { above = dateBar.marks[j].day; break; }
+                        return page.markLabel(modelData.day, above);
+                    }
+                    Text {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignRight
+                        text: parent.label.top
+                        color: Theme.text
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+                    Text {
+                        width: parent.width
+                        visible: text !== ""
+                        horizontalAlignment: Text.AlignRight
+                        text: parent.label.bottom
+                        color: Theme.textMuted
+                        font.pixelSize: 10
+                    }
+                }
+            }
+        }
+
+        Rectangle {   // the thumb: the visible part of the feed
+            readonly property var viewTop: page.topOfView()
+            x: 0
+            width: 4
+            radius: 2
+            color: Theme.accent
+            y: Math.min(parent.height - height, dateBar.barY(viewTop.row, viewTop.offset))
+            height: Math.max(16, dateBar.total > 0 ? feedView.height / dateBar.total * parent.height : parent.height)
+        }
+
+        MouseArea {
+            id: railArea
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onPressed: (mouse) => page.jumpTo(mouse.y)
+            onPositionChanged: (mouse) => { if (pressed) page.jumpTo(mouse.y); }
+        }
+    }
+    // The bubble beside the bar: the top event's date and time while the feed moves.
+    Rectangle {
+        id: bubble
+        readonly property var viewTop: page.topOfView()
+        readonly property bool active: feedView.moving || railArea.pressed || bubbleHide.running
+        x: rail.x - width - 6
+        y: rail.y + Math.max(0, Math.min(rail.height - height, dateBar.barY(viewTop.row, viewTop.offset) - height / 2))
+        width: bubbleText.implicitWidth + 16
+        height: 22
+        radius: 11
+        color: Theme.accent
+        opacity: active && feedView.count > 0 ? 1 : 0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: 250 } }
+        Text {
+            id: bubbleText
+            anchors.centerIn: parent
+            text: {
+                const ts = feed.timestampAt(bubble.viewTop.row);
+                return ts > 0 ? Qt.formatDateTime(new Date(ts * 1000), "ddd d MMM · HH:mm") : "";
+            }
+            color: Theme.window
+            font.pixelSize: 11
+            font.bold: true
+        }
+    }
+    Timer { id: bubbleHide; interval: 1000 }
+    Connections {
+        target: feedView
+        function onContentYChanged() { bubbleHide.restart(); }
     }
 
     // ---- Right: the player panel (the clip player comes in step 22) -----------------------

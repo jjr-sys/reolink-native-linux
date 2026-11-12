@@ -79,6 +79,8 @@ public:
     // Nothing remembered: the defaults, following the supported types as they change.
     Q_INVOKABLE void useDefaultTypes();
     Q_INVOKABLE void refresh();
+    // A row's time (an event's, or a gap's end); 0 for a row that isn't there.
+    Q_INVOKABLE qint64 timestampAt(int row) const;
 
 signals:
     void eventsChanged();
