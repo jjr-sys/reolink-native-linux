@@ -28,6 +28,7 @@
 #include "ui/PlaybackGroup.h"
 #include "ui/EventCameraList.h"
 #include "ui/EventDateBar.h"
+#include "ui/CameraNoise.h"
 #include "ui/EventFeed.h"
 #include "ui/MosaicLayout.h"
 
@@ -212,6 +213,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::EventFeed>("ReolinkApp.Core", 1, 0, "EventFeed");
     qmlRegisterType<rl::EventCameraList>("ReolinkApp.Core", 1, 0, "EventCameraList");
     qmlRegisterType<rl::EventDateBar>("ReolinkApp.Core", 1, 0, "EventDateBar");
+    qmlRegisterType<rl::CameraNoise>("ReolinkApp.Core", 1, 0, "CameraNoise");
     qmlRegisterType<rl::MosaicLayout>("ReolinkApp.Core", 1, 0, "MosaicLayout");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);

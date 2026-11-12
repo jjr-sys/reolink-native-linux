@@ -110,6 +110,11 @@ public:
     // When each camera was last opened in the Events page (unseen counts, schema v5).
     QHash<QPair<qint64, int>, qint64> cameraSeenTimes() const;
     bool setCameraSeen(qint64 hostId, int channel, qint64 at);
+    // Noise cards (schema v6): the types a camera's person chose Keep logging for.
+    QStringList noiseKeptTypes(qint64 hostId, int channel) const;
+    bool setNoiseKept(qint64 hostId, int channel, const QString &type);
+    // A camera's newest snapshots of one stored type, newest first.
+    QStringList recentThumbnails(qint64 hostId, int channel, const QString &type, int limit) const;
     // A camera's events of the given stored types after `after`, by type.
     QHash<QString, int> eventCountsAfter(qint64 hostId, int channel, qint64 after,
                                          const QStringList &types) const;

@@ -96,6 +96,7 @@ Item {
     property string site: Sites.list.indexOf(store.site) >= 0 ? store.site
                           : (Sites.list.length > 0 ? Sites.list[0] : "")
     property string camera: ""
+    property bool feedTouched: false   // scrolled since the camera was shown
     // The camera was chosen for the person (nothing remembered): it follows the most active
     // camera as recorders answer, until they pick one.
     property bool autoChosen: true
@@ -189,6 +190,42 @@ Item {
     Settings { id: typeStore; category: "eventTypes" }
     function typeKey(key) { return "c" + key.replace(":", "_"); }
 
+    // Switch controls (step 21): noise cards and the types switched off on this camera.
+    CameraNoise {
+        id: noise
+        events: Events
+        cameraKey: page.camera
+    }
+    function number(n) { return Number(n).toLocaleString(Qt.locale(), "f", 0); }
+    function size(bytes) {
+        if (bytes >= 1e9) return qsTr("%1 GB").arg((bytes / 1e9).toFixed(1));
+        if (bytes >= 1e6) return qsTr("%1 MB").arg(Math.round(bytes / 1e6));
+        return qsTr("%1 KB").arg(Math.max(1, Math.round(bytes / 1e3)));
+    }
+    function every(secs) {
+        return secs < 120 ? qsTr("%1 s").arg(secs) : qsTr("%1 min").arg(Math.round(secs / 60));
+    }
+    // Switch off: confirm with the daily rate and what it deletes, then switch.
+    function askSwitchOff(type) {
+        if (page.camera === "")
+            return;
+        const st = Events.switchStats(Number(page.hc[0]), Number(page.hc[1]), type);
+        const rate = noise.perDay(type);
+        switchOffDialog.payload = { key: page.camera, name: page.cameraName, type: type };
+        switchOffDialog.message =
+            qsTr("Switch off %1 on %2?").arg(page.labelFor(type)).arg(page.cameraName)
+            + (rate >= 0 ? " " + qsTr("It logs about %1 a day.").arg(page.number(rate)) : "")
+            + " " + qsTr("The app stops logging, notifying and highlighting it here.");
+        switchOffDialog.detail =
+            qsTr("Deletes %1 stored events (%2). This can't be undone. The recorder keeps recording.")
+                .arg(page.number(st.count || 0)).arg(page.size(st.bytes || 0));
+        switchOffDialog.open();
+    }
+    function turnOn(type) {
+        if (page.camera !== "" && Events.switchOn(Number(page.hc[0]), Number(page.hc[1]), type))
+            toast.show(qsTr("%1 logging again on %2").arg(page.labelFor(type)).arg(page.cameraName));
+    }
+
     // Unseen counts (step 20): the camera on screen is the one opened; it stays seen while
     // it is open, and its feed marks what was new when it was opened.
     readonly property bool onScreen: page.visible && Window.visibility !== Window.Hidden
@@ -208,6 +245,7 @@ Item {
                 restoreTypes(String(v) === "" ? [] : String(v).split(","));
             else
                 useDefaultTypes();
+            page.feedTouched = false;
             feedView.positionViewAtBeginning();
         }
     }
@@ -493,6 +531,153 @@ Item {
                 model: feed
                 clip: true
                 spacing: 10
+                // What is switched off here, then a noise card per noisy type (step 21); they
+                // scroll away with the feed.
+                onMovementStarted: page.feedTouched = true
+                header: Column {
+                    width: feedView.width
+                    // The header fills in after the feed is placed: keep its top in view
+                    // until the person scrolls.
+                    onHeightChanged: if (!page.feedTouched && feedView.contentY <= 1)
+                                         feedView.positionViewAtBeginning()
+                    spacing: 10
+                    bottomPadding: (noise.offTypes.length > 0 || noise.cards.length > 0) ? 10 : 0
+
+                    // "Switched off here — not logged: Motion · Person", each with Turn on.
+                    Item {
+                        visible: noise.offTypes.length > 0
+                        width: parent.width
+                        height: visible ? offFlow.implicitHeight + 16 : 0
+                        Repeater {   // the dashed outline: top and bottom rules
+                            model: 2
+                            Row {
+                                required property int index
+                                y: index === 0 ? 0 : parent.height - 1
+                                spacing: 4
+                                clip: true
+                                width: parent.width
+                                Repeater {
+                                    model: Math.ceil(feedView.width / 8)
+                                    Rectangle { width: 4; height: 1; color: Theme.textMuted }
+                                }
+                            }
+                        }
+                        Flow {
+                            id: offFlow
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: 6
+                            spacing: 8
+                            Text {
+                                text: qsTr("Switched off here — not logged:")
+                                color: Theme.textMuted
+                                font.pixelSize: 12
+                            }
+                            Repeater {
+                                model: noise.offTypes
+                                Row {
+                                    required property string modelData
+                                    required property int index
+                                    spacing: 6
+                                    Text {
+                                        text: (index > 0 ? "· " : "") + page.labelFor(modelData)
+                                        color: Theme.text
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        text: qsTr("Turn on")
+                                        color: Theme.accent
+                                        font.pixelSize: 12
+                                        font.underline: turnOnHover.hovered
+                                        HoverHandler { id: turnOnHover; cursorShape: Qt.PointingHandCursor }
+                                        TapHandler { onTapped: page.turnOn(modelData) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // A noise card: four recent snapshots, the rate, Switch off… / Keep logging.
+                    Repeater {
+                        model: noise.cards
+                        Rectangle {
+                            id: card
+                            required property var modelData
+                            width: feedView.width
+                            height: cardColumn.implicitHeight + 20
+                            radius: Theme.radius
+                            color: Theme.surface
+                            border.color: page.colorFor(modelData.type)
+                            Column {
+                                id: cardColumn
+                                x: 10; y: 10
+                                width: parent.width - 20
+                                spacing: 8
+                                Text {
+                                    width: parent.width
+                                    text: qsTr("%1: %2 a day on %3 — about one every %4. Mostly the same scene again?")
+                                              .arg(page.labelFor(card.modelData.type))
+                                              .arg(page.number(card.modelData.perDay))
+                                              .arg(page.cameraName)
+                                              .arg(page.every(card.modelData.everySecs))
+                                    color: Theme.text
+                                    font.pixelSize: 13
+                                    wrapMode: Text.WordWrap
+                                }
+                                Row {
+                                    spacing: 4
+                                    Repeater {
+                                        model: card.modelData.thumbnails
+                                        Rectangle {
+                                            required property string modelData
+                                            width: (cardColumn.width - 4 * (noise.cardSnapshots - 1)) / noise.cardSnapshots
+                                            height: Math.round(width * 9 / 16)
+                                            radius: 3
+                                            color: Theme.paneBackground
+                                            clip: true
+                                            Image {
+                                                anchors.fill: parent
+                                                source: "file://" + parent.modelData
+                                                fillMode: Image.PreserveAspectCrop
+                                                asynchronous: true
+                                                sourceSize.width: 160
+                                            }
+                                        }
+                                    }
+                                }
+                                Row {
+                                    spacing: 8
+                                    Repeater {
+                                        model: [{ label: qsTr("Switch off…"), off: true },
+                                                { label: qsTr("Keep logging"), off: false }]
+                                        Rectangle {
+                                            required property var modelData
+                                            width: btnText.implicitWidth + 24
+                                            height: 30
+                                            radius: Theme.radius
+                                            color: modelData.off ? (btnHover.hovered ? Theme.accent : Theme.accentDim)
+                                                                 : (btnHover.hovered ? Theme.surfaceAlt : "transparent")
+                                            border.color: modelData.off ? Theme.accent : Theme.border
+                                            Text {
+                                                id: btnText
+                                                anchors.centerIn: parent
+                                                text: parent.modelData.label
+                                                color: Theme.text
+                                                font.pixelSize: 12
+                                            }
+                                            HoverHandler { id: btnHover; cursorShape: Qt.PointingHandCursor }
+                                            TapHandler {
+                                                onTapped: parent.modelData.off ? page.askSwitchOff(card.modelData.type)
+                                                                               : noise.keepLogging(card.modelData.type)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 reuseItems: true
                 cacheBuffer: 1600
                 boundsBehavior: Flickable.StopAtBounds
@@ -629,6 +814,10 @@ Item {
                                 ThemedMenuItem {
                                     text: qsTr("Open in Playback")
                                     onTriggered: page.jumpToPlayback(Number(page.hc[0]), Number(page.hc[1]), ev.timestamp)
+                                }
+                                ThemedMenuItem {
+                                    text: qsTr("Switch off %1 on %2…").arg(page.labelFor(ev.type)).arg(page.cameraName)
+                                    onTriggered: page.askSwitchOff(ev.type)
                                 }
                                 ThemedMenuItem {
                                     text: qsTr("Save snapshot")
@@ -822,7 +1011,7 @@ Item {
             id: railArea
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            onPressed: (mouse) => { page.lastJump = -1; page.jumpTo(mouse.y); }
+            onPressed: (mouse) => { page.feedTouched = true; page.lastJump = -1; page.jumpTo(mouse.y); }
             onPositionChanged: (mouse) => { if (pressed) page.jumpTo(mouse.y); }
             onReleased: bubbleHide.restart()
         }
@@ -929,6 +1118,18 @@ Item {
                 return;
             }
             feedView.contentY += 60;
+        }
+    }
+
+    ConfirmDialog {
+        id: switchOffDialog
+        title: qsTr("Switch off an event type")
+        confirmLabel: qsTr("Switch off")
+        onConfirmed: (p) => {
+            const hc = p.key.split(":");
+            toast.show(Events.switchOff(Number(hc[0]), Number(hc[1]), p.type)
+                       ? qsTr("%1 switched off on %2").arg(page.labelFor(p.type)).arg(p.name)
+                       : qsTr("Couldn't switch %1 off").arg(page.labelFor(p.type)));
         }
     }
 

@@ -32,6 +32,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
   the feed, new events carry a blue dot, a "Seen up to here" line marks where you had
   looked up to, and a band on the date bar covers the new part. Upgrading starts
   every camera already known as seen (database schema v5).
+- **Events: switch controls in the feed.** Each event's ⋯ offers "Switch off <type>
+  on <camera>…", confirmed with how many it logs a day and what it deletes. A dashed
+  line at the top of a camera's feed lists the types switched off there, each with
+  Turn on. When a type logs 1,000 or more a day (per day of the app running, over
+  the last 24 h), the camera's feed opens with a noise card: four recent snapshots,
+  the rate, Switch off… and Keep logging (remembered per camera and type, database
+  schema v6).
 
 ### Changed
 

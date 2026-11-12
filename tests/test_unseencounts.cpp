@@ -208,7 +208,7 @@ private slots:
             QVERIFY(q.exec("INSERT INTO channels (host_id, idx, name) VALUES (3, 1, 'Gate')"));
         }
         reopen();
-        QCOMPARE(m_db->schemaVersion(), 5);
+        QVERIFY(m_db->schemaVersion() >= 5);
         LocalSeenStore store(m_db.get());
         const qint64 now = QDateTime::currentSecsSinceEpoch();
         QVERIFY(store.seenAt(1, 0) >= now - 5);

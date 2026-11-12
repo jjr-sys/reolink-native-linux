@@ -142,6 +142,16 @@ bool Database::migrate()
                        " SELECT host_id, idx, CAST(strftime('%s', 'now') AS INTEGER) FROM channels"),
     };
 
+    // Noise cards (wayfinder/events-feed step 21): the (camera, type) pairs the person chose
+    // Keep logging for, so their noise card doesn't come back.
+    static const QStringList migrationsV6 = {
+        QStringLiteral("CREATE TABLE IF NOT EXISTS event_noise_kept ("
+                       " host_id INTEGER NOT NULL,"
+                       " channel INTEGER NOT NULL,"
+                       " type TEXT NOT NULL,"
+                       " PRIMARY KEY (host_id, channel, type))"),
+    };
+
     // Ordered migrations; each bumps the stored version by one.
     const QVector<QPair<int, const QStringList *>> steps = {
         {1, &migrationsV1},
@@ -149,6 +159,7 @@ bool Database::migrate()
         {3, &migrationsV3},
         {4, &migrationsV4},
         {5, &migrationsV5},
+        {6, &migrationsV6},
     };
 
     const int current = schemaVersion();
@@ -448,6 +459,51 @@ QHash<QString, int> Database::eventCountsAfter(qint64 hostId, int channel, qint6
     if (q.exec())
         while (q.next())
             out.insert(q.value(0).toString(), q.value(1).toInt());
+    return out;
+}
+
+QStringList Database::noiseKeptTypes(qint64 hostId, int channel) const
+{
+    QStringList out;
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT type FROM event_noise_kept WHERE host_id = :h AND channel = :c"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":c"), channel);
+    if (q.exec())
+        while (q.next())
+            out.append(q.value(0).toString());
+    return out;
+}
+
+bool Database::setNoiseKept(qint64 hostId, int channel, const QString &type)
+{
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("INSERT OR IGNORE INTO event_noise_kept (host_id, channel, type)"
+                             " VALUES (:h, :c, :t)"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":c"), channel);
+    q.bindValue(QStringLiteral(":t"), sqlText(type));
+    if (!q.exec()) {
+        m_lastError = q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+QStringList Database::recentThumbnails(qint64 hostId, int channel, const QString &type,
+                                       int limit) const
+{
+    QStringList out;
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT thumbnail FROM events WHERE host_id = :h AND channel = :c"
+                             " AND type = :t AND thumbnail != '' ORDER BY ts DESC, id DESC LIMIT :n"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":c"), channel);
+    q.bindValue(QStringLiteral(":t"), type);
+    q.bindValue(QStringLiteral(":n"), limit);
+    if (q.exec())
+        while (q.next())
+            out.append(q.value(0).toString());
     return out;
 }
 
