@@ -398,6 +398,97 @@ bool EventManager::switchOn(qint64 hostId, int channel, const QString &type)
     return m_devices->eventSwitches()->setOff(hostId, channel, type, false);
 }
 
+namespace {
+const char *kFirstSwitchOffsKey = "events/firstSwitchOffs";
+const char *kFirstSwitchOffsAskedKey = "events/firstSwitchOffsAsked";
+} // namespace
+
+QVector<device::KnownCamera> EventManager::knownCameras() const
+{
+    QHash<qint64, QString> hostNames; // hosts that raise detections (not a bare stream)
+    for (const HostRecord &h : m_db->hosts())
+        if (device::capabilities(device::kindFromString(h.kind)).detections
+            != device::DetectionSource::None)
+            hostNames.insert(h.id, h.name);
+    QHash<qint64, QHash<int, QStringList>> typesOf;
+    auto types = [&](qint64 hostId, int channel) {
+        if (!typesOf.contains(hostId))
+            typesOf.insert(hostId, m_db->channelEventTypes(hostId));
+        const QStringList stored = typesOf.value(hostId).value(channel);
+        return stored.isEmpty() ? m_devices->eventTypesFor(hostId, channel) : stored;
+    };
+    QVector<device::KnownCamera> out;
+    const auto stored = m_db->eventCameraNames();
+    for (auto it = stored.cbegin(); it != stored.cend(); ++it)
+        if (hostNames.contains(it.key().first))
+            out.append({it.key().first, hostNames.value(it.key().first), it.key().second,
+                        it.value(), types(it.key().first, it.key().second)});
+    // Channels with nothing stored yet: matched by "*" only, shown as "Channel N".
+    for (auto h = hostNames.cbegin(); h != hostNames.cend(); ++h) {
+        const QHash<int, QStringList> &channels = typesOf[h.key()] =
+            m_db->channelEventTypes(h.key());
+        for (auto c = channels.cbegin(); c != channels.cend(); ++c)
+            if (!stored.contains({h.key(), c.key()}))
+                out.append({h.key(), h.value(), c.key(),
+                            tr("Channel %1").arg(c.key() + 1), c.value()});
+    }
+    return out;
+}
+
+QVariantMap EventManager::firstSwitchOffs() const
+{
+    QSettings settings;
+    if (settings.value(QLatin1String(kFirstSwitchOffsAskedKey)).toBool())
+        return {};
+    const QStringList entries = settings.value(QLatin1String(kFirstSwitchOffsKey)).toStringList();
+    if (entries.isEmpty())
+        return {};
+    const QVector<device::KnownCamera> cameras = knownCameras();
+    const QVector<EventSwitchKey> pairs = device::resolveFirstSwitchOffs(entries, cameras);
+    if (pairs.isEmpty())
+        return {};
+    QVariantList list;
+    int count = 0;
+    qint64 bytes = 0;
+    for (const EventSwitchKey &k : pairs) {
+        QString recorder, camera;
+        for (const device::KnownCamera &c : cameras)
+            if (c.hostId == k.hostId && c.channel == k.channel) {
+                recorder = c.hostName;
+                camera = c.camera;
+                break;
+            }
+        const QVariantMap stats = switchStats(k.hostId, k.channel, k.type);
+        count += stats.value("count").toInt();
+        bytes += stats.value("bytes").toLongLong();
+        list.append(QVariantMap{{"hostId", k.hostId}, {"channel", k.channel}, {"type", k.type},
+                                {"recorder", recorder}, {"camera", camera},
+                                {"count", stats.value("count")}});
+    }
+    return {{"pairs", list}, {"count", count}, {"bytes", bytes}};
+}
+
+bool EventManager::confirmFirstSwitchOffs()
+{
+    const QVariantList pairs = firstSwitchOffs().value("pairs").toList();
+    if (pairs.isEmpty())
+        return false;
+    bool ok = true;
+    for (const QVariant &v : pairs) {
+        const QVariantMap m = v.toMap();
+        ok = switchOff(m.value("hostId").toLongLong(), m.value("channel").toInt(),
+                       m.value("type").toString())
+             && ok;
+    }
+    declineFirstSwitchOffs(); // asked: not offered again
+    return ok;
+}
+
+void EventManager::declineFirstSwitchOffs()
+{
+    QSettings().setValue(QLatin1String(kFirstSwitchOffsAskedKey), true);
+}
+
 void EventManager::syncFrigateHistory(qint64 hostId)
 {
     const QVariantMap info = m_devices->hostInfo(hostId);

@@ -356,6 +356,19 @@ QStringList Database::eventCameras(qint64 hostId) const
     return out;
 }
 
+QHash<QPair<qint64, int>, QString> Database::eventCameraNames() const
+{
+    QHash<QPair<qint64, int>, QString> out;
+    QSqlQuery q(db());
+    // SQLite returns the bare `camera` from the row holding MAX(ts).
+    if (q.exec(QStringLiteral("SELECT host_id, channel, camera, MAX(ts) FROM events"
+                              " WHERE type NOT IN ('online', 'offline')"
+                              " GROUP BY host_id, channel")))
+        while (q.next())
+            out.insert({q.value(0).toLongLong(), q.value(1).toInt()}, q.value(2).toString());
+    return out;
+}
+
 bool Database::renameEventCamera(qint64 hostId, const QString &from, const QString &to)
 {
     QSqlQuery q(db());

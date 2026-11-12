@@ -3,6 +3,7 @@
 #include "core/Database.h"
 #include "core/Notifier.h"
 #include "device/EventHistory.h"
+#include "device/FirstSwitchOffs.h"
 #include "device/FrigateApi.h"
 
 #include <QAbstractListModel>
@@ -77,6 +78,15 @@ public:
     Q_INVOKABLE bool switchOff(qint64 hostId, int channel, const QString &type);
     // Switches the pair back on: it logs afresh from now (what was deleted stays gone).
     Q_INVOKABLE bool switchOn(qint64 hostId, int channel, const QString &type);
+    // The first switch-offs: a one-time list in settings (events/firstSwitchOffs, see
+    // FirstSwitchOffs.h), offered once with one confirmation. Pending: { pairs: [{ hostId,
+    // channel, type, recorder, camera, count }], count, bytes }, or empty once asked, with
+    // no list, or when the list matches no camera.
+    Q_INVOKABLE QVariantMap firstSwitchOffs() const;
+    // Switch them all off (deleting their stored events), or leave everything on. Either
+    // way it isn't offered again. Confirm is false when nothing was pending or a pair failed.
+    Q_INVOKABLE bool confirmFirstSwitchOffs();
+    Q_INVOKABLE void declineFirstSwitchOffs();
     // Backfills the inbox from a Frigate server's own event history (unlike
     // onDetection, which only ever files what was seen live since the app was last
     // connected). Filed with each event's real historical timestamp, deduplicated
@@ -111,6 +121,9 @@ private slots:
 
 private:
     void reload();
+    // The cameras the first switch-offs can name: stored event names, and the DB's channel
+    // list (with each channel's event types). Bare streams raise nothing and are left out.
+    QVector<device::KnownCamera> knownCameras() const;
     // Files one event: stores it, puts it at the top of the list, and keeps its recorder
     // under the cap.
     void fileEvent(EventRecord &rec);

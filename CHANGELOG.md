@@ -16,6 +16,12 @@ While the project is pre-1.0, minor versions may still change behaviour.
   it would delete, then deletes them; switching back on logs afresh. Status can't be
   switched off. Kept in the app only, never on a recorder. No controls yet: those
   come with the new Events layout.
+- **First switch-offs.** A one-time list of event types to switch off, kept in the
+  settings file (`[events] firstSwitchOffs`, entries `Recorder/Camera/type` with `*`
+  for any), is offered once a few seconds after launch: one confirmation showing
+  what it deletes (events and snapshot size). Switch off applies them all; Cancel
+  keeps everything logging. Either way it isn't asked again. Without the setting
+  nothing is shown.
 
 ### Changed
 

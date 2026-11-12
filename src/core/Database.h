@@ -102,6 +102,9 @@ public:
                                          qint64 windowSecs) const;
     // The camera names a host's events are filed under, and renaming them in place.
     QStringList eventCameras(qint64 hostId) const;
+    // Every camera's name on its newest stored detection (Status rows carry the
+    // recorder's name on a host-wide change, so they don't count), by (host, channel).
+    QHash<QPair<qint64, int>, QString> eventCameraNames() const;
     bool renameEventCamera(qint64 hostId, const QString &from, const QString &to);
     bool clearEvents();
     // Age-based retention at `now`: motion older than `motionKeepSecs`, everything else
