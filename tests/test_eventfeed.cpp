@@ -301,6 +301,42 @@ private slots:
         QCOMPARE(f.newUntilRow(), 0);
     }
 
+    // ↑/↓ in the clip player (step 22): the next newer/older event that has a clip,
+    // skipping "app not running" bands and Status lines; an event is found by its id.
+    void steppingSkipsGapsAndStatus()
+    {
+        cleanup();
+        m_db = std::make_unique<Database>(m_dir.filePath(QStringLiteral("step%1.db").arg(++m_n)),
+                                          QStringLiteral("feed%1").arg(m_n));
+        QVERIFY(m_db->open());
+        const qint64 h = 3600;
+        QVERIFY(m_db->touchAppRun(m_db->beginAppRun(m_now - kOtherKeepSecs - 86400), m_day.from + 3 * h));
+        QVERIFY(m_db->touchAppRun(m_db->beginAppRun(m_day.from + 5 * h), m_now));
+        add(1, 0, m_day.from + 1 * h, "person");
+        add(1, 0, m_day.from + 2 * h, "vehicle");
+        add(1, 0, m_day.from + 6 * h, "offline");
+        add(1, 0, m_day.from + 7 * h, "pet");
+        EventFeed f;
+        setUp(f);
+        f.restoreTypes({"person", "vehicle", "pet", "status"});
+        QCOMPARE(rows(f), QStringList({"event:pet", "event:offline", "gap:", "event:vehicle",
+                                       "event:person"}));
+        QCOMPARE(f.stepEvent(0, 1), 3);   // older: past the Status line and the gap
+        QCOMPARE(f.stepEvent(3, 1), 4);
+        QCOMPARE(f.stepEvent(4, 1), -1);  // nothing older
+        QCOMPARE(f.stepEvent(3, -1), 0);  // newer
+        QCOMPARE(f.stepEvent(0, -1), -1);
+        QCOMPARE(f.stepEvent(-1, 1), 0);  // from nothing: the newest
+        const qint64 id = f.data(f.index(3), EventFeed::IdRole).toLongLong();
+        QCOMPARE(f.rowOfId(id), 3);
+        QCOMPARE(f.rowOfId(-5), -1);
+        const QVariantMap r = f.rowAt(3);
+        QCOMPARE(r.value("type").toString(), QStringLiteral("vehicle"));
+        QCOMPARE(r.value("timestamp").toLongLong(), m_day.from + 2 * h);
+        QCOMPARE(r.value("eventId").toLongLong(), id);
+        QVERIFY(f.rowAt(99).isEmpty());
+    }
+
     // A gap (app not running) is never new itself, but sits inside the band.
     void aGapAmongNewRowsIsNotNew()
     {

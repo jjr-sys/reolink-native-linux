@@ -151,6 +151,9 @@ public:
     // The recorded clip for a detection on a Frigate camera (empty for anything else,
     // whose recordings play through the Playback page).
     Q_INVOKABLE QString eventClipUrl(qint64 hostId, int channel, qint64 timestamp) const;
+    // The same over a chosen window (the Events clip player, step 22).
+    QString eventClipUrl(qint64 hostId, int channel, qint64 timestamp, int preSecs,
+                         int postSecs) const;
 
     // Playable URL for a device row; empty when credentials aren't loaded yet.
     Q_INVOKABLE QString liveUrl(int row, bool mainStream = true);

@@ -90,6 +90,14 @@ public:
     // Nothing remembered: the defaults, following the supported types as they change.
     Q_INVOKABLE void useDefaultTypes();
     Q_INVOKABLE void refresh();
+    // ↑/↓ in the clip player (step 22): the next row from `row` in `direction` (+1 older,
+    // -1 newer) holding an event with a clip (not a gap or a Status line); from -1 the
+    // newest such row. -1 when there is none.
+    Q_INVOKABLE int stepEvent(int row, int direction) const;
+    // An event row's { type, timestamp, thumbnail, eventId }; empty for a gap or no row.
+    Q_INVOKABLE QVariantMap rowAt(int row) const;
+    // The row of a stored event, -1 when it isn't in the feed.
+    Q_INVOKABLE int rowOfId(qint64 id) const;
     // A row's time (an event's, or a gap's end); 0 for a row that isn't there.
     Q_INVOKABLE qint64 timestampAt(int row) const;
 

@@ -238,12 +238,13 @@ QString liveUrl(const QString &host, int port, const QString &camera,
         .arg(enc(restreamUser), enc(restreamPassword), host, enc(camera));
 }
 
-QString clipUrl(const QString &host, int port, const QString &camera, qint64 timestamp)
+QString clipUrl(const QString &host, int port, const QString &camera, qint64 timestamp,
+                int preSecs, int postSecs)
 {
     return base(host, port) + QStringLiteral("/api/") + enc(camera)
            + QStringLiteral("/start/%1/end/%2/clip.mp4")
-                 .arg(timestamp - kClipPreSecs)
-                 .arg(timestamp + kClipPostSecs);
+                 .arg(timestamp - preSecs)
+                 .arg(timestamp + postSecs);
 }
 
 QString latestFrameUrl(const QString &host, int port, const QString &camera)

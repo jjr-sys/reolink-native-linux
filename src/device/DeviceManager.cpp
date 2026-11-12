@@ -2383,9 +2383,15 @@ QString DeviceManager::nameAt(int row) const
 
 QString DeviceManager::eventClipUrl(qint64 hostId, int channel, qint64 timestamp) const
 {
+    return eventClipUrl(hostId, channel, timestamp, frigate::kClipPreSecs, frigate::kClipPostSecs);
+}
+
+QString DeviceManager::eventClipUrl(qint64 hostId, int channel, qint64 timestamp, int preSecs,
+                                    int postSecs) const
+{
     for (const Entry &e : m_entries)
         if (e.rec.id == hostId && e.channel == channel && e.kindCaps().frigateApi)
-            return frigate::clipUrl(e.rec.addr, e.rec.port, e.chanName, timestamp);
+            return frigate::clipUrl(e.rec.addr, e.rec.port, e.chanName, timestamp, preSecs, postSecs);
     return {};
 }
 

@@ -3,6 +3,7 @@
 #include "core/Database.h"
 #include "device/EventHistory.h"
 #include "device/EventManager.h"
+#include "device/EventSwitches.h"
 
 #include <QDateTime>
 #include <QTimeZone>
@@ -229,6 +230,35 @@ void EventFeed::applyRows(const QVector<Row> &rows)
         if (!roles.isEmpty())
             emit dataChanged(index(int(i)), index(int(i)), roles);
     }
+}
+
+int EventFeed::stepEvent(int row, int direction) const
+{
+    // From nothing, the newest; else onwards in the direction asked.
+    const int step = row < 0 || direction >= 0 ? 1 : -1;
+    for (int i = row < 0 ? 0 : row + step; i >= 0 && i < m_rows.size(); i += step) {
+        const Row &r = m_rows.at(i);
+        if (!r.gap && !EventSwitches::isStatus(r.type))
+            return i;
+    }
+    return -1;
+}
+
+QVariantMap EventFeed::rowAt(int row) const
+{
+    if (row < 0 || row >= m_rows.size() || m_rows.at(row).gap)
+        return {};
+    const Row &r = m_rows.at(row);
+    return {{QStringLiteral("type"), r.type}, {QStringLiteral("timestamp"), r.ts},
+            {QStringLiteral("thumbnail"), r.thumbnail}, {QStringLiteral("eventId"), r.id}};
+}
+
+int EventFeed::rowOfId(qint64 id) const
+{
+    for (int i = 0; i < m_rows.size(); ++i)
+        if (!m_rows.at(i).gap && m_rows.at(i).id == id)
+            return i;
+    return -1;
 }
 
 qint64 EventFeed::timestampAt(int row) const

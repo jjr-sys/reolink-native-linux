@@ -8,7 +8,7 @@ import ReolinkApp.Core
 // Events (wayfinder/events-feed step 18, layout P2): Site tabs on top; on the left the
 // Site's cameras, the most recently active first; in the middle one camera's feed over
 // everything kept (30 days), newest first, a full-width snapshot under each caption line,
-// sticky day headers; on the right the player panel (the clip player comes in step 22).
+// sticky day headers; on the right the clip player (step 22).
 // The camera's type chips filter its feed and are remembered per camera. Step 20 adds the
 // unseen counts: bubbles per camera and Site, blue dots, "Seen up to here", a date-bar band.
 Item {
@@ -534,6 +534,11 @@ Item {
                 // What is switched off here, then a noise card per noisy type (step 21); they
                 // scroll away with the feed.
                 onMovementStarted: page.feedTouched = true
+                // ↑/↓ step the clip player while a clip is up (the feed takes focus when one
+                // starts); the list's own key navigation is off.
+                keyNavigationEnabled: false
+                Keys.onUpPressed: (e) => { if (clipPlayer.active) page.stepClip(-1); else e.accepted = false; }
+                Keys.onDownPressed: (e) => { if (clipPlayer.active) page.stepClip(1); else e.accepted = false; }
                 header: Column {
                     width: feedView.width
                     // The header fills in after the feed is placed: keep its top in view
@@ -708,6 +713,9 @@ Item {
                     required property string thumbnail
                     required property var from
                     required property var to
+                    required property int index
+                    required property var eventId
+                    readonly property bool playing: clipPlayer.active && eventId === clipPlayer.eventId
                     required property bool isNew          // after the seen line: a blue dot
                     required property bool seenLineAbove  // "Seen up to here" sits above it
                     readonly property bool gap: kind === "gap"
@@ -858,10 +866,18 @@ Item {
                             font.pixelSize: 40
                             opacity: 0.6
                         }
+                        Rectangle {   // the event playing in the clip player
+                            anchors.fill: parent
+                            visible: ev.playing
+                            color: "transparent"
+                            radius: 4
+                            border.width: 2
+                            border.color: Theme.accent
+                        }
                         HoverHandler { cursorShape: Qt.PointingHandCursor }
-                        TapHandler {
+                        TapHandler {   // plays it in the clip player
                             enabled: !ev.slim
-                            onTapped: page.jumpToPlayback(Number(page.hc[0]), Number(page.hc[1]), ev.timestamp)
+                            onTapped: page.playRow(ev.index)
                         }
                     }
                 }
@@ -1049,21 +1065,50 @@ Item {
         function onMovementEnded() { bubbleHide.restart(); }
     }
 
-    // ---- Right: the player panel (the clip player comes in step 22) -----------------------
-    Rectangle {
+    // ---- Right: the clip player (step 22) --------------------------------------------------
+    // Beside the feed when there is room; on a narrow window it opens over the feed while
+    // an event plays, and closing it goes back to the feed.
+    EventClipPlayer {
+        id: clipPlayer
         anchors.top: bar.bottom
         anchors.bottom: parent.bottom
-        anchors.left: feedPane.right
-        anchors.right: parent.right
-        visible: page.showPlayer
-        color: Theme.surface
-        Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.border }
-        Text {
-            anchors.centerIn: parent
-            text: qsTr("Pick an event…")
-            color: Theme.textMuted
-            font.pixelSize: 13
-        }
+        x: page.showPlayer ? feedPane.x + feedPane.width : feedPane.x
+        width: page.width - x
+        visible: page.showPlayer || active
+        z: page.showPlayer ? 0 : 5
+        onOpenInPlayback: (h, c, t) => page.jumpToPlayback(h, c, t)
+        onStepRequested: (d) => page.stepClip(d)
+        Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.border; visible: page.showPlayer }
+    }
+    onOnScreenChanged: if (!onScreen) clipPlayer.stop()
+    // RL_EVENTS_PLAY test hook: play the newest event once, after the feed loads.
+    Timer {
+        running: typeof eventsAutoPlay !== "undefined" && eventsAutoPlay && feed.count > 0
+                 && !clipPlayer.active && !played
+        interval: 1500
+        property bool played: false
+        onTriggered: { played = true; page.playRow(feed.stepEvent(-1, 1)); }
+    }
+    // Play a feed row in the player, and keep it in view.
+    function playRow(row) {
+        const r = feed.rowAt(row);
+        if (r.eventId === undefined || page.camera === "")
+            return;
+        clipPlayer.play({ hostId: Number(page.hc[0]), channel: Number(page.hc[1]),
+                          timestamp: r.timestamp, thumbnail: r.thumbnail, eventId: r.eventId,
+                          title: page.labelFor(r.type) + " · " + page.cameraName + " · "
+                                 + Qt.formatDateTime(new Date(r.timestamp * 1000), "ddd d MMM, HH:mm:ss") });
+        page.feedTouched = true;
+        feedView.positionViewAtIndex(row, ListView.Contain);
+        feedView.forceActiveFocus();   // ↑/↓ go to the feed
+    }
+    // ↑/↓: the newer/older event in the feed shown. Nothing when the playing event isn't
+    // in it (another camera's, or a type filtered out).
+    function stepClip(direction) {
+        const row = feed.rowOfId(clipPlayer.eventId);
+        const next = row < 0 ? -1 : feed.stepEvent(row, direction);
+        if (next >= 0)
+            page.playRow(next);
     }
 
     // A short message at the bottom (a saved snapshot).

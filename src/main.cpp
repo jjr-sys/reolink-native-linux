@@ -29,6 +29,7 @@
 #include "ui/EventCameraList.h"
 #include "ui/EventDateBar.h"
 #include "ui/CameraNoise.h"
+#include "ui/EventClip.h"
 #include "ui/EventFeed.h"
 #include "ui/MosaicLayout.h"
 
@@ -214,6 +215,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::EventCameraList>("ReolinkApp.Core", 1, 0, "EventCameraList");
     qmlRegisterType<rl::EventDateBar>("ReolinkApp.Core", 1, 0, "EventDateBar");
     qmlRegisterType<rl::CameraNoise>("ReolinkApp.Core", 1, 0, "CameraNoise");
+    qmlRegisterType<rl::EventClip>("ReolinkApp.Core", 1, 0, "EventClip");
     qmlRegisterType<rl::MosaicLayout>("ReolinkApp.Core", 1, 0, "MosaicLayout");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);
@@ -237,6 +239,10 @@ int main(int argc, char *argv[])
     // between scroll steps, and quits: for checking the feed scrolls smoothly.
     engine.rootContext()->setContextProperty(
         QStringLiteral("eventsAutoScroll"), qEnvironmentVariableIsSet("RL_EVENTS_AUTOSCROLL"));
+    // RL_EVENTS_PLAY=1 plays the shown camera's newest event in the Events clip player once
+    // the feed has loaded: for checking the player without a click.
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("eventsAutoPlay"), qEnvironmentVariableIsSet("RL_EVENTS_PLAY"));
     // RL_SETTINGS_CATEGORY=<key> opens Settings on a section (e.g. "highlights", "mosaics").
     engine.rootContext()->setContextProperty(
         QStringLiteral("initialSettingsCategory"), qEnvironmentVariable("RL_SETTINGS_CATEGORY"));

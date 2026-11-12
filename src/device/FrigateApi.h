@@ -59,7 +59,8 @@ inline bool startsNewBurst(double lastRaisedStart, double start)
 // detection up to one poll (10 s) after it began, so the window opens well before it.
 inline constexpr int kClipPreSecs = 25;
 inline constexpr int kClipPostSecs = 20;
-QString clipUrl(const QString &host, int port, const QString &camera, qint64 timestamp);
+QString clipUrl(const QString &host, int port, const QString &camera, qint64 timestamp,
+                int preSecs = kClipPreSecs, int postSecs = kClipPostSecs);
 // The frame Frigate saved for a specific event (its own event id, e.g.
 // "1790171530.03951-kul3vc") — unlike a live snapshot, this is the actual frame from
 // when the event happened, so it's what backfilled history has to use for a thumbnail.

@@ -39,8 +39,18 @@ While the project is pre-1.0, minor versions may still change behaviour.
   the last 24 h), the camera's feed opens with a noise card: four recent snapshots,
   the rate, Switch off… and Keep logging (remembered per camera and type, database
   schema v6).
+- **Events: the clip player.** Clicking an event's snapshot plays it beside the feed
+  (over the feed on a narrow window): a Reolink recorder's sub stream from 5 s before
+  the event (HD on request), a Frigate camera's own clip from 15 s before, at 1×, muted
+  until the speaker is turned on. The snapshot stays up until the first picture. At
+  +30 s it stops with Keep playing and Open in Playback; ↑/↓ step to the newer/older
+  event. It stops when you leave the Events page or hide the window. The time to the
+  first picture is logged (`clip: first picture after … ms`).
 
 ### Changed
+
+- **Events: clicking a snapshot plays it in the clip player** instead of opening
+  Playback; Open in Playback is in the event's ⋯ and the player.
 
 - **Events: a camera list and one camera's feed.** Site tabs pick the Site; its
   cameras are listed on the left, the most recently active first ("last 3 min ago"),

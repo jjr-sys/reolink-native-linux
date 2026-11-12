@@ -134,6 +134,9 @@ private slots:
         QCOMPARE(configUrl("h", 5000), QString("http://h:5000/api/config"));
         QCOMPARE(clipUrl("h", 5000, "cam", 1000),
                  QString("http://h:5000/api/cam/start/975/end/1020/clip.mp4"));
+        // The Events clip player asks for its own window (step 22).
+        QCOMPARE(clipUrl("h", 5000, "cam", 1000, 15, 30),
+                 QStringLiteral("http://h:5000/api/cam/start/985/end/1030/clip.mp4"));
     }
     void bursts_foldEventsWithinThirtySeconds()
     {
