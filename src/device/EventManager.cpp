@@ -16,6 +16,8 @@
 #include <QTimeZone>
 #include <QtConcurrent/QtConcurrent>
 
+#include <utility>
+
 namespace rl {
 
 // Downscaled JPEG in the thumbnail cache; false if it could not be written. Mirrors
@@ -380,17 +382,33 @@ QVariantMap EventManager::switchStats(qint64 hostId, int channel, const QString 
 
 bool EventManager::switchOff(qint64 hostId, int channel, const QString &type)
 {
-    // Recorded first: if the switch can't be saved, nothing is deleted. If the delete
-    // fails the pair stays off (nothing new is stored) and the caller is told.
-    if (!m_devices->eventSwitches()->setOff(hostId, channel, type, true))
-        return false;
+    return switchOffAll({{hostId, channel, type}});
+}
+
+bool EventManager::switchOffAll(const QVector<EventSwitchKey> &pairs)
+{
+    // Each switch is recorded first: if it can't be saved, that pair's events stay. If a
+    // delete fails the pair stays off (nothing new is stored) and the result is false.
+    bool ok = true, deleted = false;
     QStringList thumbs;
-    if (!m_db->deleteEvents(hostId, channel, EventSwitches::storedType(type), &thumbs))
-        return false;
-    m_cappedCount.remove(hostId); // recounted on the recorder's next event
+    for (const EventSwitchKey &k : pairs) {
+        if (!m_devices->eventSwitches()->setOff(k.hostId, k.channel, k.type, true)) {
+            ok = false;
+            continue;
+        }
+        QStringList removed;
+        if (!m_db->deleteEvents(k.hostId, k.channel, EventSwitches::storedType(k.type), &removed)) {
+            ok = false;
+            continue;
+        }
+        thumbs += removed;
+        m_cappedCount.remove(k.hostId); // recounted on the recorder's next event
+        deleted = true;
+    }
     dropThumbnails(thumbs);
-    reload();
-    return true;
+    if (deleted)
+        reload();
+    return ok;
 }
 
 bool EventManager::switchOn(qint64 hostId, int channel, const QString &type)
@@ -405,48 +423,43 @@ const char *kFirstSwitchOffsAskedKey = "events/firstSwitchOffsAsked";
 
 QVector<device::KnownCamera> EventManager::knownCameras() const
 {
-    QHash<qint64, QString> hostNames; // hosts that raise detections (not a bare stream)
-    for (const HostRecord &h : m_db->hosts())
-        if (device::capabilities(device::kindFromString(h.kind)).detections
-            != device::DetectionSource::None)
-            hostNames.insert(h.id, h.name);
-    QHash<qint64, QHash<int, QStringList>> typesOf;
-    auto types = [&](qint64 hostId, int channel) {
-        if (!typesOf.contains(hostId))
-            typesOf.insert(hostId, m_db->channelEventTypes(hostId));
-        const QStringList stored = typesOf.value(hostId).value(channel);
-        return stored.isEmpty() ? m_devices->eventTypesFor(hostId, channel) : stored;
-    };
     QVector<device::KnownCamera> out;
     const auto stored = m_db->eventCameraNames();
-    for (auto it = stored.cbegin(); it != stored.cend(); ++it)
-        if (hostNames.contains(it.key().first))
-            out.append({it.key().first, hostNames.value(it.key().first), it.key().second,
-                        it.value(), types(it.key().first, it.key().second)});
-    // Channels with nothing stored yet: matched by "*" only, shown as "Channel N".
-    for (auto h = hostNames.cbegin(); h != hostNames.cend(); ++h) {
-        const QHash<int, QStringList> &channels = typesOf[h.key()] =
-            m_db->channelEventTypes(h.key());
-        for (auto c = channels.cbegin(); c != channels.cend(); ++c)
-            if (!stored.contains({h.key(), c.key()}))
-                out.append({h.key(), h.value(), c.key(),
-                            tr("Channel %1").arg(c.key() + 1), c.value()});
+    for (const HostRecord &h : m_db->hosts()) {
+        if (device::capabilities(device::kindFromString(h.kind)).detections
+            == device::DetectionSource::None)
+            continue; // a bare stream raises nothing
+        const QHash<int, QStringList> channelTypes = m_db->channelEventTypes(h.id);
+        auto types = [&](int channel) {
+            const QStringList known = channelTypes.value(channel);
+            return known.isEmpty() ? m_devices->eventTypesFor(h.id, channel) : known;
+        };
+        for (auto it = stored.cbegin(); it != stored.cend(); ++it)
+            if (it.key().first == h.id)
+                out.append({h.id, h.name, it.key().second, it.value(), types(it.key().second)});
+        // Channels with nothing stored yet: matched by "*" only, shown as "Channel N".
+        for (auto c = channelTypes.cbegin(); c != channelTypes.cend(); ++c)
+            if (!stored.contains({h.id, c.key()}))
+                out.append({h.id, h.name, c.key(), tr("Channel %1").arg(c.key() + 1), c.value()});
     }
     return out;
 }
 
-QVariantMap EventManager::firstSwitchOffs() const
+QVariantMap EventManager::offerFirstSwitchOffs()
 {
+    m_offeredSwitchOffs.clear();
     QSettings settings;
     if (settings.value(QLatin1String(kFirstSwitchOffsAskedKey)).toBool())
         return {};
     const QStringList entries = settings.value(QLatin1String(kFirstSwitchOffsKey)).toStringList();
     if (entries.isEmpty())
-        return {};
+        return {}; // no list: nothing to offer, and nothing settled either
     const QVector<device::KnownCamera> cameras = knownCameras();
     const QVector<EventSwitchKey> pairs = device::resolveFirstSwitchOffs(entries, cameras);
-    if (pairs.isEmpty())
+    if (pairs.isEmpty()) {
+        declineFirstSwitchOffs(); // matches nothing: settled, so it never turns up by surprise
         return {};
+    }
     QVariantList list;
     int count = 0;
     qint64 bytes = 0;
@@ -459,33 +472,35 @@ QVariantMap EventManager::firstSwitchOffs() const
                 break;
             }
         const QVariantMap stats = switchStats(k.hostId, k.channel, k.type);
-        count += stats.value("count").toInt();
-        bytes += stats.value("bytes").toLongLong();
-        list.append(QVariantMap{{"hostId", k.hostId}, {"channel", k.channel}, {"type", k.type},
-                                {"recorder", recorder}, {"camera", camera},
-                                {"count", stats.value("count")}});
+        const int n = stats.value(QStringLiteral("count")).toInt();
+        count += n;
+        bytes += stats.value(QStringLiteral("bytes")).toLongLong();
+        list.append(QVariantMap{{QStringLiteral("hostId"), k.hostId},
+                                {QStringLiteral("channel"), k.channel},
+                                {QStringLiteral("type"), k.type},
+                                {QStringLiteral("recorder"), recorder},
+                                {QStringLiteral("camera"), camera},
+                                {QStringLiteral("count"), n}});
     }
-    return {{"pairs", list}, {"count", count}, {"bytes", bytes}};
+    m_offeredSwitchOffs = pairs;
+    return {{QStringLiteral("pairs"), list},
+            {QStringLiteral("count"), count},
+            {QStringLiteral("bytes"), bytes}};
 }
 
 bool EventManager::confirmFirstSwitchOffs()
 {
-    const QVariantList pairs = firstSwitchOffs().value("pairs").toList();
-    if (pairs.isEmpty())
+    if (m_offeredSwitchOffs.isEmpty())
         return false;
-    bool ok = true;
-    for (const QVariant &v : pairs) {
-        const QVariantMap m = v.toMap();
-        ok = switchOff(m.value("hostId").toLongLong(), m.value("channel").toInt(),
-                       m.value("type").toString())
-             && ok;
-    }
+    const QVector<EventSwitchKey> pairs = std::exchange(m_offeredSwitchOffs, {});
+    const bool ok = switchOffAll(pairs);
     declineFirstSwitchOffs(); // asked: not offered again
     return ok;
 }
 
 void EventManager::declineFirstSwitchOffs()
 {
+    m_offeredSwitchOffs.clear();
     QSettings().setValue(QLatin1String(kFirstSwitchOffsAskedKey), true);
 }
 

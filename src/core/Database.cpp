@@ -360,7 +360,8 @@ QHash<QPair<qint64, int>, QString> Database::eventCameraNames() const
 {
     QHash<QPair<qint64, int>, QString> out;
     QSqlQuery q(db());
-    // SQLite returns the bare `camera` from the row holding MAX(ts).
+    // SQLite returns the bare `camera` from the row holding MAX(ts). Status types as in
+    // EventSwitches::isStatus.
     if (q.exec(QStringLiteral("SELECT host_id, channel, camera, MAX(ts) FROM events"
                               " WHERE type NOT IN ('online', 'offline')"
                               " GROUP BY host_id, channel")))

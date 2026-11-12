@@ -79,12 +79,13 @@ public:
     // Switches the pair back on: it logs afresh from now (what was deleted stays gone).
     Q_INVOKABLE bool switchOn(qint64 hostId, int channel, const QString &type);
     // The first switch-offs: a one-time list in settings (events/firstSwitchOffs, see
-    // FirstSwitchOffs.h), offered once with one confirmation. Pending: { pairs: [{ hostId,
-    // channel, type, recorder, camera, count }], count, bytes }, or empty once asked, with
-    // no list, or when the list matches no camera.
-    Q_INVOKABLE QVariantMap firstSwitchOffs() const;
-    // Switch them all off (deleting their stored events), or leave everything on. Either
-    // way it isn't offered again. Confirm is false when nothing was pending or a pair failed.
+    // FirstSwitchOffs.h), offered once with one confirmation. The offer: { pairs: [{ hostId,
+    // channel, type, recorder, camera, count }], count, bytes }, or empty once asked or with
+    // no list. A list that matches no camera counts as asked.
+    Q_INVOKABLE QVariantMap offerFirstSwitchOffs();
+    // Switch off exactly the pairs last offered (deleting their stored events), or leave
+    // everything on. Either way it isn't offered again. Confirm is false when nothing was
+    // offered or a pair failed.
     Q_INVOKABLE bool confirmFirstSwitchOffs();
     Q_INVOKABLE void declineFirstSwitchOffs();
     // Backfills the inbox from a Frigate server's own event history (unlike
@@ -121,6 +122,9 @@ private slots:
 
 private:
     void reload();
+    // Switches these pairs off, deletes their stored events and snapshots, then reloads
+    // the list once. False when any pair's switch or delete failed.
+    bool switchOffAll(const QVector<EventSwitchKey> &pairs);
     // The cameras the first switch-offs can name: stored event names, and the DB's channel
     // list (with each channel's event types). Bare streams raise nothing and are left out.
     QVector<device::KnownCamera> knownCameras() const;
@@ -162,7 +166,8 @@ private:
     QFutureSynchronizer<void> m_pending; // drains in-flight history syncs at teardown
     QVector<EventRecord> m_rows;     // the list: newest first
     QHash<qint64, int> m_cappedCount; // recorder -> capped events, counted lazily
-    QSet<qint64> m_frigateHistoryChecked; // hosts already considered for the one-time catch-up
+    QSet<qint64> m_frigateHistoryChecked;
+    QVector<EventSwitchKey> m_offeredSwitchOffs; // what the first switch-offs dialog shows // hosts already considered for the one-time catch-up
     int m_unread = 0;
 };
 

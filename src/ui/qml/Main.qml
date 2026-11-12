@@ -255,22 +255,22 @@ ApplicationWindow {
         if (Devices.count === 0)
             firstRunTimer.start();
     }
-    // The first switch-offs (wayfinder/events-feed): offered once, a few seconds after
-    // the window is up (a launch hidden in the tray waits until it's shown). Nothing to
-    // offer counts as asked, so it never turns up later by surprise.
+    // The first switch-offs (wayfinder/events-feed): looked at once per launch, a few
+    // seconds after the window is up with devices loaded (a launch hidden in the tray
+    // waits until it's shown). Whether there is anything to offer is Events' call.
     FirstSwitchOffsDialog { id: firstSwitchOffsDialog }
     Timer {
-        running: Devices.count > 0
+        property bool done: false
+        running: !done && Devices.count > 0
         interval: 3000
         onTriggered: {
             if (!window.visible) { restart(); return; }
-            const pending = Events.firstSwitchOffs();
-            if (!pending.pairs || pending.pairs.length === 0) {
-                Events.declineFirstSwitchOffs();
-                return;
+            done = true;
+            const offer = Events.offerFirstSwitchOffs();
+            if (offer.pairs && offer.pairs.length > 0) {
+                firstSwitchOffsDialog.pending = offer;
+                firstSwitchOffsDialog.open();
             }
-            firstSwitchOffsDialog.pending = pending;
-            firstSwitchOffsDialog.open();
         }
     }
     // A short delay so the window is mapped before the modal + scan appear.

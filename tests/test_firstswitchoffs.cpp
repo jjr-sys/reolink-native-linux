@@ -56,8 +56,8 @@ class TestFirstSwitchOffs : public QObject
         return db.addHost(h);
     }
 
-    static void addEvent(Database &db, qint64 host, int ch, const QString &camera,
-                         const char *type, int snapshotBytes)
+    static QString addEvent(Database &db, qint64 host, int ch, const QString &camera,
+                            const char *type, int snapshotBytes)
     {
         EventRecord e;
         e.hostId = host;
@@ -67,13 +67,17 @@ class TestFirstSwitchOffs : public QObject
         e.camera = camera;
         const qint64 id = db.addEvent(e);
         if (snapshotBytes <= 0)
-            return;
-        const QString path = Paths::thumbnailsDir() + QStringLiteral("/event_%1.jpg").arg(id);
+            return {};
+        // Unique across tests: event ids restart in each throwaway database.
+        static int file = 0;
+        const QString path =
+            Paths::thumbnailsDir() + QStringLiteral("/event_t%1_%2.jpg").arg(++file).arg(id);
         QFile f(path);
-        QVERIFY(f.open(QIODevice::WriteOnly));
-        f.write(QByteArray(snapshotBytes, 'x'));
+        if (!f.open(QIODevice::WriteOnly) || f.write(QByteArray(snapshotBytes, 'x')) != snapshotBytes)
+            return {};
         f.close();
         db.setEventThumbnail(id, path);
+        return path;
     }
 
     // Woorabinda: Patio (person 2 with 100-byte snapshots, pet 1); Farm: Carpark (vehicle 1,
@@ -82,15 +86,16 @@ class TestFirstSwitchOffs : public QObject
         QTemporaryDir dir;
         Database db{dir.filePath("t.db"), QStringLiteral("first_%1").arg(++s_db)};
         qint64 woorabinda = -1, farm = -1;
+        QString patioPerson, carparkVehicle; // snapshot files
         Site()
         {
             QVERIFY(db.open());
             woorabinda = addRecorder(db, QStringLiteral("Woorabinda"));
             farm = addRecorder(db, QStringLiteral("Farm"));
-            addEvent(db, woorabinda, 7, QStringLiteral("Patio"), "person", 100);
+            patioPerson = addEvent(db, woorabinda, 7, QStringLiteral("Patio"), "person", 100);
             addEvent(db, woorabinda, 7, QStringLiteral("Patio"), "person", 100);
             addEvent(db, woorabinda, 7, QStringLiteral("Patio"), "pet", 0);
-            addEvent(db, farm, 6, QStringLiteral("Carpark"), "vehicle", 50);
+            carparkVehicle = addEvent(db, farm, 6, QStringLiteral("Carpark"), "vehicle", 50);
             addEvent(db, farm, 6, QStringLiteral("Carpark"), "motion", 0);
             // Known from the channel list only: nothing stored yet.
             db.setChannelEventTypes(farm, 0, {QStringLiteral("motion"), QStringLiteral("status")});
@@ -123,7 +128,7 @@ private slots:
         CredentialStore credentials;
         DeviceManager devices(&site.db, &credentials);
         EventManager events(&site.db, &devices);
-        const QVariantMap pending = events.firstSwitchOffs();
+        const QVariantMap pending = events.offerFirstSwitchOffs();
         QCOMPARE(pending.value("count").toInt(), 3); // 2 Patio Person + 1 Carpark Motion
         QCOMPARE(pending.value("bytes").toLongLong(), 200);
         QStringList named;
@@ -146,6 +151,9 @@ private slots:
         CredentialStore credentials;
         DeviceManager devices(&site.db, &credentials);
         EventManager events(&site.db, &devices);
+        QVERIFY(!events.confirmFirstSwitchOffs()); // nothing offered yet
+        QVERIFY(!events.offerFirstSwitchOffs().isEmpty());
+        QVERIFY(QFile::exists(site.patioPerson));
         QVERIFY(events.confirmFirstSwitchOffs());
 
         EventSwitches *sw = devices.eventSwitches();
@@ -157,11 +165,16 @@ private slots:
         QVERIFY(!sw->isOff(site.farm, 6, QStringLiteral("vehicle")));
         QCOMPARE(sw->offPairs().size(), 4); // not Farm channel 2: it can't report Motion
         QCOMPARE(events.rowCount(), 2); // Patio Pet and Carpark Vehicle stay
-        QVERIFY(events.firstSwitchOffs().isEmpty());
+        QCOMPARE(site.db.countEvents(site.woorabinda, 7, QStringLiteral("person")), 0);
+        QCOMPARE(site.db.countEvents(site.farm, 6, QStringLiteral("motion")), 0);
+        QCOMPARE(site.db.countEvents(site.farm, 6, QStringLiteral("vehicle")), 1);
+        QVERIFY(!QFile::exists(site.patioPerson));
+        QVERIFY(QFile::exists(site.carparkVehicle));
+        QVERIFY(events.offerFirstSwitchOffs().isEmpty());
 
         // Shown once: a later launch doesn't ask again.
         EventManager again(&site.db, &devices);
-        QVERIFY(again.firstSwitchOffs().isEmpty());
+        QVERIFY(again.offerFirstSwitchOffs().isEmpty());
     }
 
     void cancelChangesNothingAndAsksNoMore()
@@ -171,22 +184,41 @@ private slots:
         CredentialStore credentials;
         DeviceManager devices(&site.db, &credentials);
         EventManager events(&site.db, &devices);
+        QVERIFY(!events.offerFirstSwitchOffs().isEmpty());
         events.declineFirstSwitchOffs();
         QVERIFY(devices.eventSwitches()->offPairs().isEmpty());
         QCOMPARE(events.rowCount(), 5);
-        QVERIFY(events.firstSwitchOffs().isEmpty());
+        QVERIFY(events.offerFirstSwitchOffs().isEmpty());
         QVERIFY(!events.confirmFirstSwitchOffs()); // nothing pending any more
         QVERIFY(devices.eventSwitches()->offPairs().isEmpty());
     }
 
-    void withoutAListNothingIsAsked()
+    void withoutAListNothingIsSettled()
     {
         setList({});
         Site site;
         CredentialStore credentials;
         DeviceManager devices(&site.db, &credentials);
         EventManager events(&site.db, &devices);
-        QVERIFY(events.firstSwitchOffs().isEmpty());
+        QVERIFY(events.offerFirstSwitchOffs().isEmpty());
+        // The list arriving later (written into the settings) is still offered.
+        QSettings().setValue(QStringLiteral("events/firstSwitchOffs"),
+                             QStringList{QStringLiteral("Woorabinda/Patio/person")});
+        QCOMPARE(events.offerFirstSwitchOffs().value("count").toInt(), 2);
+    }
+
+    void aListMatchingNothingIsSettledQuietly()
+    {
+        setList({"Nowhere/Patio/person"});
+        Site site;
+        CredentialStore credentials;
+        DeviceManager devices(&site.db, &credentials);
+        EventManager events(&site.db, &devices);
+        QVERIFY(events.offerFirstSwitchOffs().isEmpty());
+        QSettings().setValue(QStringLiteral("events/firstSwitchOffs"),
+                             QStringList{QStringLiteral("Woorabinda/Patio/person")});
+        QVERIFY(events.offerFirstSwitchOffs().isEmpty()); // settled: never by surprise later
+        QVERIFY(devices.eventSwitches()->offPairs().isEmpty());
     }
 
     void namedPairsMatchRecorderExactlyAndCameraIgnoringCase()

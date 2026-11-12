@@ -16,7 +16,7 @@ Dialog {
     anchors.centerIn: Overlay.overlay
     closePolicy: Popup.NoAutoClose
 
-    property var pending: ({})   // Events.firstSwitchOffs()
+    property var pending: ({})   // Events.offerFirstSwitchOffs()
 
     title: qsTr("Switch off the noisy event types?")
     background: Rectangle { color: Theme.surface; border.color: Theme.border; radius: Theme.radius }
