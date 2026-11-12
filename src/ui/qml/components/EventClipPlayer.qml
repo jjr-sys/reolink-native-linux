@@ -159,13 +159,18 @@ Item {
         retryOnError: true
         speed: 1.0
         muted: !root.soundOn || !root.visible
-        onFramesDecodedChanged: if (framesDecoded > 0) root._firstPicture()
         // A refused or dropped stream is retried (the NVR is connection-limited) and starts
         // again from where it was opened: back to "starting" so the clock restarts with the
         // picture. The start time limit gives up and closes the stream.
-        onStateChanged: if (state === StreamPlayer.Connecting && root.phase === "playing") {
-            root._firstFrameMs = 0;
-            root.phase = "starting";
+        // Streaming is posted with the first decoded frame (framesDecoded only ticks every
+        // 100 frames, seconds later).
+        onStateChanged: {
+            if (state === StreamPlayer.Streaming) {
+                root._firstPicture();
+            } else if (state === StreamPlayer.Connecting && root.phase === "playing") {
+                root._firstFrameMs = 0;
+                root.phase = "starting";
+            }
         }
     }
     ClipLoader {
