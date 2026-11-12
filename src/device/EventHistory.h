@@ -11,12 +11,12 @@
 
 namespace rl::device {
 
-// How much Events history is kept (wayfinder/site-tabs-redesign, "How much Events history
-// to keep, and how"): motion for 24 hours outside the cap; everything else, Status
-// included, for 7 days under a per-recorder cap.
+// How much Events history is kept (wayfinder/events-feed, "Decide how long events are kept
+// after the switch-offs"): motion for 24 hours outside the cap; everything else, Status
+// included, for 30 days under a per-recorder cap that is only a safety net.
 inline constexpr qint64 kMotionKeepSecs = 24 * 3600;
-inline constexpr qint64 kOtherKeepSecs = 7 * 24 * 3600;
-inline constexpr int kCapPerRecorder = 25000;
+inline constexpr qint64 kOtherKeepSecs = 30 * 24 * 3600;
+inline constexpr int kCapPerRecorder = 50000;
 // How often the running app stamps its run, and the shortest gap between runs shown as
 // "app not running" (a quick restart is not one).
 inline constexpr qint64 kRunHeartbeatSecs = 60;

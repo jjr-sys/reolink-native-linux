@@ -245,7 +245,7 @@ private slots:
         QVERIFY(c.keptNote().contains(QStringLiteral("24 hours")));
         c.setNow(m_day.to + kOtherKeepSecs + 10);
         c.refresh();
-        QVERIFY(c.keptNote().contains(QStringLiteral("7 days")));
+        QVERIFY(c.keptNote().contains(QStringLiteral("30 days")));
     }
 
     // Today's counts by recorder and type, for the nothing-selected view.

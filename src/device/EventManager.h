@@ -17,7 +17,7 @@ namespace rl {
 class DeviceManager;
 
 // The event inbox: persists detection events (from DeviceManager's poller) and
-// exposes the newest of them to QML, with an unread counter. The store keeps its own history (motion 24 h; everything else 7 days under a
+// exposes the newest of them to QML, with an unread counter. The store keeps its own history (motion 24 h; everything else 30 days under a
 // per-recorder cap, see EventHistory.h); the list and the per-day lookups query it.
 class EventManager : public QAbstractListModel
 {
@@ -108,7 +108,7 @@ private:
     // so they line up with the filter dropdown and the property/camera shown
     // on the row. No-op once everything is already in the pretty form.
     void normalizeStoredCameraNames();
-    // Age-based purge of the whole store (motion 24 h, the rest 7 days). Deletes the
+    // Age-based purge of the whole store (motion 24 h, the rest 30 days). Deletes the
     // removed rows' thumbnail files and reloads the list if anything went.
     void enforceRetention();
     // Runs on the GUI thread once syncFrigateHistory()'s worker thread has the raw

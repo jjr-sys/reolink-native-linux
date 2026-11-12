@@ -20,9 +20,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
   With nothing picked, the page shows the day's counts for each Site. Sync Frigate
   history, desktop notifications and deleting all events moved to the ⋯ menu.
   The old type, property and camera filters are gone.
-- **Events keep a full week.** Motion is now kept for 24 hours and no longer counts
-  toward the per-recorder limit, which rises from 10,000 to 25,000. Person, Vehicle,
-  Pet, Visitor and Status events stay for 7 days on every Site, even the busy ones.
+- **Events keep a month.** Motion is now kept for 24 hours and no longer counts
+  toward the per-recorder limit, which rises from 10,000 to 50,000. Person, Vehicle,
+  Pet, Visitor and Status events stay for 30 days on every Site, even the busy ones.
   On the first launch, motion older than a day is cleared with its thumbnails, so
   the Playback timeline no longer marks motion on earlier days.
 - **When a whole recorder or Frigate server goes offline, each of its cameras gets

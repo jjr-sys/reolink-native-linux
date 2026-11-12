@@ -150,9 +150,10 @@ private slots:
         QCOMPARE(db.channelEventTypes(1).value(3), QStringList({"person", "motion"}));
     }
 
-    // Motion is kept 24 h, everything else (Status included) 7 days. The thumbnails of
-    // the removed rows come back so their files can go too.
-    void pruneKeepsMotion24hOthers7Days()
+    // The purge applies whatever windows it is given, here motion 24 h and everything
+    // else (Status included) 7 days. The thumbnails of the removed rows come back so
+    // their files can go too.
+    void pruneAppliesSeparateMotionAndOtherWindows()
     {
         QTemporaryDir dir;
         Database db(dir.filePath("t.db"), QStringLiteral("test_prune"));
@@ -170,6 +171,31 @@ private slots:
         QStringList kept = types(db.recentEvents(10));
         kept.sort();
         QCOMPARE(kept, QStringList({"motion", "offline", "person"}));
+    }
+
+    // The app's policy (wayfinder/events-feed, "Decide how long events are kept after the
+    // switch-offs"): everything but motion is kept 30 days; motion 24 h; the per-recorder
+    // cap is a 50,000 safety net. Checked through the purge with the real constants.
+    void appKeepsEventsThirtyDays()
+    {
+        QCOMPARE(device::kOtherKeepSecs, 30 * kDay);
+        QCOMPARE(device::kMotionKeepSecs, kDay);
+        QCOMPARE(device::kCapPerRecorder, 50000);
+
+        QTemporaryDir dir;
+        Database db(dir.filePath("t.db"), QStringLiteral("test_policy"));
+        QVERIFY(db.open());
+        add(db, 1, 0, kNow - 25 * kHour, "motion", "/t/old-motion.jpg");
+        add(db, 1, 0, kNow - 8 * kDay, "person");
+        add(db, 1, 0, kNow - 29 * kDay, "vehicle");
+        add(db, 1, 0, kNow - 31 * kDay, "pet", "/t/old-pet.jpg");
+
+        QStringList gone = db.purgeExpiredEvents(kNow, device::kMotionKeepSecs, device::kOtherKeepSecs);
+        gone.sort();
+        QCOMPARE(gone, QStringList({"/t/old-motion.jpg", "/t/old-pet.jpg"}));
+        QStringList kept = types(db.recentEvents(10));
+        kept.sort();
+        QCOMPARE(kept, QStringList({"person", "vehicle"}));
     }
 
     // The per-recorder cap counts everything except motion, and trims only those.
