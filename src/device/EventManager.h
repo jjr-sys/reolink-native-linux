@@ -50,7 +50,7 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     int unread() const { return m_unread; }
-    // The store, for the Events page's columns (EventColumn), which query it per day.
+    // The store, for the Events page's columns (EventFeed), which query it.
     Database *database() const { return m_db; }
     static constexpr int kListLimit = 500;
     int listLimit() const { return kListLimit; }

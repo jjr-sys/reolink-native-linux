@@ -24,7 +24,7 @@ class EventManager;
 //  - `counts` has the day's count for every supported type, on or off.
 //  - Set `events` (QML) or `setDatabase` (tests); with `events` the column re-queries a
 //    moment after its recorder's events change.
-class EventColumn : public QAbstractListModel
+class EventFeed : public QAbstractListModel
 {
     Q_OBJECT
     Q_PROPERTY(rl::EventManager *events READ events WRITE setEvents NOTIFY eventsChanged)
@@ -47,7 +47,7 @@ public:
         ToRole,
     };
 
-    explicit EventColumn(QObject *parent = nullptr);
+    explicit EventFeed(QObject *parent = nullptr);
 
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;

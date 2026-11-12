@@ -1,4 +1,4 @@
-#include "ui/EventColumn.h"
+#include "ui/EventFeed.h"
 
 #include "core/Database.h"
 #include "device/EventHistory.h"
@@ -29,20 +29,20 @@ QStringList storedTypes(const QStringList &types)
 }
 } // namespace
 
-EventColumn::EventColumn(QObject *parent)
+EventFeed::EventFeed(QObject *parent)
     : QAbstractListModel(parent)
 {
     m_refreshSoon.setSingleShot(true);
     m_refreshSoon.setInterval(300);
-    connect(&m_refreshSoon, &QTimer::timeout, this, &EventColumn::refresh);
+    connect(&m_refreshSoon, &QTimer::timeout, this, &EventFeed::refresh);
 }
 
-int EventColumn::rowCount(const QModelIndex &parent) const
+int EventFeed::rowCount(const QModelIndex &parent) const
 {
     return parent.isValid() ? 0 : int(m_rows.size());
 }
 
-QVariant EventColumn::data(const QModelIndex &index, int role) const
+QVariant EventFeed::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() >= m_rows.size())
         return {};
@@ -58,18 +58,18 @@ QVariant EventColumn::data(const QModelIndex &index, int role) const
     }
 }
 
-QHash<int, QByteArray> EventColumn::roleNames() const
+QHash<int, QByteArray> EventFeed::roleNames() const
 {
     return {{KindRole, "kind"},       {TypeRole, "type"}, {TimestampRole, "timestamp"},
             {ThumbnailRole, "thumbnail"}, {FromRole, "from"}, {ToRole, "to"}};
 }
 
-EventManager *EventColumn::events() const
+EventManager *EventFeed::events() const
 {
     return m_events;
 }
 
-void EventColumn::setEvents(EventManager *events)
+void EventFeed::setEvents(EventManager *events)
 {
     if (m_events == events)
         return;
@@ -86,13 +86,13 @@ void EventColumn::setEvents(EventManager *events)
     refresh();
 }
 
-void EventColumn::setDatabase(Database *db)
+void EventFeed::setDatabase(Database *db)
 {
     m_db = db;
     refresh();
 }
 
-void EventColumn::setCameraKey(const QString &key)
+void EventFeed::setCameraKey(const QString &key)
 {
     if (m_key == key)
         return;
@@ -107,7 +107,7 @@ void EventColumn::setCameraKey(const QString &key)
     refresh();
 }
 
-void EventColumn::setDayStart(qint64 dayStart)
+void EventFeed::setDayStart(qint64 dayStart)
 {
     if (m_dayStart == dayStart)
         return;
@@ -116,7 +116,7 @@ void EventColumn::setDayStart(qint64 dayStart)
     refresh();
 }
 
-void EventColumn::setSupportedTypes(const QStringList &types)
+void EventFeed::setSupportedTypes(const QStringList &types)
 {
     if (m_supported == types)
         return;
@@ -125,7 +125,7 @@ void EventColumn::setSupportedTypes(const QStringList &types)
     setEnabled(m_chosen ? m_wanted : defaultTypes(types));
 }
 
-QStringList EventColumn::defaultTypes(const QStringList &supported)
+QStringList EventFeed::defaultTypes(const QStringList &supported)
 {
     QStringList out;
     for (const QString &t : supported)
@@ -134,7 +134,7 @@ QStringList EventColumn::defaultTypes(const QStringList &supported)
     return out;
 }
 
-void EventColumn::toggle(const QString &type)
+void EventFeed::toggle(const QString &type)
 {
     if (!m_supported.contains(type))
         return;
@@ -148,7 +148,7 @@ void EventColumn::toggle(const QString &type)
     emit typesToggled(m_wanted);
 }
 
-void EventColumn::restoreTypes(const QStringList &types)
+void EventFeed::restoreTypes(const QStringList &types)
 {
     m_chosen = true;
     m_wanted = types;
@@ -156,7 +156,7 @@ void EventColumn::restoreTypes(const QStringList &types)
 }
 
 // Kept to the supported types, in their display order.
-void EventColumn::setEnabled(const QStringList &types)
+void EventFeed::setEnabled(const QStringList &types)
 {
     QStringList next;
     for (const QString &t : m_supported)
@@ -172,7 +172,7 @@ void EventColumn::setEnabled(const QStringList &types)
 // New events arrive at the top: when the old rows are the tail of the new ones, insert the
 // new ones and update thumbnails in place, so a scrolled list keeps its place. Anything
 // else (a day or type change, a purge) resets the list.
-void EventColumn::applyRows(const QVector<Row> &rows)
+void EventFeed::applyRows(const QVector<Row> &rows)
 {
     const auto same = [](const Row &a, const Row &b) {
         return a.gap == b.gap && a.ts == b.ts && a.from == b.from && a.type == b.type;
@@ -197,12 +197,12 @@ void EventColumn::applyRows(const QVector<Row> &rows)
     }
 }
 
-qint64 EventColumn::now() const
+qint64 EventFeed::now() const
 {
     return m_now > 0 ? m_now : QDateTime::currentSecsSinceEpoch();
 }
 
-void EventColumn::refresh()
+void EventFeed::refresh()
 {
     m_refreshSoon.stop();
     QVector<Row> rows;

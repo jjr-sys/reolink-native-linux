@@ -373,7 +373,7 @@ Item {
                     border.width: page.flashKey === modelData ? 2 : 1
                     Behavior on border.color { ColorAnimation { duration: 200 } }
 
-                    EventColumn {
+                    EventFeed {
                         id: col
                         events: Events
                         cameraKey: colItem.modelData

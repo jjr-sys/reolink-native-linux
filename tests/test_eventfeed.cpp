@@ -1,6 +1,6 @@
 #include "core/Database.h"
 #include "device/EventHistory.h"
-#include "ui/EventColumn.h"
+#include "ui/EventFeed.h"
 
 #include <QDateTime>
 #include <QSignalSpy>
@@ -13,7 +13,7 @@ using namespace rl::device;
 
 // One Events column (wayfinder/site-tabs-redesign, step 6): a camera's events for one local
 // day, filtered by its own type row, with "app not running" bands among them.
-class TestEventColumn : public QObject
+class TestEventFeed : public QObject
 {
     Q_OBJECT
 
@@ -36,7 +36,7 @@ class TestEventColumn : public QObject
     }
     // A column on host 1 channel 0, the test day, every type supported, with the whole
     // day covered by one app run unless a test says otherwise.
-    void setUp(EventColumn &c, const QStringList &supported = kAll())
+    void setUp(EventFeed &c, const QStringList &supported = kAll())
     {
         c.setDatabase(m_db.get());
         c.setNow(m_day.to + 3600);
@@ -44,12 +44,12 @@ class TestEventColumn : public QObject
         c.setCameraKey(QStringLiteral("1:0"));
         c.setDayStart(m_day.from);
     }
-    QStringList typesOf(const EventColumn &c) const
+    QStringList typesOf(const EventFeed &c) const
     {
         QStringList out;
         for (int i = 0; i < c.rowCount(); ++i)
-            out << c.data(c.index(i), EventColumn::KindRole).toString() + QLatin1Char(':')
-                       + c.data(c.index(i), EventColumn::TypeRole).toString();
+            out << c.data(c.index(i), EventFeed::KindRole).toString() + QLatin1Char(':')
+                       + c.data(c.index(i), EventFeed::TypeRole).toString();
         return out;
     }
 
@@ -70,8 +70,8 @@ private slots:
 
     void defaultTypesAreAllButMotionAndStatus()
     {
-        QCOMPARE(EventColumn::defaultTypes(kAll()), QStringList({"person", "vehicle", "pet"}));
-        EventColumn c;
+        QCOMPARE(EventFeed::defaultTypes(kAll()), QStringList({"person", "vehicle", "pet"}));
+        EventFeed c;
         setUp(c);
         QCOMPARE(c.enabledTypes(), QStringList({"person", "vehicle", "pet"}));
         QVERIFY(c.hasTypes());
@@ -87,7 +87,7 @@ private slots:
         add(1, 0, m_day.from + 500, "online");
         add(1, 1, m_day.from + 600, "person");   // another camera
         add(1, 0, m_prevDay.from + 10, "person"); // another day
-        EventColumn c;
+        EventFeed c;
         setUp(c);
         const QVariantMap counts = c.counts();
         QCOMPARE(counts.value("person").toInt(), 2);
@@ -102,10 +102,10 @@ private slots:
         add(1, 0, m_day.from + 100, "person");
         add(1, 0, m_day.from + 200, "motion");
         add(1, 0, m_day.from + 300, "offline");
-        EventColumn a, b;
+        EventFeed a, b;
         setUp(a);
         setUp(b);
-        QSignalSpy toggled(&a, &EventColumn::typesToggled);
+        QSignalSpy toggled(&a, &EventFeed::typesToggled);
         a.toggle(QStringLiteral("motion"));
         QCOMPARE(toggled.count(), 1);
         QCOMPARE(typesOf(a), QStringList({"event:motion", "event:person"}));
@@ -115,7 +115,7 @@ private slots:
         a.toggle(QStringLiteral("person"));
         QCOMPARE(typesOf(a), QStringList({"event:offline", "event:motion"}));
         // A type the camera doesn't support can't be turned on.
-        EventColumn c;
+        EventFeed c;
         setUp(c, {"person", "motion"});
         c.toggle(QStringLiteral("vehicle"));
         QCOMPARE(c.enabledTypes(), QStringList({"person"}));
@@ -124,13 +124,13 @@ private slots:
     // A remembered set is kept to what the camera supports now, in display order.
     void restoredTypesFollowSupport()
     {
-        EventColumn c;
+        EventFeed c;
         setUp(c, {"person", "vehicle", "motion", "status"});
         c.restoreTypes({"motion", "pet", "person"});
         QCOMPARE(c.enabledTypes(), QStringList({"person", "motion"}));
 
         // Remembered before the camera's types are known (it answers late): kept once they are.
-        EventColumn late;
+        EventFeed late;
         late.restoreTypes({"motion", "person"});
         QVERIFY(late.enabledTypes().isEmpty());
         late.setSupportedTypes({"person", "vehicle", "motion", "status"});
@@ -140,10 +140,10 @@ private slots:
     // Toggling keeps a remembered type the camera hasn't reported yet.
     void togglingKeepsTypesNotYetSupported()
     {
-        EventColumn c;
+        EventFeed c;
         setUp(c, {"person", "motion"});
         c.restoreTypes({"person", "vehicle"});
-        QSignalSpy toggled(&c, &EventColumn::typesToggled);
+        QSignalSpy toggled(&c, &EventFeed::typesToggled);
         c.toggle(QStringLiteral("motion"));
         QCOMPARE(toggled.first().first().toStringList(), QStringList({"person", "vehicle", "motion"}));
         c.setSupportedTypes({"person", "vehicle", "motion"});
@@ -154,7 +154,7 @@ private slots:
     void newEventsInsertWithoutReset()
     {
         add(1, 0, m_day.from + 100, "person");
-        EventColumn c;
+        EventFeed c;
         setUp(c);
         QSignalSpy reset(&c, &QAbstractItemModel::modelReset);
         QSignalSpy inserted(&c, &QAbstractItemModel::rowsInserted);
@@ -173,7 +173,7 @@ private slots:
     void aCameraWithNoTypesSaysSo()
     {
         add(1, 0, m_day.from + 100, "motion");
-        EventColumn c;
+        EventFeed c;
         setUp(c, {});
         QVERIFY(!c.hasTypes());
         QCOMPARE(c.rowCount(), 0);
@@ -184,7 +184,7 @@ private slots:
         add(1, 0, m_day.from + 100, "person");
         add(1, 0, m_prevDay.from + 100, "vehicle");
         add(1, 0, m_prevDay.from + 200, "vehicle");
-        EventColumn c;
+        EventFeed c;
         setUp(c);
         QCOMPARE(typesOf(c), QStringList({"event:person"}));
         c.setDayStart(m_prevDay.from);
@@ -213,30 +213,30 @@ private slots:
         QVERIFY(m_db->touchAppRun(m_db->beginAppRun(m_day.from + 5 * h), m_day.to + h));
         add(1, 0, m_day.from + 2 * h, "person");
         add(1, 0, m_day.from + 6 * h, "vehicle");
-        EventColumn c;
+        EventFeed c;
         setUp(c);
         QCOMPARE(typesOf(c), QStringList({"event:vehicle", "gap:", "event:person", "gap:"}));
-        QCOMPARE(c.data(c.index(1), EventColumn::FromRole).toLongLong(), m_day.from + 3 * h);
-        QCOMPARE(c.data(c.index(1), EventColumn::ToRole).toLongLong(), m_day.from + 5 * h);
-        QCOMPARE(c.data(c.index(3), EventColumn::FromRole).toLongLong(), m_day.from);
-        QCOMPARE(c.data(c.index(3), EventColumn::ToRole).toLongLong(), m_day.from + 1 * h);
+        QCOMPARE(c.data(c.index(1), EventFeed::FromRole).toLongLong(), m_day.from + 3 * h);
+        QCOMPARE(c.data(c.index(1), EventFeed::ToRole).toLongLong(), m_day.from + 5 * h);
+        QCOMPARE(c.data(c.index(3), EventFeed::FromRole).toLongLong(), m_day.from);
+        QCOMPARE(c.data(c.index(3), EventFeed::ToRole).toLongLong(), m_day.from + 1 * h);
         // Today: nothing after now is a gap.
         c.setNow(m_day.from + 4 * h);
         c.refresh();
-        QCOMPARE(c.data(c.index(1), EventColumn::ToRole).toLongLong(), m_day.from + 4 * h);
+        QCOMPARE(c.data(c.index(1), EventFeed::ToRole).toLongLong(), m_day.from + 4 * h);
 
         // Before the first recorded run (events from a build that kept no runs) is
         // unknown, so no band: the day before only has one from 21:00.
         add(1, 0, m_prevDay.from + 2 * h, "person");
         c.setDayStart(m_prevDay.from);
         QCOMPARE(typesOf(c), QStringList({"gap:", "event:person"}));
-        QCOMPARE(c.data(c.index(0), EventColumn::FromRole).toLongLong(), m_prevDay.from + 21 * h);
+        QCOMPARE(c.data(c.index(0), EventFeed::FromRole).toLongLong(), m_prevDay.from + 21 * h);
     }
 
     // The column says when the day is past what is kept.
     void notesADayNotKept()
     {
-        EventColumn c;
+        EventFeed c;
         setUp(c);
         QVERIFY(c.keptNote().isEmpty());
         c.toggle(QStringLiteral("motion"));
@@ -264,5 +264,5 @@ private slots:
     }
 };
 
-QTEST_GUILESS_MAIN(TestEventColumn)
-#include "test_eventcolumn.moc"
+QTEST_GUILESS_MAIN(TestEventFeed)
+#include "test_eventfeed.moc"
