@@ -14,7 +14,7 @@ class TestDatabase : public QObject
     Q_OBJECT
 
     // Current schema version; bump alongside new migrations in Database.cpp.
-    static constexpr int kSchemaVersion = 3;
+    static constexpr int kSchemaVersion = 4;
 
     static constexpr qint64 kHour = 3600;
     static constexpr qint64 kDay = 24 * kHour;

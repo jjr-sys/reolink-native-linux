@@ -98,7 +98,8 @@ bool saveEventThumbnail(const QByteArray &jpeg, const QString &path)
 } // namespace
 
 DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject *parent)
-    : QAbstractListModel(parent), m_db(db), m_credentials(credentials)
+    : QAbstractListModel(parent), m_db(db), m_credentials(credentials),
+      m_eventSwitches(new EventSwitches(db, this))
 {
     // The Playback page shows search results only on screen; log them so an empty page
     // can be told apart from a failed search afterwards.
@@ -422,10 +423,18 @@ void DeviceManager::emitDetections(qint64 hostId, const QVector<device::Detectio
                                    bool frigateHost)
 {
     for (const device::Detection &d : found)
-        emit detectionEvent(hostId, d.channel, d.type,
-                            frigateHost ? displayName(d.camera, device::kindToString(
-                                                                    device::Kind::Frigate))
-                                        : d.camera);
+        reportDetection(hostId, d.channel, d.type,
+                        frigateHost ? displayName(d.camera, device::kindToString(
+                                                                device::Kind::Frigate))
+                                    : d.camera);
+}
+
+void DeviceManager::reportDetection(qint64 hostId, int channel, const QString &type,
+                                    const QString &camera)
+{
+    if (m_eventSwitches->isOff(hostId, channel, type))
+        return;
+    emit detectionEvent(hostId, channel, type, camera);
 }
 
 void DeviceManager::ensurePushListener(const Entry &e)

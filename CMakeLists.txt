@@ -68,6 +68,7 @@ add_library(reolink_core STATIC
     src/device/DeviceDiscovery.h src/device/DeviceDiscovery.cpp
     src/device/EventHistory.h src/device/EventHistory.cpp
     src/device/EventManager.h src/device/EventManager.cpp
+    src/device/EventSwitches.h src/device/EventSwitches.cpp
     src/media/LatestValueMailbox.h src/media/StreamPlayer.h src/media/StreamPlayer.cpp
     src/media/HttpAuth.h src/media/HttpAuth.cpp
     src/media/VaapiVideoBuffer.h src/media/VaapiVideoBuffer.cpp
@@ -244,7 +245,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection test_sitebudget test_savedselections test_playbackgroup test_bcdownload test_bcmp4writer test_bcclipsave test_eventhistory test_eventcolumn test_frigatevod)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection test_sitebudget test_savedselections test_playbackgroup test_bcdownload test_bcmp4writer test_bcclipsave test_eventhistory test_eventcolumn test_frigatevod test_eventswitches)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})

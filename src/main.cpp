@@ -305,11 +305,12 @@ int main(int argc, char *argv[])
             if (devices.rowCount() == 0)
                 return;
             const QVariantMap c = devices.cameraInfo(0);
-            QMetaObject::invokeMethod(&devices, "detectionEvent", Qt::DirectConnection,
-                                      Q_ARG(qint64, c.value(QStringLiteral("hostId")).toLongLong()),
-                                      Q_ARG(int, c.value(QStringLiteral("channel")).toInt()),
-                                      Q_ARG(QString, QStringLiteral("person")),
-                                      Q_ARG(QString, c.value(QStringLiteral("name")).toString()));
+            // RL_TEST_NOTIFY_TYPE picks the detection type (default person), so a
+            // switched-off pair can be checked to go nowhere.
+            const QString type = qEnvironmentVariable("RL_TEST_NOTIFY_TYPE", QStringLiteral("person"));
+            devices.reportDetection(c.value(QStringLiteral("hostId")).toLongLong(),
+                                    c.value(QStringLiteral("channel")).toInt(), type,
+                                    c.value(QStringLiteral("name")).toString());
         });
     }
 

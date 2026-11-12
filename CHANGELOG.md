@@ -8,6 +8,15 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ## [Unreleased]
 
+### Added
+
+- **Event switches (groundwork).** A camera's event type can be switched off so the
+  app no longer stores, pictures, notifies or highlights it, live or from a Frigate
+  catch-up. Switching off first reports how many events and how much snapshot space
+  it would delete, then deletes them; switching back on logs afresh. Status can't be
+  switched off. Kept in the app only, never on a recorder. No controls yet: those
+  come with the new Events layout.
+
 ### Changed
 
 - **Events on Site tabs.** Pick cameras from the Site tabs, as on Live View and

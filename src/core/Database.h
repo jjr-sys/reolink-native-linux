@@ -33,6 +33,22 @@ struct EventRecord {
     QString thumbnail;    // optional JPEG path
 };
 
+// One event switch: a recorder's camera and a stored event type.
+struct EventSwitchKey {
+    qint64 hostId = -1;
+    int channel = 0;
+    QString type;
+    bool operator==(const EventSwitchKey &o) const
+    {
+        return hostId == o.hostId && channel == o.channel && type == o.type;
+    }
+};
+
+inline size_t qHash(const EventSwitchKey &k, size_t seed = 0)
+{
+    return qHashMulti(seed, k.hostId, k.channel, k.type);
+}
+
 // SQLite-backed application store: devices, channels, layouts.
 // Schema is versioned; open() runs pending migrations.
 class Database
@@ -62,6 +78,10 @@ public:
     // override: clearing one keeps the other.
     QHash<int, QStringList> channelEventTypes(qint64 hostId) const;
     bool setChannelEventTypes(qint64 hostId, int channel, const QStringList &types);
+
+    // Event switches: the pairs switched off, and switching one off or on.
+    QVector<EventSwitchKey> switchedOffEvents() const;
+    bool setEventSwitchedOff(const EventSwitchKey &key, bool off);
 
     // Events (motion / AI detections / Status), newest first.
     qint64 addEvent(const EventRecord &rec);
@@ -93,6 +113,11 @@ public:
     // Deletes all but the newest `keep` capped (non-motion) events of one host, returning
     // the thumbnail paths of the removed rows. Motion is left to the age purge.
     QStringList trimHostEvents(qint64 hostId, int keep);
+    // One camera's stored events of one type: how many, with their snapshot paths
+    // appended to `thumbnails`; and deleting them, returning those paths.
+    int countEvents(qint64 hostId, int channel, const QString &type,
+                    QStringList *thumbnails = nullptr) const;
+    QStringList deleteEvents(qint64 hostId, int channel, const QString &type);
     // False when the event no longer exists (trimmed while its thumbnail was on the way).
     bool setEventThumbnail(qint64 id, const QString &path);
     bool setEventCamera(qint64 id, const QString &camera);

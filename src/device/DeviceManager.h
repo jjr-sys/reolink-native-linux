@@ -6,6 +6,7 @@
 #include "DeviceKind.h"
 #include "Detections.h"
 #include "EventHistory.h"
+#include "EventSwitches.h"
 #include "HostSession.h"
 #include "DownloadSource.h"
 #include "protocol/ReolinkApi.h"
@@ -97,6 +98,12 @@ public:
     // Probe a device WITHOUT persisting anything: the Add Device dialog calls
     // this first so a typo'd address or rejected password becomes an inline
     // error instead of a phantom "connecting…" row. Result via testDeviceResult.
+    // The event switches: which (recorder, camera, type) pairs are not logged at all.
+    EventSwitches *eventSwitches() const { return m_eventSwitches; }
+    // The one door every detection goes through on its way to the inbox, the
+    // notifications and the Live highlights: a switched-off pair stops here.
+    void reportDetection(qint64 hostId, int channel, const QString &type, const QString &camera);
+
     Q_INVOKABLE void testDevice(const QString &addr, const QString &username,
                                 const QString &password, bool https, int port);
     // User-driven revalidation of a host (sidebar "Reconnect").
@@ -427,6 +434,7 @@ private:
 
     Database *m_db;
     CredentialStore *m_credentials;
+    EventSwitches *m_eventSwitches;
     QVector<Entry> m_entries;
     QFutureSynchronizer<void> m_pending; // drains in-flight validations at teardown
 
@@ -440,7 +448,7 @@ private:
     void ensurePushListener(const Entry &e);
     void stopPushListener(qint64 hostId);
     void onAlarmEvents(qint64 hostId, const QByteArray &xml);
-    // Emit detectionEvent for each normalised detection (Frigate names are prettified).
+    // Report each normalised detection (Frigate names are prettified).
     void emitDetections(qint64 hostId, const QVector<device::Detection> &found, bool frigateHost);
     // Frigate's /ws websocket per Frigate host (ticket 07): new events at once; the poll
     // still runs as catch-up and connectivity check.

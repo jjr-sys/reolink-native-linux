@@ -68,6 +68,14 @@ public:
     // { "hostId": { type: count } }.
     Q_INVOKABLE QVariantMap dayCountsByHost(qint64 dayStart) const;
     Q_INVOKABLE void clear();
+    // Event switches. What switching a camera's event type off would delete:
+    // { count, bytes } (stored events, snapshot bytes on disk).
+    Q_INVOKABLE QVariantMap switchStats(qint64 hostId, int channel, const QString &type) const;
+    // Switches the pair off, then deletes its stored events and their snapshots. False
+    // (nothing changes) for Status or when the switch can't be saved.
+    Q_INVOKABLE bool switchOff(qint64 hostId, int channel, const QString &type);
+    // Switches the pair back on: it logs afresh from now (what was deleted stays gone).
+    Q_INVOKABLE bool switchOn(qint64 hostId, int channel, const QString &type);
     // Backfills the inbox from a Frigate server's own event history (unlike
     // onDetection, which only ever files what was seen live since the app was last
     // connected). Filed with each event's real historical timestamp, deduplicated
@@ -76,6 +84,13 @@ public:
     Q_INVOKABLE void syncFrigateHistory(qint64 hostId);
     // Convenience: runs syncFrigateHistory() for every known Frigate host.
     Q_INVOKABLE void syncAllFrigateHistory();
+
+    // Runs on the GUI thread once syncFrigateHistory()'s worker thread has the raw
+    // events back: applies the same burst-gate as live polling, skips switched-off
+    // pairs and anything already covering that moment, and files the rest with their
+    // real timestamps. Public for tests; the app reaches it only through the sync.
+    void applyFrigateHistory(qint64 hostId, const QHash<QString, int> &channelOf,
+                             const QVector<frigate::Event> &events);
 
 signals:
     void desktopNotificationsChanged();
@@ -111,11 +126,6 @@ private:
     // Age-based purge of the whole store (motion 24 h, the rest 30 days). Deletes the
     // removed rows' thumbnail files and reloads the list if anything went.
     void enforceRetention();
-    // Runs on the GUI thread once syncFrigateHistory()'s worker thread has the raw
-    // events back: applies the same burst-gate as live polling, skips anything
-    // already covering that moment, and files the rest with their real timestamps.
-    void applyFrigateHistory(qint64 hostId, const QHash<QString, int> &channelOf,
-                             const QVector<frigate::Event> &events);
     // Backfilled events have no live thumbnail to grab (the camera's not showing that
     // moment any more), so this pulls Frigate's own saved frame for each one instead —
     // (local db event id, Frigate's own event id) pairs, fetched on a worker thread.

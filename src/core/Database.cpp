@@ -113,11 +113,22 @@ bool Database::migrate()
         QStringLiteral("ALTER TABLE channels ADD COLUMN event_types TEXT NOT NULL DEFAULT ''"),
     };
 
+    // Event switches (wayfinder/events-feed): the (recorder, camera, type) pairs switched
+    // off, which the app neither stores nor shows. Kept here only, never on a recorder.
+    static const QStringList migrationsV4 = {
+        QStringLiteral("CREATE TABLE IF NOT EXISTS event_switches_off ("
+                       " host_id INTEGER NOT NULL,"
+                       " channel INTEGER NOT NULL,"
+                       " type TEXT NOT NULL,"
+                       " PRIMARY KEY (host_id, channel, type))"),
+    };
+
     // Ordered migrations; each bumps the stored version by one.
     const QVector<QPair<int, const QStringList *>> steps = {
         {1, &migrationsV1},
         {2, &migrationsV2},
         {3, &migrationsV3},
+        {4, &migrationsV4},
     };
 
     const int current = schemaVersion();
@@ -151,6 +162,30 @@ bool Database::migrate()
         qCInfo(lcCore) << "Database migrated to schema v" << version;
     }
     return true;
+}
+
+QVector<EventSwitchKey> Database::switchedOffEvents() const
+{
+    QVector<EventSwitchKey> out;
+    QSqlQuery q(db());
+    if (!q.exec(QStringLiteral("SELECT host_id, channel, type FROM event_switches_off")))
+        return out;
+    while (q.next())
+        out.append({q.value(0).toLongLong(), q.value(1).toInt(), q.value(2).toString()});
+    return out;
+}
+
+bool Database::setEventSwitchedOff(const EventSwitchKey &key, bool off)
+{
+    QSqlQuery q(db());
+    q.prepare(off ? QStringLiteral("INSERT OR IGNORE INTO event_switches_off (host_id, channel, type)"
+                                   " VALUES (:h, :c, :t)")
+                  : QStringLiteral("DELETE FROM event_switches_off"
+                                   " WHERE host_id = :h AND channel = :c AND type = :t"));
+    q.bindValue(QStringLiteral(":h"), key.hostId);
+    q.bindValue(QStringLiteral(":c"), key.channel);
+    q.bindValue(QStringLiteral(":t"), key.type);
+    return q.exec();
 }
 
 qint64 Database::addEvent(const EventRecord &rec)
@@ -425,6 +460,36 @@ QStringList Database::trimHostEvents(qint64 hostId, int keep)
          {QStringLiteral(":ts"), cut.value(0).toLongLong()},
          {QStringLiteral(":id"), cut.value(1).toLongLong()}},
         &m_lastError);
+}
+
+int Database::countEvents(qint64 hostId, int channel, const QString &type,
+                          QStringList *thumbnails) const
+{
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT thumbnail FROM events"
+                             " WHERE host_id = :h AND channel = :c AND type = :t"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":c"), channel);
+    q.bindValue(QStringLiteral(":t"), type);
+    if (!q.exec())
+        return 0;
+    int n = 0;
+    while (q.next()) {
+        ++n;
+        const QString thumb = q.value(0).toString();
+        if (thumbnails && !thumb.isEmpty())
+            thumbnails->append(thumb);
+    }
+    return n;
+}
+
+QStringList Database::deleteEvents(qint64 hostId, int channel, const QString &type)
+{
+    return deleteEventsWhere(db(), QStringLiteral("host_id = :h AND channel = :c AND type = :t"),
+                             {{QStringLiteral(":h"), hostId},
+                              {QStringLiteral(":c"), channel},
+                              {QStringLiteral(":t"), type}},
+                             &m_lastError);
 }
 
 qint64 Database::beginAppRun(qint64 now)

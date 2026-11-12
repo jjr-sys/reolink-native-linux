@@ -10,6 +10,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QSettings>
 #include <QTimeZone>
@@ -367,6 +368,34 @@ void EventManager::clear()
     reload();
 }
 
+QVariantMap EventManager::switchStats(qint64 hostId, int channel, const QString &type) const
+{
+    QStringList thumbs;
+    const int count = m_db->countEvents(hostId, channel, EventSwitches::storedType(type), &thumbs);
+    qint64 bytes = 0;
+    for (const QString &path : std::as_const(thumbs))
+        bytes += QFileInfo(path).size(); // 0 for a file already gone
+    return {{QStringLiteral("count"), count}, {QStringLiteral("bytes"), bytes}};
+}
+
+bool EventManager::switchOff(qint64 hostId, int channel, const QString &type)
+{
+    // Recorded first: if the switch can't be saved, nothing is deleted.
+    if (!m_devices->eventSwitches()->setOff(hostId, channel, type, true))
+        return false;
+    const QStringList thumbs =
+        m_db->deleteEvents(hostId, channel, EventSwitches::storedType(type));
+    m_cappedCount.remove(hostId); // recounted on the recorder's next event
+    dropThumbnails(thumbs);
+    reload();
+    return true;
+}
+
+bool EventManager::switchOn(qint64 hostId, int channel, const QString &type)
+{
+    return m_devices->eventSwitches()->setOff(hostId, channel, type, false);
+}
+
 void EventManager::syncFrigateHistory(qint64 hostId)
 {
     const QVariantMap info = m_devices->hostInfo(hostId);
@@ -438,10 +467,12 @@ void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> 
         const QString type = frigate::typeForLabel(ev.label);
         if (type.isEmpty())
             continue;
+        const int channel = channelOf.value(ev.camera);
+        if (m_devices->eventSwitches()->isOff(hostId, channel, type))
+            continue; // switched off: never stored, pictured or counted
         if (!burst.admit(ev.camera, type, ev.start))
             continue;
 
-        const int channel = channelOf.value(ev.camera);
         const qint64 ts = static_cast<qint64>(ev.start);
         // Skip anything that already covers this moment — a rerun of the sync, or
         // the live poller having already caught it — but if that existing row is
