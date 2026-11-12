@@ -55,9 +55,8 @@ void EventCameraList::setEvents(EventManager *events)
     m_db = events ? events->database() : nullptr;
     if (events)
         connect(events, &EventManager::storedChanged, this, [this] { m_refreshSoon.start(); });
-    setSwitches(events ? events->switches() : nullptr);
+    setSwitches(events ? events->switches() : nullptr); // refreshes
     emit eventsChanged();
-    refresh();
 }
 
 void EventCameraList::setDatabase(Database *db)
@@ -92,6 +91,11 @@ QString EventCameraList::first() const
     return m_rows.isEmpty() ? QString() : m_rows.first().key;
 }
 
+bool EventCameraList::contains(const QString &key) const
+{
+    return std::any_of(m_rows.cbegin(), m_rows.cend(), [&key](const Row &r) { return r.key == key; });
+}
+
 void EventCameraList::refresh()
 {
     m_refreshSoon.stop();
@@ -109,12 +113,15 @@ void EventCameraList::refresh()
         const qint64 host = parts.at(0).toLongLong();
         const int channel = parts.at(1).toInt();
         r.last = last.value({host, channel});
-        r.statusOnly = true;
-        for (const QString &t : m.value(QStringLiteral("types")).toStringList())
-            if (t != QLatin1String("status") && !(m_switches && m_switches->isOff(host, channel, t))) {
+        const QStringList types = m.value(QStringLiteral("types")).toStringList();
+        r.statusOnly = !types.isEmpty(); // not known yet: not marked
+        for (const QString &t : types) {
+            const bool off = m_switches && m_switches->isOff(host, channel, t);
+            if (t != QLatin1String("status") && !off) {
                 r.statusOnly = false;
                 break;
             }
+        }
         rows.append(r);
     }
     // Loggable before Status only; then newest activity first; ties keep the given order.

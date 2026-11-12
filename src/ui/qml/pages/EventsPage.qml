@@ -13,7 +13,7 @@ import ReolinkApp.Core
 Item {
     id: page
     signal jumpToPlayback(var hostId, var channel, var timestamp)
-    property var menus: null        // DeviceMenus (unused here since the Site drawer went)
+    property var menus: null        // DeviceMenus: right-click on a Site tab or a camera
 
     readonly property int listWidth: 260
     readonly property int feedWidth: 560
@@ -94,26 +94,35 @@ Item {
     property string site: Sites.list.indexOf(store.site) >= 0 ? store.site
                           : (Sites.list.length > 0 ? Sites.list[0] : "")
     property string camera: ""
+    // The camera was chosen for the person (nothing remembered): it follows the most active
+    // camera as recorders answer, until they pick one.
+    property bool autoChosen: true
     function pickSite(s) {
+        if (s === page.site)
+            return;
+        page.camera = "";   // first, so the list refreshing for the new Site picks once
         store.site = s;
-        page.camera = "";
         page.chooseCamera();
     }
     function pickCamera(key) {
+        page.autoChosen = false;
         page.camera = key;
         var m = {};
         try { m = JSON.parse(store.cameras); } catch (e) { m = {}; }
         m[page.site] = key;
         store.cameras = JSON.stringify(m);
     }
-    // The remembered camera of this Site if it is still listed, else the most active one.
+    // The remembered camera of this Site if it is listed, else the most active one.
     function chooseCamera() {
-        if (page.camera !== "" && cameraList.has(page.camera))
+        if (page.camera !== "" && !page.autoChosen && cameraList.contains(page.camera))
             return;
         var m = {};
         try { m = JSON.parse(store.cameras); } catch (e) { m = {}; }
         const remembered = m[page.site] || "";
-        page.camera = cameraList.has(remembered) ? remembered : cameraList.first();
+        page.autoChosen = !cameraList.contains(remembered);
+        const next = page.autoChosen ? cameraList.first() : remembered;
+        if (next !== page.camera)
+            page.camera = next;
     }
 
     // Device facts change as recorders answer; the camera list re-reads them then.
@@ -146,15 +155,9 @@ Item {
         events: Events
         cameras: page.siteCameras
         onRefreshed: page.chooseCamera()
-        function has(key) {
-            for (var i = 0; i < page.siteCameras.length; ++i)
-                if (page.siteCameras[i].key === key)
-                    return true;
-            return false;
-        }
     }
 
-    readonly property var hc: camera.split(":")
+    readonly property var hc: page.camera.split(":")
     readonly property string cameraName: {
         devRev;
         const row = camera === "" ? -1 : Devices.rowOfHostChannel(Number(hc[0]), Number(hc[1]));
@@ -195,7 +198,7 @@ Item {
     }
     Timer { interval: 60000; repeat: true; running: page.visible; onTriggered: feed.refresh() }
 
-    // ---- Top bar: ⋯, the Site tabs, the camera's type chips -------------------------------
+    // ---- Top bar: ⋯ and the Site tabs (the camera's type chips sit above its feed) --------
     Rectangle {
         id: bar
         width: parent.width
@@ -257,6 +260,10 @@ Item {
                     }
                     HoverHandler { id: siteHover; cursorShape: Qt.PointingHandCursor }
                     TapHandler { onTapped: page.pickSite(parent.modelData) }
+                    TapHandler {
+                        acceptedButtons: Qt.RightButton
+                        onTapped: if (page.menus) page.menus.popupSite(parent.modelData)
+                    }
                 }
             }
         }
@@ -317,6 +324,15 @@ Item {
                 }
                 HoverHandler { id: camHover; cursorShape: Qt.PointingHandCursor }
                 TapHandler { onTapped: page.pickCamera(camRow.key) }
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    onTapped: {
+                        const p = camRow.key.split(":");
+                        const row = Devices.rowOfHostChannel(Number(p[0]), Number(p[1]));
+                        if (page.menus && row >= 0)
+                            page.menus.popupCamera(row);
+                    }
+                }
             }
             Text {
                 anchors.centerIn: parent

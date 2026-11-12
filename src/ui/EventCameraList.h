@@ -15,8 +15,8 @@ class EventSwitches;
 // The Events page's camera list (wayfinder/events-feed step 18): the selected Site's
 // cameras, the most recently active first (the newest stored event that isn't Status),
 // then those with nothing stored yet, in the order given. A camera whose types other than
-// Status are all switched off (or that has none) can only log Status now: it goes last,
-// marked so.
+// Status are all switched off can only log Status now: it goes last, marked so. A camera
+// whose types aren't known yet (its recorder hasn't answered) is not marked.
 //
 //  - `cameras` comes from the page: [{ key: "hostId:channel", name, types }].
 //  - Set `events` (QML), or `setDatabase` and `setSwitches` (tests); with `events` the
@@ -50,8 +50,9 @@ public:
     void setCameras(const QVariantList &cameras);
     int count() const { return int(m_rows.size()); }
 
-    // The camera at the top, "" when there is none.
+    // The camera at the top, "" when there is none; whether a camera is listed.
     Q_INVOKABLE QString first() const;
+    Q_INVOKABLE bool contains(const QString &key) const;
     Q_INVOKABLE void refresh();
 
 signals:

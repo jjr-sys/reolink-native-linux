@@ -47,6 +47,7 @@ public:
         FromRole,                    // a gap's span, [from, to)
         ToRole,
         DayRole,                     // local day, "yyyy-MM-dd" (a gap: the day it ends on)
+        IdRole,                      // the stored event's id (-1 for a gap)
     };
 
     explicit EventFeed(QObject *parent = nullptr);
@@ -93,6 +94,7 @@ private:
         bool gap = false;
         QString type, thumbnail, day;
         qint64 ts = 0, from = 0, to = 0;
+        qint64 id = -1;
     };
     void setEnabled(const QStringList &types);
     void applyRows(const QVector<Row> &rows);

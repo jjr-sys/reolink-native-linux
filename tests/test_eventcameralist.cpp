@@ -101,6 +101,21 @@ private slots:
         QVERIFY(l.data(l.index(1), EventCameraList::StatusOnlyRole).toBool());
     }
 
+    // Before its recorder answers, a camera's types aren't known: that isn't "Status
+    // only", it just has nothing yet, so the most active camera still comes first.
+    void unknownTypesAreNotStatusOnly()
+    {
+        add(1, 7, 2000, "pet");
+        EventCameraList l;
+        l.setDatabase(m_db.get());
+        l.setCameras({camera("1:0", "Driveway", {}), camera("1:7", "Patio", {})});
+        QCOMPARE(keys(l), QStringList({"1:7", "1:0"}));
+        QVERIFY(!l.data(l.index(0), EventCameraList::StatusOnlyRole).toBool());
+        QVERIFY(!l.data(l.index(1), EventCameraList::StatusOnlyRole).toBool());
+        QVERIFY(l.contains(QStringLiteral("1:0")));
+        QVERIFY(!l.contains(QStringLiteral("1:9")));
+    }
+
     void emptyWithoutCameras()
     {
         EventCameraList l;

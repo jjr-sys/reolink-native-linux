@@ -55,6 +55,7 @@ QVariant EventFeed::data(const QModelIndex &index, int role) const
     case FromRole: return r.from;
     case ToRole: return r.to;
     case DayRole: return r.day;
+    case IdRole: return r.id;
     default: return {};
     }
 }
@@ -63,7 +64,7 @@ QHash<int, QByteArray> EventFeed::roleNames() const
 {
     return {{KindRole, "kind"},           {TypeRole, "type"}, {TimestampRole, "timestamp"},
             {ThumbnailRole, "thumbnail"}, {FromRole, "from"}, {ToRole, "to"},
-            {DayRole, "day"}};
+            {DayRole, "day"}, {IdRole, "eventId"}};
 }
 
 EventManager *EventFeed::events() const
@@ -178,9 +179,9 @@ void EventFeed::setEnabled(const QStringList &types)
 // place. Anything else (a camera or type change, a purge) resets the list.
 void EventFeed::applyRows(const QVector<Row> &rows)
 {
-    // A gap is known by its end: its start moves as the window slides.
+    // An event is known by its id; a gap by its end (its start moves as the window slides).
     const auto same = [](const Row &a, const Row &b) {
-        return a.gap == b.gap && a.ts == b.ts && a.type == b.type;
+        return a.gap == b.gap && (a.gap ? a.ts == b.ts : a.id == b.id);
     };
     qsizetype added = -1; // where the old first row sits in the new rows
     if (m_rows.isEmpty())
@@ -257,9 +258,9 @@ void EventFeed::refresh()
         if (!m_enabled.isEmpty())
             for (const EventRecord &e : m_db->eventsBetween(m_host, m_channel, from, to,
                                                             storedTypes(m_enabled)))
-                rows.append({false, e.type, e.thumbnail, dayOf(e.timestamp), e.timestamp, 0, 0});
+                rows.append({false, e.type, e.thumbnail, dayOf(e.timestamp), e.timestamp, 0, 0, e.id});
         for (const device::TimeSpan &g : device::storedNotRunningGaps(*m_db, from, t, t))
-            rows.append({true, {}, {}, dayOf(g.to - 1), g.to, g.from, g.to});
+            rows.append({true, {}, {}, dayOf(g.to - 1), g.to, g.from, g.to, -1});
         // Newest first; a gap sits by its end, above the events before it.
         std::stable_sort(rows.begin(), rows.end(),
                          [](const Row &a, const Row &b) { return a.ts > b.ts; });

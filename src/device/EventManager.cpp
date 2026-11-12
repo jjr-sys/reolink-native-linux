@@ -387,8 +387,10 @@ bool EventManager::isSwitchedOff(qint64 hostId, int channel, const QString &type
 QString EventManager::saveSnapshot(const QString &thumbnail, const QString &camera,
                                    qint64 timestamp) const
 {
-    const QString dir =
-        QStandardPaths::writableLocation(QStandardPaths::PicturesLocation) + QStringLiteral("/Reolink");
+    QString pictures = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    if (pictures.isEmpty())
+        pictures = QDir::homePath();
+    const QString dir = pictures + QStringLiteral("/Reolink");
     if (thumbnail.isEmpty() || !QFile::exists(thumbnail) || !QDir().mkpath(dir))
         return {};
     QString name = camera.isEmpty() ? tr("Camera") : camera;

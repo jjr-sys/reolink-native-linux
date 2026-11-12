@@ -247,6 +247,26 @@ private slots:
         QCOMPARE(inserted.count(), 1);
     }
 
+    // Two events of a type in the same second are told apart: a new one in that second
+    // goes in at the top, and a snapshot lands on its own row.
+    void sameSecondEventsAreToldApart()
+    {
+        add(1, 0, m_day.from + 100, "person");
+        EventFeed f;
+        setUp(f);
+        QSignalSpy reset(&f, &QAbstractItemModel::modelReset);
+        QSignalSpy inserted(&f, &QAbstractItemModel::rowsInserted);
+        add(1, 0, m_day.from + 100, "person");
+        f.refresh();
+        QCOMPARE(f.rowCount(), 2);
+        QCOMPARE(reset.count() + inserted.count(), 1);
+        const qint64 newest = f.data(f.index(0), EventFeed::IdRole).toLongLong();
+        QVERIFY(m_db->setEventThumbnail(newest, QStringLiteral("/tmp/new.jpg")));
+        f.refresh();
+        QCOMPARE(f.data(f.index(0), EventFeed::ThumbnailRole).toString(), QStringLiteral("/tmp/new.jpg"));
+        QVERIFY(f.data(f.index(1), EventFeed::ThumbnailRole).toString().isEmpty());
+    }
+
     // The clock moving on (a refresh a minute later) doesn't reset a scrolled feed either.
     // An old event leaving the window goes from the bottom in place.
     void theClockMovingOnDoesNotReset()
