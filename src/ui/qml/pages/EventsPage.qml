@@ -1177,6 +1177,10 @@ Item {
         visible: page.showPlayer || active
         z: page.showPlayer ? 0 : 5
         snapshotRatio: feed.pictureRatio
+        fisheyeLens: page.cameraIsFisheye
+        fisheyeMode: page.cameraViewMode
+        cameraKey: page.camera
+        onViewPicked: (view) => Devices.setViewMode(page.cameraRow, view)
         onOpenInPlayback: (h, c, t) => page.jumpToPlayback(h, c, t)
         onStepRequested: (d) => page.stepClip(d)
         Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.border; visible: page.showPlayer }

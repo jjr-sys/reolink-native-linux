@@ -102,7 +102,7 @@ public:
     void setViewMode(const QString &view);
     bool circle() const;
     double shownRatio() const;
-    bool dewarp() const { return circle() && m_viewMode != QLatin1String("fisheye"); }
+    bool dewarp() const;
 
     Q_INVOKABLE static QStringList defaultTypes(const QStringList &supported);
     // Turn a type on or off; emits typesToggled so the page can remember the set.

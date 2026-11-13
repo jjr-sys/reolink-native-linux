@@ -11,7 +11,6 @@
 #include <QTimeZone>
 
 #include <algorithm>
-#include <cmath>
 
 namespace rl {
 
@@ -386,15 +385,19 @@ void EventFeed::setViewMode(const QString &view)
     emit shapeChanged();
 }
 
-// A fisheye sends its circle as a square frame; within 1 % allows for encoder rounding.
 bool EventFeed::circle() const
 {
-    return m_fisheye && std::abs(m_pictureRatio - 1.0) <= 0.01;
+    return frameshape::isCircle(m_pictureRatio, m_fisheye);
+}
+
+bool EventFeed::dewarp() const
+{
+    return frameshape::dewarps(m_pictureRatio, m_fisheye, m_viewMode);
 }
 
 double EventFeed::shownRatio() const
 {
-    return circle() ? frameshape::viewRatio(m_viewMode) : m_pictureRatio;
+    return frameshape::shownRatio(m_pictureRatio, m_fisheye, m_viewMode);
 }
 
 } // namespace rl

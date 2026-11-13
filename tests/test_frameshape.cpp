@@ -41,6 +41,34 @@ private slots:
         QCOMPARE(frameshape::viewRatio(QStringLiteral("nonsense")), 16.0 / 9);
     }
 
+    // A fisheye's square picture is its lens circle: drawn in the camera's view, at the view's
+    // shape; a flat picture (Frigate's copy) or an ordinary camera keeps its own shape
+    // (fisheye-and-framing steps 09, 10).
+    void aFisheyesSquarePictureIsItsCircle()
+    {
+        QVERIFY(frameshape::isCircle(1.0, true));
+        QVERIFY(frameshape::isCircle(640.0 / 636, true));      // encoder rounding
+        QVERIFY(!frameshape::isCircle(640.0 / 360, true));     // Frigate's flat copy
+        QVERIFY(!frameshape::isCircle(1.0, false));            // a square ordinary camera
+        QVERIFY(!frameshape::isCircle(0, true));
+    }
+
+    void aCircleIsShownAtItsViewsShape()
+    {
+        QCOMPARE(frameshape::shownRatio(1.0, true, QStringLiteral("quad")), 16.0 / 9);
+        QCOMPARE(frameshape::shownRatio(1.0, true, QStringLiteral("fisheye_ptz")), 7.0 / 3);
+        QCOMPARE(frameshape::shownRatio(1.0, true, QStringLiteral("fisheye")), 1.0);
+        QCOMPARE(frameshape::shownRatio(640.0 / 360, true, QStringLiteral("quad")), 640.0 / 360);
+        QCOMPARE(frameshape::shownRatio(1.0, false, QStringLiteral("quad")), 1.0);
+    }
+
+    void aCircleIsDewarpedUnlessShownAsIs()
+    {
+        QVERIFY(frameshape::dewarps(1.0, true, QStringLiteral("ptz")));
+        QVERIFY(!frameshape::dewarps(1.0, true, QStringLiteral("fisheye")));
+        QVERIFY(!frameshape::dewarps(640.0 / 360, true, QStringLiteral("ptz")));
+    }
+
     void aSquareFisheyeCircle()
     {
         QCOMPARE(frameshape::cardSize(560, 1.0), QSize(420, 420));

@@ -21,6 +21,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
   other tabs), double-click puts a turned view back. Flat
   snapshots (Frigate's Kitchen) and ordinary cameras are unchanged; stored files stay
   as they were.
+- **Fisheye views in the Events clip player, in HD.** The player shows a fisheye camera's
+  circle (the recording, and its snapshot before the first picture) in the camera's view,
+  with a Playback pane's controls: view icons on hover, right-click View menu with Reset
+  aim, drag to turn, scroll to zoom, double-click to put a turned view back. It takes the
+  view's shape at the largest size that fits; switching view never restarts the clip.
+  Clips now play in HD (main stream) by default, the HD button turns it off, and the
+  snapshot shown before the first picture is full size.
 - **Fisheye views in Playback, and the same controls in Live View.** Fisheye cameras
   (Lascelles Kitchen, Woorabinda Entrance and Kitchen) show all six views in Playback as
   in Live: Original, Quad, Virtual PTZ, Panorama, Dual and Fisheye + PTZ. Hovering a

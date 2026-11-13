@@ -32,6 +32,14 @@ double drawnRatio(double remembered, int rotation);
 // stacked, Fisheye+PTZ 7:3 (the circle beside a 4:3 view). Unknown views count as 16:9.
 double viewRatio(const QString &view);
 
+// Whether a picture of `ratio` from a fisheye camera is its lens circle: square within 1 %
+// (encoder rounding). Frigate's flattened copy of a fisheye is not.
+bool isCircle(double ratio, bool fisheye);
+// The shape a picture is drawn at: its view's for a circle, else its own.
+double shownRatio(double ratio, bool fisheye, const QString &view);
+// Whether it is drawn through the view (a circle not shown as the circle itself).
+bool dewarps(double ratio, bool fisheye, const QString &view);
+
 } // namespace frameshape
 
 // The same for QML (registered as the FrameShape singleton).
@@ -45,6 +53,9 @@ public:
     Q_INVOKABLE bool shapeChanged(double remembered, double measured) const;
     Q_INVOKABLE double drawnRatio(double remembered, int rotation) const;
     Q_INVOKABLE double viewRatio(const QString &view) const;
+    Q_INVOKABLE bool isCircle(double ratio, bool fisheye) const;
+    Q_INVOKABLE double shownRatio(double ratio, bool fisheye, const QString &view) const;
+    Q_INVOKABLE bool dewarps(double ratio, bool fisheye, const QString &view) const;
 };
 
 } // namespace rl

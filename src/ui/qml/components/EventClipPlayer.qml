@@ -11,16 +11,29 @@ import ReolinkApp.Core
 // from 15 s before. The event's snapshot stays up until the first picture. At +30 s it
 // stops (freeing the recorder's connection, keeping the last picture) with Keep playing
 // and Open in Playback. Sound starts muted. EventClip holds the window maths.
+// A fisheye camera's circle (the recording, or the snapshot before it) is shown in the
+// camera's view with a Playback pane's controls: hover icons, right-click View, drag to aim,
+// scroll to zoom, double-click to put a turned view back (fisheye-and-framing step 10).
 Item {
     id: root
 
-    property bool hd: false
+    property bool hd: true          // videos and stills in HD (step 10); the HD button turns it off
     property bool soundOn: false
     property bool closable: true
     // The picture's shape (wayfinder/fisheye-and-framing step 06): the video's own size once
     // its first picture arrives, before that this event's snapshot, else the camera's shape
     // from the feed.
     property real snapshotRatio: 16 / 9
+    // The shown camera's fisheye flag, view and aim key (shared with the other tabs).
+    property bool fisheyeLens: false
+    property string fisheyeMode: "fisheye"
+    property string cameraKey: ""
+    signal viewPicked(string view)
+    // A circle drawn through the view, at the view's shape (frameshape, tested).
+    // (Frigate's clips are its flat copy, never a circle.)
+    readonly property bool dewarp: !clip.frigate && FrameShape.dewarps(pictureRatio, fisheyeLens, fisheyeMode)
+    readonly property bool circle: !clip.frigate && FrameShape.isCircle(pictureRatio, fisheyeLens)
+    readonly property real shownRatio: FrameShape.shownRatio(pictureRatio, fisheyeLens, fisheyeMode)
     readonly property real pictureRatio: {
         const r = (clip.frigate ? mediaVideo : video).sourceRect;
         if (r.width > 0 && r.height > 0)
@@ -261,7 +274,7 @@ Item {
                 root.width - 2 * column.anchors.margins,
                 root.height - 2 * column.anchors.margins - titleRow.height - progressRow.height
                     - controlsRow.height - (column.children.length - 1) * column.spacing,
-                root.pictureRatio)
+                root.shownRatio)
             Layout.preferredWidth: box.width
             Layout.preferredHeight: box.height
             Layout.alignment: Qt.AlignHCenter
@@ -271,7 +284,8 @@ Item {
             VideoOutput {
                 id: video
                 anchors.fill: parent
-                fillMode: VideoOutput.PreserveAspectFit
+                // Dewarping samples the whole frame as a texture, so it must fill the item.
+                fillMode: root.dewarp ? VideoOutput.Stretch : VideoOutput.PreserveAspectFit
                 visible: !clip.frigate && (root.phase === "playing" || root.phase === "ended"
                                            || (root.phase === "starting" && root._hadPicture))
             }
@@ -287,9 +301,73 @@ Item {
                 anchors.fill: parent
                 visible: (root.phase === "starting" && !root._hadPicture) || root.phase === "failed"
                 source: root._thumbnail.length > 0 ? "file://" + root._thumbnail : ""
-                fillMode: Image.PreserveAspectFit
+                // Stretched only under the view (hidden then), so the raw circle never shows stretched.
+                fillMode: fisheyeLoader.active ? Image.Stretch : Image.PreserveAspectFit
                 asynchronous: true
-                sourceSize.width: 640
+            }
+            // The camera's view over whichever circle is up: the recording, or its snapshot
+            // until the first picture. Switching view never restarts the stream.
+            Loader {
+                id: fisheyeLoader
+                anchors.fill: parent
+                readonly property Item circleItem: video.visible ? video
+                                               : (eventSnapshot.visible && eventSnapshot.status === Image.Ready
+                                                  ? eventSnapshot : null)
+                active: root.dewarp && circleItem !== null
+                sourceComponent: FisheyeView {
+                    sourceItem: fisheyeLoader.circleItem
+                    viewMode: root.fisheyeMode
+                    cameraKey: root.cameraKey
+                }
+            }
+            MouseArea {   // aim: drag turns, scroll zooms, double-click puts a turned view back
+                id: aimArea
+                anchors.fill: parent
+                // Not under the end / failure overlay, whose buttons take the clicks.
+                enabled: fisheyeLoader.item !== null && root.phase !== "ended" && root.phase !== "failed"
+                cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                property real lastX: 0
+                property real lastY: 0
+                onPressed: (m) => {
+                    if (viewIcons.covers(aimArea, m.x, m.y)) {   // a view icon's click
+                        m.accepted = false;
+                        return;
+                    }
+                    lastX = m.x; lastY = m.y;
+                }
+                onPositionChanged: (m) => {
+                    if (fisheyeLoader.item)   // the view can go while the snapshot hands over to the video
+                        fisheyeLoader.item.dragBy(m.x, m.y, m.x - lastX, m.y - lastY);
+                    lastX = m.x; lastY = m.y;
+                }
+                onDoubleClicked: FisheyeAims.reset(root.cameraKey, root.fisheyeMode)
+                onWheel: (w) => {
+                    if (fisheyeLoader.item && w.angleDelta.y !== 0)
+                        fisheyeLoader.item.zoomBy(w.x, w.y, w.angleDelta.y > 0);
+                }
+            }
+            HoverHandler { id: pictureHover }
+            TapHandler {
+                acceptedButtons: Qt.RightButton
+                enabled: root.circle
+                onTapped: (point) => {
+                    viewMenu.aimed = root.dewarp && FisheyeAims.aimed(root.cameraKey, root.fisheyeMode);
+                    viewMenu.popup(picture, point.position.x, point.position.y);
+                }
+            }
+            FisheyeViewIcons {
+                id: viewIcons
+                anchors.top: parent.top
+                anchors.right: parent.right
+                shown: root.circle && pictureHover.hovered
+                current: root.fisheyeMode
+                onPicked: (view) => root.viewPicked(view)
+            }
+            FisheyeViewMenu {
+                id: viewMenu
+                current: root.fisheyeMode
+                onPicked: (view) => root.viewPicked(view)
+                onResetAim: FisheyeAims.reset(root.cameraKey, root.fisheyeMode)
             }
             Rectangle {
                 visible: root.phase === "starting"

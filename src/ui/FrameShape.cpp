@@ -69,6 +69,21 @@ double viewRatio(const QString &view)
     return kWide;   // quad (four 16:9 views), ptz, unknown
 }
 
+bool isCircle(double ratio, bool fisheye)
+{
+    return fisheye && std::isfinite(ratio) && std::abs(ratio - 1.0) <= 0.01;
+}
+
+double shownRatio(double ratio, bool fisheye, const QString &view)
+{
+    return isCircle(ratio, fisheye) ? viewRatio(view) : validRatio(ratio);
+}
+
+bool dewarps(double ratio, bool fisheye, const QString &view)
+{
+    return isCircle(ratio, fisheye) && view != QLatin1String("fisheye");
+}
+
 } // namespace frameshape
 
 QSizeF FrameShape::cardSize(double feedWidth, double ratio) const
@@ -94,6 +109,21 @@ double FrameShape::drawnRatio(double remembered, int rotation) const
 double FrameShape::viewRatio(const QString &view) const
 {
     return frameshape::viewRatio(view);
+}
+
+bool FrameShape::isCircle(double ratio, bool fisheye) const
+{
+    return frameshape::isCircle(ratio, fisheye);
+}
+
+double FrameShape::shownRatio(double ratio, bool fisheye, const QString &view) const
+{
+    return frameshape::shownRatio(ratio, fisheye, view);
+}
+
+bool FrameShape::dewarps(double ratio, bool fisheye, const QString &view) const
+{
+    return frameshape::dewarps(ratio, fisheye, view);
 }
 
 } // namespace rl
