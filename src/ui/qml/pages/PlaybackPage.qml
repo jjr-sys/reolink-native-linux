@@ -553,6 +553,8 @@ Item {
     }
     function paneRatio(row) {
         var c = Devices.cameraInfo(row);
+        if (c && c.isFisheye && c.viewMode)
+            return FrameShape.viewRatio(c.viewMode);   // the view's shape (frameshape::viewRatio)
         return FrameShape.drawnRatio(rememberedFrame(cameraKey(row)), c ? (c.rotationOverride || 0) : 0);
     }
     function cardRatio(key) {
@@ -687,7 +689,9 @@ Item {
                         required property int channel
                         required property string name
                         required property int rotationOverride
-                        readonly property string cameraKey: hostId + ":" + channel
+                        required property bool isFisheye
+                        required property string viewMode
+                        cameraKey: hostId + ":" + channel
                         readonly property bool isMax: page.maximizedKey === cameraKey
                         readonly property var mrect: page.mosaicRectByRow[index]
                         readonly property bool inMosaic: mrect !== undefined && selection.contains(cameraKey)
@@ -700,6 +704,11 @@ Item {
                         paneIndex: selection.paneOrder.indexOf(cameraKey)
                         label: name
                         viewRotation: rotationOverride
+                        fisheyeLens: isFisheye
+                        fisheyeMode: viewMode
+                        // A fisheye pane takes its view's shape: re-pack when it changes.
+                        onFisheyeLensChanged: page.scheduleMosaic()
+                        onFisheyeModeChanged: page.scheduleMosaic()
                         selected: page.selectedKey === cameraKey
                         audioMuted: AudioPrefs.playbackMuted
                         audioActive: page.active && selected

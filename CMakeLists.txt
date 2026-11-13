@@ -60,6 +60,7 @@ add_library(reolink_core STATIC
     src/ui/PlaybackGroup.h src/ui/PlaybackGroup.cpp
     src/ui/EventFeed.h src/ui/EventFeed.cpp
     src/ui/FrameShape.h src/ui/FrameShape.cpp
+    src/ui/FisheyeLens.h src/ui/FisheyeLens.cpp
     src/ui/StillQueue.h src/ui/StillQueue.cpp
     src/ui/EventCameraList.h src/ui/EventCameraList.cpp
     src/ui/CameraNoise.h src/ui/CameraNoise.cpp
@@ -132,6 +133,7 @@ set(APP_QML_FILES
     src/ui/qml/Theme.qml
     src/ui/qml/AudioPrefs.qml
     src/ui/qml/PanePrefs.qml
+    src/ui/qml/FisheyeViews.qml
     src/ui/qml/Saved.qml
     src/ui/qml/Sites.qml
     src/ui/qml/components/SiteTabs.qml
@@ -153,6 +155,9 @@ set(APP_QML_FILES
     src/ui/qml/components/HighlightRulesPanel.qml
     src/ui/qml/components/PoppedWindow.qml
     src/ui/qml/components/FisheyeView.qml
+    src/ui/qml/components/FisheyeViewGlyph.qml
+    src/ui/qml/components/FisheyeViewIcons.qml
+    src/ui/qml/components/FisheyeViewMenu.qml
     src/ui/qml/pages/LiveViewPage.qml
     src/ui/qml/pages/PlaybackPage.qml
     src/ui/qml/pages/EventsPage.qml
@@ -179,6 +184,7 @@ set_source_files_properties(src/ui/qml/AudioPrefs.qml PROPERTIES QT_QML_SINGLETO
 set_source_files_properties(src/ui/qml/PanePrefs.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(src/ui/qml/Saved.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(src/ui/qml/Sites.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(src/ui/qml/FisheyeViews.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(reolink-client
     URI ReolinkApp
@@ -257,7 +263,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection test_sitebudget test_savedselections test_playbackgroup test_bcdownload test_bcmp4writer test_bcclipsave test_eventhistory test_eventfeed test_frigatevod test_eventswitches test_firstswitchoffs test_eventcameralist test_datebar test_unseencounts test_cameranoise test_eventclip test_frameshape test_stillqueue)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection test_sitebudget test_savedselections test_playbackgroup test_bcdownload test_bcmp4writer test_bcclipsave test_eventhistory test_eventfeed test_frigatevod test_eventswitches test_firstswitchoffs test_eventcameralist test_datebar test_unseencounts test_cameranoise test_eventclip test_frameshape test_stillqueue test_fisheyelens)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})

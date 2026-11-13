@@ -56,6 +56,19 @@ double drawnRatio(double remembered, int rotation)
     return rotation % 180 != 0 ? 1 / r : r;
 }
 
+double viewRatio(const QString &view)
+{
+    if (view == QLatin1String("fisheye"))
+        return 1.0;
+    if (view == QLatin1String("panorama"))
+        return 3.3;
+    if (view == QLatin1String("dual"))
+        return 2.1 / 2;
+    if (view == QLatin1String("fisheye_ptz"))
+        return 7.0 / 3;
+    return kWide;   // quad (four 16:9 views), ptz, unknown
+}
+
 } // namespace frameshape
 
 QSizeF FrameShape::cardSize(double feedWidth, double ratio) const
@@ -76,6 +89,11 @@ bool FrameShape::shapeChanged(double remembered, double measured) const
 double FrameShape::drawnRatio(double remembered, int rotation) const
 {
     return frameshape::drawnRatio(remembered, rotation);
+}
+
+double FrameShape::viewRatio(const QString &view) const
+{
+    return frameshape::viewRatio(view);
 }
 
 } // namespace rl

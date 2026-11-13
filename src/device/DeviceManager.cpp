@@ -2053,6 +2053,7 @@ QVariantMap DeviceManager::cameraInfo(int row) const
     m["capAutoReply"] = e.caps.autoReply;
     m["rotationOverride"] = e.rotationOverride;
     m["isFisheye"] = data(index(row), IsFisheyeRole);
+    m["viewMode"] = e.viewMode;
     return m;
 }
 

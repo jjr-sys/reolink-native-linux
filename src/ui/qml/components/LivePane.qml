@@ -28,6 +28,16 @@ Rectangle {
     property bool fisheyeLens: false
     property string fisheyeMode: "fisheye"
     readonly property bool dewarp: fisheyeLens && fisheyeMode !== "fisheye"
+    // The camera's aim store key (FisheyeAims), shared with Playback and Events.
+    readonly property string cameraKey: cameraIdentity && cameraIdentity.hostId !== undefined
+                                        ? cameraIdentity.hostId + ":" + cameraIdentity.channel : ""
+    // Double-click on a turned view puts it back; otherwise it maximises (ticket 13, point 5).
+    function resetAimOrMaximize() {
+        if (fisheyeLoader.item && FisheyeAims.aimed(cameraKey, fisheyeMode))
+            FisheyeAims.reset(cameraKey, fisheyeMode);
+        else if (hasSource)
+            toggleMaximize(deviceRow);
+    }
     onDewarpChanged: { if (dewarp) { zoom = 1.0; panX = 0; panY = 0; } }
     // The picture's shape (width/height) as decoded, before the rotation override; 0 until
     // a frame is on screen. Read off the drawn picture, so the stream's own rotation is
@@ -313,6 +323,7 @@ Rectangle {
             sourceComponent: FisheyeView {
                 sourceItem: video
                 viewMode: root.fisheyeMode
+                cameraKey: root.cameraKey
             }
         }
 
@@ -344,7 +355,7 @@ Rectangle {
                     return;
                 root.clicked(root.deviceRow);
             }
-            onDoubleClicked: if (root.hasSource) root.toggleMaximize(root.deviceRow)
+            onDoubleClicked: root.resetAimOrMaximize()
             onPressed: (m) => {
                 lastX = m.x; lastY = m.y;
                 pressX = m.x; pressY = m.y;
@@ -389,8 +400,9 @@ Rectangle {
                 dragging = false;
             }
             onWheel: (w) => {
-                if (fisheyeLoader.item) {
-                    fisheyeLoader.item.zoomBy(w.x, w.y, w.angleDelta.y > 0);
+                if (root.dewarp) {   // a dewarped view zooms itself; no digital zoom over it
+                    if (fisheyeLoader.item)
+                        fisheyeLoader.item.zoomBy(w.x, w.y, w.angleDelta.y > 0);
                     return;
                 }
                 if (!root.capZoom && !root.hasSource) return;
@@ -863,12 +875,6 @@ Rectangle {
                     onActivated: Devices.setRotationOverride(root.deviceRow, root.viewRotation + 90)
                 }
                 ToolButton {
-                    id: viewModeButton
-                    glyph: "◔"; active: root.dewarp; enabledTool: root.fisheyeLens
-                    tip: qsTr("Fisheye view mode")
-                    onActivated: viewModeMenu.popup(viewModeButton, 0, -viewModeMenu.implicitHeight - 6)
-                }
-                ToolButton {
                     glyph: "⊕"; active: root.zoom > 1.01
                     tip: root.zoom > 1.01 ? qsTr("Reset zoom") : qsTr("Digital zoom (scroll to adjust)")
                     onActivated: { if (root.zoom > 1.01) { root.zoom = 1; root.panX = 0; root.panY = 0; }
@@ -1035,22 +1041,27 @@ Rectangle {
         }
     }
 
-    ThemedMenu {
-        id: viewModeMenu
-        Repeater {
-            model: [
-                { mode: "fisheye",     label: qsTr("Fisheye (original)") },
-                { mode: "ptz",         label: qsTr("Virtual PTZ (drag to look around, scroll to zoom)") },
-                { mode: "panorama",    label: qsTr("Panorama 360°") },
-                { mode: "dual",        label: qsTr("Dual panorama (2 × 180°)") },
-                { mode: "quad",        label: qsTr("Quad view (4 directions)") },
-                { mode: "fisheye_ptz", label: qsTr("Fisheye + virtual PTZ") }
-            ]
-            ThemedMenuItem {
-                required property var modelData
-                text: (root.fisheyeMode === modelData.mode ? "✓  " : "     ") + modelData.label
-                onTriggered: Devices.setViewMode(root.deviceRow, modelData.mode)
-            }
+    // ---- Fisheye views: hover icons at the right edge, right-click View menu ----------
+    FisheyeViewIcons {
+        anchors.top: videoArea.top
+        anchors.right: videoArea.right
+        available: videoArea.height - (toolbar.visible ? toolbar.height + 8 : 0)
+        shown: root.fisheyeLens && root.hasSource && paneHover.hovered
+        current: root.fisheyeMode
+        onPicked: (view) => Devices.setViewMode(root.deviceRow, view)
+    }
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        enabled: root.fisheyeLens && root.hasSource
+        onTapped: (ev) => {
+            viewMenu.aimed = root.dewarp && FisheyeAims.aimed(root.cameraKey, root.fisheyeMode);
+            viewMenu.popup(ev.position.x, ev.position.y);
         }
+    }
+    FisheyeViewMenu {
+        id: viewMenu
+        current: root.fisheyeMode
+        onPicked: (view) => Devices.setViewMode(root.deviceRow, view)
+        onResetAim: FisheyeAims.reset(root.cameraKey, root.fisheyeMode)
     }
 }

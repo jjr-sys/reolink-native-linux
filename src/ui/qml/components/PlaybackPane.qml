@@ -23,6 +23,21 @@ Rectangle {
     property int viewRotation: 0
     property string label: ""
     property bool selected: false
+    // Ceiling-mounted fisheye cameras: the camera's view, shared with Live View, and the key
+    // of its aim in FisheyeAims (wayfinder/playback-controls ticket 13). Switching view only
+    // swaps the overlay: the stream never restarts.
+    property bool fisheyeLens: false
+    property string fisheyeMode: "fisheye"
+    property string cameraKey: ""
+    readonly property bool dewarp: fisheyeLens && fisheyeMode !== "fisheye"
+    onDewarpChanged: { if (dewarp) { zoom = 1.0; panX = 0; panY = 0; } }
+    // Double-click on a turned view puts it back; otherwise the page maximises the pane.
+    function resetAimOrMaximize() {
+        if (fisheyeLoader.item && FisheyeAims.aimed(cameraKey, fisheyeMode))
+            FisheyeAims.reset(cameraKey, fisheyeMode);
+        else if (hasSource)
+            doubleClicked();
+    }
     // Sound: the page owns the mute choice and says whether THIS pane is the one
     // to hear (only the selected pane is audible).
     property bool audioMuted: true
@@ -111,7 +126,7 @@ Rectangle {
     property real measuredRatio: 0
     function measureRatio() {
         var r = video.contentRect;
-        if (!streaming || r.width < 2 || r.height < 2)
+        if (!streaming || dewarp || r.width < 2 || r.height < 2)   // a dewarp stretches the frame
             return;
         var m = (viewRotation % 180 !== 0) ? r.height / r.width : r.width / r.height;
         if (!(measuredRatio > 0) || Math.abs(m - measuredRatio) / measuredRatio > 0.03)
@@ -351,13 +366,15 @@ Rectangle {
     property real panY: 0
 
     Item {
+        id: videoArea
         anchors.fill: parent
         anchors.margins: 1
         clip: true
         VideoOutput {
             id: video
             anchors.fill: parent
-            fillMode: VideoOutput.PreserveAspectFit
+            // Dewarping samples the whole frame as a texture, so it must fill the item.
+            fillMode: root.dewarp ? VideoOutput.Stretch : VideoOutput.PreserveAspectFit
             visible: root.showsPicture
             opacity: root.stillMode && !root.streaming ? 0.5 : 1   // the previous picture, loading
             orientation: root.viewRotation
@@ -370,6 +387,18 @@ Rectangle {
                 },
                 Translate { x: root.panX; y: root.panY }
             ]
+        }
+        // The dewarped views, over whatever picture the pane shows (playing, kept or a still).
+        Loader {
+            id: fisheyeLoader
+            anchors.fill: parent
+            active: root.dewarp && root.showsPicture
+            opacity: video.opacity
+            sourceComponent: FisheyeView {
+                sourceItem: video
+                viewMode: root.fisheyeMode
+                cameraKey: root.cameraKey
+            }
         }
     }
 
@@ -535,7 +564,7 @@ Rectangle {
                 return;
             root.clicked();
         }
-        onDoubleClicked: if (root.hasSource) root.doubleClicked()
+        onDoubleClicked: root.resetAimOrMaximize()
         onPressed: (m) => {
             pressX = m.x; pressY = m.y;
             lastX = m.x; lastY = m.y;
@@ -544,6 +573,12 @@ Rectangle {
         onPositionChanged: (m) => {
             if (!(m.buttons & Qt.LeftButton))
                 return;
+            if (fisheyeLoader.item) {   // aim the view under the pointer
+                var fp = mapToItem(fisheyeLoader.item, m.x, m.y);
+                fisheyeLoader.item.dragBy(fp.x, fp.y, m.x - lastX, m.y - lastY);
+                lastX = m.x; lastY = m.y;
+                return;
+            }
             if (root.zoom > 1.0) {
                 root.panX += (m.x - lastX);
                 root.panY += (m.y - lastY);
@@ -579,10 +614,42 @@ Rectangle {
         onWheel: (w) => {
             if (!root.hasSource)
                 return;
+            if (root.dewarp) {   // a dewarped view zooms itself; no digital zoom over it
+                if (fisheyeLoader.item) {
+                    var wp = mapToItem(fisheyeLoader.item, w.x, w.y);
+                    fisheyeLoader.item.zoomBy(wp.x, wp.y, w.angleDelta.y > 0);
+                }
+                return;
+            }
             var z = root.zoom * (w.angleDelta.y > 0 ? 1.15 : 0.87);
             root.zoom = Math.max(1.0, Math.min(8.0, z));
             if (root.zoom <= 1.0) { root.panX = 0; root.panY = 0; }
             else clampPan();
         }
+    }
+
+    // ---- Fisheye views: hover icons at the right edge, right-click View menu ----------
+    HoverHandler { id: paneHover }
+    FisheyeViewIcons {
+        anchors.top: videoArea.top
+        anchors.right: videoArea.right
+        available: videoArea.height
+        shown: root.fisheyeLens && root.hasSource && paneHover.hovered
+        current: root.fisheyeMode
+        onPicked: (view) => Devices.setViewMode(root.deviceRow, view)
+    }
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        enabled: root.fisheyeLens && root.hasSource
+        onTapped: (ev) => {
+            viewMenu.aimed = root.dewarp && FisheyeAims.aimed(root.cameraKey, root.fisheyeMode);
+            viewMenu.popup(ev.position.x, ev.position.y);
+        }
+    }
+    FisheyeViewMenu {
+        id: viewMenu
+        current: root.fisheyeMode
+        onPicked: (view) => Devices.setViewMode(root.deviceRow, view)
+        onResetAim: FisheyeAims.reset(root.cameraKey, root.fisheyeMode)
     }
 }

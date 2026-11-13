@@ -2,6 +2,7 @@
 #include "device/BoschTourController.h"
 #include "media/LiveStream.h"
 #include "media/TalkSession.h"
+#include "ui/FisheyeLens.h"
 
 #include <QGuiApplication>
 #include <QQmlComponent>
@@ -23,6 +24,7 @@ class TestLiveStreamQml : public QObject
     std::unique_ptr<Database> m_db;
     std::unique_ptr<DeviceManager> m_devices;
     std::unique_ptr<BoschTourController> m_bosch;
+    rl::FisheyeAims m_aims;
     std::unique_ptr<QQmlEngine> m_engine;
     qint64 m_host = 0;
 
@@ -51,6 +53,9 @@ private slots:
         qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", m_bosch.get());
         qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(RL_QML_SOURCE_DIR "/Theme.qml")),
                                  "ReolinkApp", 1, 0, "Theme");
+        qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(RL_QML_SOURCE_DIR "/FisheyeViews.qml")),
+                                 "ReolinkApp", 1, 0, "FisheyeViews");
+        qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "FisheyeAims", &m_aims);
         m_engine = std::make_unique<QQmlEngine>();
         // The executable's build directory contains the app's qmldir, whose
         // preferred URLs refer to resources embedded only in the app binary.

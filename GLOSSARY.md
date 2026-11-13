@@ -40,6 +40,14 @@ _Avoid_: tour edit mode
 The physical aperture in the camera lens that controls how much light reaches the image sensor.
 _Avoid_: IR-cut filter
 
+**Fisheye view**:
+How a ceiling-mounted fisheye camera's circle is shown: Original (the circle), Quad, Virtual PTZ, Panorama, Dual or Fisheye + PTZ. One per camera, shared by Live View, Playback and Events.
+_Avoid_: view mode (code name only), layout
+
+**Aim**:
+Where each part of a fisheye view has been turned to by dragging or scrolling (pan, tilt and zoom; a panorama strip's slide). Remembered per camera and view; double-click or Reset aim puts it back.
+_Avoid_: zoom (digital zoom is a different thing)
+
 ## Scene modes and schedule
 
 **Scene mode**:

@@ -10,6 +10,19 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **Fisheye views in Playback, and the same controls in Live View.** Fisheye cameras
+  (Lascelles Kitchen, Woorabinda Entrance and Kitchen) show all six views in Playback as
+  in Live: Original, Quad, Virtual PTZ, Panorama, Dual and Fisheye + PTZ. Hovering a
+  fisheye pane shows the six view icons at its right edge (smaller on short panes); a
+  right-click opens the same View menu with ↺ Reset aim. Live View's "◔" toolbar button
+  is replaced by these. One view per camera, shared by both pages. Switching view never
+  restarts the stream, at any speed or direction. Dragging turns the view under the
+  pointer and scrolling zooms it; each view's aim is now remembered per camera and
+  shared by both pages. Double-clicking a turned view puts it back (otherwise
+  double-click maximises, as before). A fisheye pane takes its view's shape in the
+  mosaic: Quad 16:9, Original 1:1, PTZ 16:9, Panorama 3.3:1, Dual about 1.05:1,
+  Fisheye + PTZ 7:3 (the circle beside a 4:3 view).
+
 - **Playback stills.** While Playback is stopped, each pane shows a picture from the
   playhead's moment instead of black: when the page opens, the day changes, a camera
   is added, a maximised pane is left, or a timeline drag rests for a quarter second
@@ -55,6 +68,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
   first picture is logged (`clip: first picture after … ms`).
 
 ### Changed
+
+- **Quad view sees the whole circle.** Its four views are now 120° wide and tilted 44°
+  from straight down, covering from the floor under the camera out to the rim with no
+  sky. The old 85° views left wedges at the rim unseen.
 
 - **Playback keeps the picture.** Pause, Stop and the end of a recording leave each
   pane's last picture on screen instead of going black; it stays until a new picture

@@ -157,12 +157,8 @@ Item {
     // The drawn shape from the decoded (or remembered) frame shape, the rotation override
     // and the fisheye view, so a rotation or view change applies before any stream does.
     function drawnRatio(frame, rotation, fisheye, mode) {
-        if (fisheye && mode !== "fisheye") {
-            if (mode === "dual") return 2.1 / 2;     // FisheyeView: two 2.1:1 strips stacked
-            if (mode === "panorama") return 3.3;
-            if (mode === "fisheye_ptz") return 2.5;
-            return 16 / 9;                           // ptz, quad: they fill any pane
-        }
+        if (fisheye && mode)
+            return FrameShape.viewRatio(mode);       // one shapes table (frameshape::viewRatio)
         return FrameShape.drawnRatio(frame, rotation);   // never seen: 16:9
     }
     function noteRatio(key, r) {

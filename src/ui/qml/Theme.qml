@@ -12,6 +12,7 @@ QtObject {
     readonly property color accentDim: "#1d6faa"
     readonly property color text: "#e8eef4"
     readonly property color textMuted: "#8b98a5"
+    readonly property color overlay: "#99000000"   // chips over a picture
     readonly property color paneBackground: "#05080b"
     readonly property color danger: "#e5484d"
     readonly property color warning: "#e3ad45"

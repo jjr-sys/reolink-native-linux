@@ -29,6 +29,18 @@ private slots:
         QVERIFY(std::abs(s.width() * s.height() - 560 * 315) < 560 * 315 / 100);
     }
 
+    // One shapes table for every page (wayfinder/playback-controls ticket 13).
+    void eachFisheyeViewHasItsShape()
+    {
+        QCOMPARE(frameshape::viewRatio(QStringLiteral("quad")), 16.0 / 9);
+        QCOMPARE(frameshape::viewRatio(QStringLiteral("fisheye")), 1.0);
+        QCOMPARE(frameshape::viewRatio(QStringLiteral("ptz")), 16.0 / 9);
+        QCOMPARE(frameshape::viewRatio(QStringLiteral("panorama")), 3.3);
+        QCOMPARE(frameshape::viewRatio(QStringLiteral("dual")), 2.1 / 2);
+        QCOMPARE(frameshape::viewRatio(QStringLiteral("fisheye_ptz")), 7.0 / 3);
+        QCOMPARE(frameshape::viewRatio(QStringLiteral("nonsense")), 16.0 / 9);
+    }
+
     void aSquareFisheyeCircle()
     {
         QCOMPARE(frameshape::cardSize(560, 1.0), QSize(420, 420));

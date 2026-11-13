@@ -32,6 +32,7 @@
 #include "ui/EventClip.h"
 #include "ui/EventFeed.h"
 #include "ui/FrameShape.h"
+#include "ui/FisheyeLens.h"
 #include "ui/StillQueue.h"
 #include "ui/MosaicLayout.h"
 
@@ -196,6 +197,7 @@ int main(int argc, char *argv[])
                          alertSounds.play(sound, rl::AlertSounds::Detection);
                      });
     rl::DeviceDiscovery discovery;
+    rl::FisheyeAims fisheyeAims; // each camera's fisheye aim, shared by every page (playback-controls 13)
     rl::FrameShape frameShape;   // picture-shaped frames for QML (fisheye-and-framing step 06)
     rl::BoschTourController boschTour(&credentials);
     rl::Updater updater;
@@ -222,6 +224,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::MosaicLayout>("ReolinkApp.Core", 1, 0, "MosaicLayout");
     qmlRegisterType<rl::StillQueue>("ReolinkApp.Core", 1, 0, "StillQueue");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "FrameShape", &frameShape);
+    qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "FisheyeAims", &fisheyeAims);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Events", &events);

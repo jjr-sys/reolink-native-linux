@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QSize>
 #include <QSizeF>
+#include <QString>
 
 namespace rl {
 
@@ -26,6 +27,11 @@ bool shapeChanged(double remembered, double measured);
 // a quarter rotation (`rotation` in degrees).
 double drawnRatio(double remembered, int rotation);
 
+// The shape a fisheye camera's view is drawn at (wayfinder/fisheye-and-framing ticket 03):
+// Quad 16:9 (four 16:9 views), Original 1:1, PTZ 16:9, Panorama 3.3:1, Dual two 2.1:1 strips
+// stacked, Fisheye+PTZ 7:3 (the circle beside a 4:3 view). Unknown views count as 16:9.
+double viewRatio(const QString &view);
+
 } // namespace frameshape
 
 // The same for QML (registered as the FrameShape singleton).
@@ -38,6 +44,7 @@ public:
     Q_INVOKABLE QSizeF fitIn(double width, double height, double ratio) const;
     Q_INVOKABLE bool shapeChanged(double remembered, double measured) const;
     Q_INVOKABLE double drawnRatio(double remembered, int rotation) const;
+    Q_INVOKABLE double viewRatio(const QString &view) const;
 };
 
 } // namespace rl
