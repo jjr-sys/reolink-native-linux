@@ -924,15 +924,53 @@ Item {
                         }
                         HoverHandler { id: snapHover; cursorShape: Qt.PointingHandCursor }
                         TapHandler {   // plays it in the clip player (not a click on a view icon)
-                            enabled: !ev.slim
+                            enabled: !ev.slim && !feed.dewarp
                             onTapped: (point) => {
                                 if (!cardIcons.covers(snap, point.position.x, point.position.y))
                                     page.playRow(ev.index);
                             }
                         }
+                        // A dewarped card is aimed as on every other tab (step 09): drag turns the
+                        // view under the pointer, Ctrl+scroll zooms it (plain scroll scrolls the
+                        // feed), double-click puts a turned view back; a click still plays. The
+                        // aim is the camera's shared one. preventStealing: a drag here aims instead
+                        // of scrolling the feed.
+                        MouseArea {
+                            anchors.fill: parent
+                            enabled: !ev.slim && feed.dewarp && snapImage.status === Image.Ready
+                            preventStealing: true
+                            cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                            property real lastX: 0
+                            property real lastY: 0
+                            property bool moved: false
+                            onPressed: (m) => {
+                                if (cardIcons.covers(snap, m.x, m.y)) {   // a view icon's click
+                                    m.accepted = false;
+                                    return;
+                                }
+                                lastX = m.x; lastY = m.y; moved = false;
+                            }
+                            onPositionChanged: (m) => {
+                                if (!moved && Math.hypot(m.x - lastX, m.y - lastY) < Theme.dragThreshold)
+                                    return;
+                                moved = true;
+                                FisheyeAims.drag(page.camera, page.cameraViewMode, width, height,
+                                                 m.x, m.y, m.x - lastX, m.y - lastY);
+                                lastX = m.x; lastY = m.y;
+                            }
+                            onClicked: if (!moved) page.playRow(ev.index)
+                            onDoubleClicked: FisheyeAims.reset(page.camera, page.cameraViewMode)
+                            onWheel: (w) => {
+                                if (!(w.modifiers & Qt.ControlModifier) || w.angleDelta.y === 0) {
+                                    w.accepted = false;   // the feed scrolls
+                                    return;
+                                }
+                                FisheyeAims.zoom(page.camera, page.cameraViewMode, width, height,
+                                                 w.x, w.y, w.angleDelta.y > 0);
+                            }
+                        }
                         // A circle snapshot's view icons, as on Live and Playback panes, so every
-                        // tab switches views the same way (step 09). No aiming here: the wheel
-                        // scrolls the feed and a click plays.
+                        // tab switches views the same way (step 09).
                         FisheyeViewIcons {
                             id: cardIcons
                             anchors.top: parent.top

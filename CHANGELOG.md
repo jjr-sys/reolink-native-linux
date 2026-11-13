@@ -16,7 +16,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
   Original 420×420, Dual about 430×410…). The date bar follows. Views switch the same way
   on every tab: hovering a card shows the six view icons at its right edge, and
   right-clicking it opens its menu with **View ▸** as a backup; either changes the view
-  everywhere. Aiming (drag, scroll) is left to Live, Playback and the clip player. Flat
+  everywhere. A dewarped card can be aimed too: drag turns the view (a click still plays),
+  Ctrl+scroll zooms (plain scroll keeps scrolling the feed; Ctrl+scroll also zooms on the
+  other tabs), double-click puts a turned view back. Flat
   snapshots (Frigate's Kitchen) and ordinary cameras are unchanged; stored files stay
   as they were.
 - **Fisheye views in Playback, and the same controls in Live View.** Fisheye cameras
