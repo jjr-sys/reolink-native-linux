@@ -21,7 +21,18 @@ Item {
     readonly property int railWidth: 44     // the date bar beside the feed
     // A card's picture: the camera's own shape at about a 16:9 card's area, never wider than
     // the feed, so no black bars (wayfinder/fisheye-and-framing step 06).
-    readonly property size cardPicture: FrameShape.cardSize(feedView.width, feed.pictureRatio)
+    // A fisheye's circle snapshots take the camera's view's shape (step 09).
+    readonly property size cardPicture: FrameShape.cardSize(feedView.width, feed.shownRatio)
+    // The shown camera's fisheye flag and view (shared with Live and Playback), re-read with
+    // the other device facts (devRev).
+    readonly property var cameraInfo: {
+        devRev;
+        const row = camera === "" ? -1 : Devices.rowOfHostChannel(Number(hc[0]), Number(hc[1]));
+        return row >= 0 ? Devices.cameraInfo(row) : null;
+    }
+    readonly property int cameraRow: cameraInfo ? Devices.rowOfHostChannel(cameraInfo.hostId, cameraInfo.channel) : -1
+    readonly property bool cameraIsFisheye: !!(cameraInfo && cameraInfo.isFisheye)
+    readonly property string cameraViewMode: cameraInfo && cameraInfo.viewMode ? cameraInfo.viewMode : "fisheye"
     readonly property bool showPlayer: width >= 1150
 
     onVisibleChanged: if (visible) { Events.markAllRead(); page.now = new Date(); }
@@ -240,6 +251,8 @@ Item {
         events: Events
         seenLine: Unseen.openCamera === page.camera ? Unseen.seenLine : -1
         cameraKey: page.camera
+        fisheye: page.cameraIsFisheye
+        viewMode: page.cameraViewMode
         supportedTypes: page.cameraTypes
         onTypesToggled: (types) => typeStore.setValue(page.typeKey(page.camera), types.join(","))
         onCameraKeyChanged: {
@@ -724,6 +737,11 @@ Item {
                     readonly property bool gap: kind === "gap"
                     readonly property bool status: type === "online" || type === "offline"
                     readonly property bool slim: gap || status
+                    TapHandler {   // right-click anywhere on a card: its menu (View ▸ for a fisheye)
+                        enabled: !ev.slim
+                        acceptedButtons: Qt.RightButton
+                        onTapped: (point) => eventMenu.popup(ev, point.position.x, point.position.y)
+                    }
                     width: ListView.view.width
                     height: slim ? 28 : caption.height + 6 + snap.height
                     z: seenLineAbove ? 1 : 0   // the line is drawn in the spacing above
@@ -822,6 +840,18 @@ Item {
                             TapHandler { onTapped: eventMenu.popup() }
                             ThemedMenu {
                                 id: eventMenu
+                                // View ▸ for a fisheye camera: changes its view everywhere.
+                                Instantiator {
+                                    model: page.cameraIsFisheye ? 1 : 0
+                                    delegate: FisheyeViewMenu {
+                                        current: page.cameraViewMode
+                                        aimed: { FisheyeAims.revision; return FisheyeAims.aimed(page.camera, page.cameraViewMode); }
+                                        onPicked: (view) => Devices.setViewMode(page.cameraRow, view)
+                                        onResetAim: FisheyeAims.reset(page.camera, page.cameraViewMode)
+                                    }
+                                    onObjectAdded: (i, menu) => eventMenu.insertMenu(0, menu)
+                                    onObjectRemoved: (i, menu) => eventMenu.removeMenu(menu)
+                                }
                                 ThemedMenuItem {
                                     text: qsTr("Open in Playback")
                                     onTriggered: page.jumpToPlayback(Number(page.hc[0]), Number(page.hc[1]), ev.timestamp)
@@ -856,12 +886,26 @@ Item {
                         color: Theme.paneBackground
                         clip: true
                         Image {
+                            id: snapImage
                             anchors.fill: parent
                             source: !ev.slim && ev.thumbnail.length > 0 ? "file://" + ev.thumbnail : ""
-                            fillMode: Image.PreserveAspectFit
+                            // A dewarp samples the whole circle, so it must fill the item.
+                            fillMode: feed.dewarp ? Image.Stretch : Image.PreserveAspectFit
                             asynchronous: true
-                            sourceSize.width: page.feedWidth
+                            // The stored snapshot's width (fixed, so switching view never reloads it).
+                            sourceSize.width: 640
                             visible: ev.thumbnail.length > 0
+                        }
+                        // A fisheye's circle in the camera's view and aim (step 09). Built only
+                        // for the cards the list has made, i.e. those near the screen.
+                        Loader {
+                            anchors.fill: parent
+                            active: feed.dewarp && snapImage.status === Image.Ready
+                            sourceComponent: FisheyeView {
+                                sourceItem: snapImage
+                                viewMode: page.cameraViewMode
+                                cameraKey: page.camera
+                            }
                         }
                         Text {
                             anchors.centerIn: parent

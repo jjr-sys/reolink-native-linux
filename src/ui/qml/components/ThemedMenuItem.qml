@@ -16,6 +16,14 @@ MenuItem {
         rightPadding: 8
         elide: Text.ElideRight
     }
+    arrow: Text {   // a submenu row
+        x: control.width - width - 8
+        y: (control.height - height) / 2
+        visible: control.subMenu !== null
+        text: "▸"
+        color: Theme.textMuted
+        font.pixelSize: 13
+    }
     background: Rectangle {
         radius: 4
         color: control.highlighted ? Theme.accentDim : "transparent"

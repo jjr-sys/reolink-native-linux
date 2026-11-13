@@ -4,12 +4,14 @@
 #include "device/EventHistory.h"
 #include "device/EventManager.h"
 #include "device/EventSwitches.h"
+#include "ui/FrameShape.h"
 
 #include <QDateTime>
 #include <QImageReader>
 #include <QTimeZone>
 
 #include <algorithm>
+#include <cmath>
 
 namespace rl {
 
@@ -365,6 +367,34 @@ void EventFeed::updatePictureRatio(const QString &newestThumbnail)
         return;
     m_pictureRatio = ratio;
     emit pictureRatioChanged();
+    emit shapeChanged();
+}
+
+void EventFeed::setFisheye(bool on)
+{
+    if (m_fisheye == on)
+        return;
+    m_fisheye = on;
+    emit shapeChanged();
+}
+
+void EventFeed::setViewMode(const QString &view)
+{
+    if (m_viewMode == view)
+        return;
+    m_viewMode = view;
+    emit shapeChanged();
+}
+
+// A fisheye sends its circle as a square frame; within 1 % allows for encoder rounding.
+bool EventFeed::circle() const
+{
+    return m_fisheye && std::abs(m_pictureRatio - 1.0) <= 0.01;
+}
+
+double EventFeed::shownRatio() const
+{
+    return circle() ? frameshape::viewRatio(m_viewMode) : m_pictureRatio;
 }
 
 } // namespace rl

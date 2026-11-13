@@ -10,6 +10,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **Fisheye views in the Events feed.** A fisheye camera's circle snapshots (Woorabinda
+  Kitchen today) are drawn in the camera's view and aim, the same one Live and Playback
+  use, and each card takes that view's shape at about the usual card size (Quad 560×315,
+  Original 420×420, Dual about 430×410…). The date bar follows. Right-clicking a card opens
+  its menu with **View ▸** at the top; picking a view there changes it everywhere. Flat
+  snapshots (Frigate's Kitchen) and ordinary cameras are unchanged; stored files stay
+  as they were.
 - **Fisheye views in Playback, and the same controls in Live View.** Fisheye cameras
   (Lascelles Kitchen, Woorabinda Entrance and Kitchen) show all six views in Playback as
   in Live: Original, Quad, Virtual PTZ, Panorama, Dual and Fisheye + PTZ. Hovering a

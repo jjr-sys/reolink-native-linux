@@ -470,6 +470,73 @@ private slots:
         QCOMPARE(f.pictureRatio(), 16.0 / 9);
     }
 
+    // wayfinder/fisheye-and-framing step 09: a fisheye camera's circle snapshots are drawn in
+    // the camera's view, and the card takes that view's shape; flat snapshots (Frigate's
+    // Kitchen) and ordinary cameras keep their own picture's shape.
+    void aFisheyeCirclesCardsTakeTheViewsShape()
+    {
+        addSnap(1, 0, m_day.from + 100, QSize(640, 640));
+        EventFeed f;
+        setUp(f);
+        QVERIFY(!f.circle());                                // not known to be a fisheye yet
+        QVERIFY(!f.dewarp());
+        QCOMPARE(f.shownRatio(), 1.0);
+        QSignalSpy spy(&f, &EventFeed::shapeChanged);
+        f.setFisheye(true);
+        f.setViewMode(QStringLiteral("dual"));
+        QVERIFY(f.circle());
+        QVERIFY(f.dewarp());
+        QCOMPARE(f.shownRatio(), 2.1 / 2);
+        f.setViewMode(QStringLiteral("panorama"));
+        QCOMPARE(f.shownRatio(), 3.3);
+        f.setViewMode(QStringLiteral("fisheye"));            // the circle itself, not dewarped
+        QVERIFY(f.circle());
+        QVERIFY(!f.dewarp());
+        QCOMPARE(f.shownRatio(), 1.0);
+        QCOMPARE(spy.count(), 4);
+        f.setViewMode(QStringLiteral("fisheye"));            // unchanged: no signal
+        QCOMPARE(spy.count(), 4);
+    }
+
+    void aFisheyesFlatSnapshotsKeepTheirShape()
+    {
+        addSnap(1, 0, m_day.from + 100, QSize(640, 360));   // Frigate's flattened copy
+        EventFeed f;
+        setUp(f);
+        f.setFisheye(true);
+        f.setViewMode(QStringLiteral("quad"));
+        QVERIFY(!f.circle());
+        QVERIFY(!f.dewarp());
+        QCOMPARE(f.shownRatio(), 640.0 / 360);
+    }
+
+    void aNearlySquareSnapshotIsStillACircle()
+    {
+        addSnap(1, 0, m_day.from + 100, QSize(640, 636));   // encoder rounding
+        EventFeed f;
+        setUp(f);
+        f.setFisheye(true);
+        f.setViewMode(QStringLiteral("quad"));
+        QVERIFY(f.circle());
+        QCOMPARE(f.shownRatio(), 16.0 / 9);
+    }
+
+    void switchingCameraRechecksTheCircle()
+    {
+        addSnap(1, 0, m_day.from + 100, QSize(640, 640));
+        addSnap(1, 3, m_day.from + 100, QSize(640, 360));
+        EventFeed f;
+        setUp(f);
+        f.setFisheye(true);
+        f.setViewMode(QStringLiteral("quad"));
+        QVERIFY(f.circle());
+        QSignalSpy spy(&f, &EventFeed::shapeChanged);
+        f.setCameraKey(QStringLiteral("1:3"));
+        QVERIFY(!f.circle());
+        QCOMPARE(f.shownRatio(), 640.0 / 360);
+        QCOMPARE(spy.count(), 1);                            // the new picture's shape
+    }
+
     void aCameraWithNoTypesSaysSo()
     {
         add(1, 0, m_day.from + 100, "motion");

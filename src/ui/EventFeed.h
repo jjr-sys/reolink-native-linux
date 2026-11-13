@@ -46,6 +46,17 @@ class EventFeed : public QAbstractListModel
     // The shown camera's picture shape (width / height) from its newest snapshot; 16:9 when
     // it has none (wayfinder/fisheye-and-framing step 06).
     Q_PROPERTY(double pictureRatio READ pictureRatio NOTIFY pictureRatioChanged)
+    // Fisheye cameras (wayfinder/fisheye-and-framing step 09). The page says whether the camera
+    // is a fisheye and which view it is shown in (shared with Live and Playback); `circle` is
+    // whether its snapshots are the lens circle (a fisheye's square snapshot, not Frigate's flat
+    // copy), so the cards draw them through the view; `shownRatio` is the cards' shape: the
+    // view's for a circle, else the picture's.
+    Q_PROPERTY(bool fisheye READ fisheye WRITE setFisheye NOTIFY shapeChanged)
+    Q_PROPERTY(QString viewMode READ viewMode WRITE setViewMode NOTIFY shapeChanged)
+    Q_PROPERTY(bool circle READ circle NOTIFY shapeChanged)
+    Q_PROPERTY(double shownRatio READ shownRatio NOTIFY shapeChanged)
+    // Circle snapshots are drawn through the view (Original shows the circle as it is).
+    Q_PROPERTY(bool dewarp READ dewarp NOTIFY shapeChanged)
 
 public:
     enum Role {
@@ -85,6 +96,13 @@ public:
     void setSeenLine(qint64 t);
     int newUntilRow() const { return m_newUntilRow; }
     double pictureRatio() const { return m_pictureRatio; }
+    bool fisheye() const { return m_fisheye; }
+    void setFisheye(bool on);
+    QString viewMode() const { return m_viewMode; }
+    void setViewMode(const QString &view);
+    bool circle() const;
+    double shownRatio() const;
+    bool dewarp() const { return circle() && m_viewMode != QLatin1String("fisheye"); }
 
     Q_INVOKABLE static QStringList defaultTypes(const QStringList &supported);
     // Turn a type on or off; emits typesToggled so the page can remember the set.
@@ -115,6 +133,7 @@ signals:
     void seenLineChanged();
     void newUntilRowChanged();
     void pictureRatioChanged();
+    void shapeChanged();
 
 private:
     struct Row
@@ -146,6 +165,8 @@ private:
     int m_newUntilRow = 0;
     double m_pictureRatio = 16.0 / 9;
     QString m_ratioPath;            // the snapshot m_pictureRatio was read from
+    bool m_fisheye = false;
+    QString m_viewMode = QStringLiteral("fisheye");
 };
 
 } // namespace rl

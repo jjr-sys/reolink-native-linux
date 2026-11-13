@@ -7,6 +7,8 @@ import ReolinkApp
 Menu {
     id: control
     padding: 5
+    // Rows the menu makes itself (a submenu's "View ▸") match ThemedMenuItem.
+    delegate: ThemedMenuItem {}
     background: Rectangle {
         implicitWidth: 190
         color: Theme.surfaceAlt
