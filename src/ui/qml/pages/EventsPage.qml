@@ -922,10 +922,24 @@ Item {
                             border.width: 2
                             border.color: Theme.accent
                         }
-                        HoverHandler { cursorShape: Qt.PointingHandCursor }
-                        TapHandler {   // plays it in the clip player
+                        HoverHandler { id: snapHover; cursorShape: Qt.PointingHandCursor }
+                        TapHandler {   // plays it in the clip player (not a click on a view icon)
                             enabled: !ev.slim
-                            onTapped: page.playRow(ev.index)
+                            onTapped: (point) => {
+                                if (!cardIcons.covers(snap, point.position.x, point.position.y))
+                                    page.playRow(ev.index);
+                            }
+                        }
+                        // A circle snapshot's view icons, as on Live and Playback panes, so every
+                        // tab switches views the same way (step 09). No aiming here: the wheel
+                        // scrolls the feed and a click plays.
+                        FisheyeViewIcons {
+                            id: cardIcons
+                            anchors.top: parent.top
+                            anchors.right: parent.right
+                            shown: feed.circle && !ev.slim && snapHover.hovered
+                            current: page.cameraViewMode
+                            onPicked: (view) => Devices.setViewMode(page.cameraRow, view)
                         }
                     }
                 }

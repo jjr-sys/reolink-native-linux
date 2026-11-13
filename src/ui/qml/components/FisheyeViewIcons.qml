@@ -5,7 +5,7 @@ import ReolinkApp
 // The six fisheye view icons in a column at a picture's right edge, shown while the pointer
 // is over it (wayfinder/playback-controls ticket 13; approved layout design in
 // fisheye-and-framing prototypes/fisheye-layout). One click picks a view. On a short pane the
-// icons shrink so all six fit. Shared by Live, Playback and the Events clip player.
+// icons shrink so all six fit. Shared by Live, Playback, the Events feed cards and the clip player.
 //
 // Anchor it to the picture: `anchors.right` + `anchors.top` of the parent; set `shown`.
 Column {
@@ -15,6 +15,11 @@ Column {
     // The height the icons must fit in (usually the parent's).
     property real available: parent ? parent.height : 300
     signal picked(string view)
+    // Whether a point (in `item`'s coordinates) is on the icons, so a click there isn't also
+    // the picture's own click (a parent's TapHandler sees it too).
+    function covers(item, x, y) {
+        return visible && contains(mapFromItem(item, x, y));
+    }
 
     readonly property real topGap: available < 300 ? 6 : 30
     readonly property real chip: Math.max(18, Math.min(30, (available - topGap - 8) / 6 - 4))

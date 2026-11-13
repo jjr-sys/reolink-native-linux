@@ -13,8 +13,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
 - **Fisheye views in the Events feed.** A fisheye camera's circle snapshots (Woorabinda
   Kitchen today) are drawn in the camera's view and aim, the same one Live and Playback
   use, and each card takes that view's shape at about the usual card size (Quad 560×315,
-  Original 420×420, Dual about 430×410…). The date bar follows. Right-clicking a card opens
-  its menu with **View ▸** at the top; picking a view there changes it everywhere. Flat
+  Original 420×420, Dual about 430×410…). The date bar follows. Views switch the same way
+  on every tab: hovering a card shows the six view icons at its right edge, and
+  right-clicking it opens its menu with **View ▸** as a backup; either changes the view
+  everywhere. Aiming (drag, scroll) is left to Live, Playback and the clip player. Flat
   snapshots (Frigate's Kitchen) and ordinary cameras are unchanged; stored files stay
   as they were.
 - **Fisheye views in Playback, and the same controls in Live View.** Fisheye cameras
