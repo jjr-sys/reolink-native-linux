@@ -78,6 +78,9 @@ public:
     // override: clearing one keeps the other.
     QHash<int, QStringList> channelEventTypes(qint64 hostId) const;
     bool setChannelEventTypes(qint64 hostId, int channel, const QStringList &types);
+    // The lens each channel was last seen with (true fisheye), only channels seen so far.
+    QHash<int, bool> channelFisheye(qint64 hostId) const;
+    bool setChannelFisheye(qint64 hostId, int channel, bool fisheye);
 
     // Event switches: the pairs switched off, and switching one off or on.
     QVector<EventSwitchKey> switchedOffEvents() const;

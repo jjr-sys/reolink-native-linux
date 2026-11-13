@@ -14,7 +14,7 @@ class TestDatabase : public QObject
     Q_OBJECT
 
     // Current schema version; bump alongside new migrations in Database.cpp.
-    static constexpr int kSchemaVersion = 6;
+    static constexpr int kSchemaVersion = 7;
 
     static constexpr qint64 kHour = 3600;
     static constexpr qint64 kDay = 24 * kHour;
@@ -354,6 +354,33 @@ private slots:
                  QStringList({"person", "vehicle", "motion", "status"}));
         QVERIFY(db.setChannelEventTypes(id, 2, {"motion", "status"}));
         QCOMPARE(db.channelEventTypes(id).value(2), QStringList({"motion", "status"}));
+    }
+
+    // A camera's lens, once seen, is remembered per channel (wayfinder/fisheye-and-framing ticket 12): unknown
+    // until set, then the last value set, kept beside the event types and a name override.
+    void channelLensRemembered()
+    {
+        QTemporaryDir dir;
+        Database db(dir.filePath("t.db"), QStringLiteral("test_chlens"));
+        QVERIFY(db.open());
+        HostRecord rec;
+        rec.kind = QStringLiteral("nvr");
+        rec.name = QStringLiteral("Lascelles");
+        rec.addr = QStringLiteral("10.0.0.5");
+        const qint64 id = db.addHost(rec);
+        QVERIFY(db.channelFisheye(id).isEmpty());
+        QVERIFY(db.setChannelEventTypes(id, 0, {"person", "motion"}));
+        QVERIFY(db.channelFisheye(id).isEmpty());   // a row without a lens seen stays unknown
+        QVERIFY(db.setChannelFisheye(id, 0, true));
+        QVERIFY(db.setChannelFisheye(id, 3, false));
+        QCOMPARE(db.channelFisheye(id).value(0, false), true);
+        QCOMPARE(db.channelFisheye(id).value(3, true), false);
+        QCOMPARE(db.channelFisheye(id).size(), 2);
+        QCOMPARE(db.channelEventTypes(id).value(0), QStringList({"person", "motion"}));
+        QVERIFY(db.setChannelNameOverride(id, 0, "Kitchen"));
+        QCOMPARE(db.channelFisheye(id).value(0, false), true);
+        QVERIFY(db.setChannelFisheye(id, 0, false));
+        QCOMPARE(db.channelFisheye(id).value(0, true), false);
     }
 
     void hostCrud()

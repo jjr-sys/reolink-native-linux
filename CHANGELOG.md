@@ -148,6 +148,11 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Fixed
 
+- **Fisheye cameras keep their views when the recorder is slow to answer.** A camera is
+  known as a fisheye from its square picture. The app now remembers that, so a refresh
+  where the recorder doesn't report the size (the Lascelles RLN8 sometimes answers with an
+  error) no longer hides the six views on Live, Playback and Events until the next good
+  refresh. The "Fisheye lens" tick in a camera's menu still wins.
 - **Frigate Playback works on a server that asks for a login.** On Frigate's
   authenticated port (8971) every Playback answered "Sign-in refused (401)": the
   recordings list signed in, but the player asked for the video without the

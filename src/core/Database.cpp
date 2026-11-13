@@ -152,6 +152,12 @@ bool Database::migrate()
                        " PRIMARY KEY (host_id, channel, type))"),
     };
 
+    // Remembered lens (wayfinder/fisheye-and-framing ticket 12): -1 not seen yet, 0 flat,
+    // 1 fisheye (square main stream), so a failed GetEnc read doesn't drop a camera's views.
+    static const QStringList migrationsV7 = {
+        QStringLiteral("ALTER TABLE channels ADD COLUMN fisheye INTEGER NOT NULL DEFAULT -1"),
+    };
+
     // Ordered migrations; each bumps the stored version by one.
     const QVector<QPair<int, const QStringList *>> steps = {
         {1, &migrationsV1},
@@ -160,6 +166,7 @@ bool Database::migrate()
         {4, &migrationsV4},
         {5, &migrationsV5},
         {6, &migrationsV6},
+        {7, &migrationsV7},
     };
 
     const int current = schemaVersion();
@@ -173,12 +180,19 @@ bool Database::migrate()
         }
         for (const QString &stmt : *stmts) {
             QSqlQuery q(database);
-            if (!q.exec(stmt)) {
-                m_lastError = q.lastError().text();
-                qCCritical(lcCore) << "Migration to v" << version << "failed:" << m_lastError;
-                database.rollback();
-                return false;
+            // An added column that is already there (a database rolled back to an older
+            // version number) is the state the step wants.
+            if (q.exec(stmt))
+                continue;
+            if (stmt.startsWith(QLatin1String("ALTER TABLE"))
+                && q.lastError().text().contains(QLatin1String("duplicate column"))) {
+                qCWarning(lcCore) << "Migration to v" << version << "kept a column already there:" << stmt;
+                continue;
             }
+            m_lastError = q.lastError().text();
+            qCCritical(lcCore) << "Migration to v" << version << "failed:" << m_lastError;
+            database.rollback();
+            return false;
         }
         QSqlQuery q(database);
         q.exec(QStringLiteral("DELETE FROM schema_version"));
@@ -820,6 +834,33 @@ bool Database::setChannelEventTypes(qint64 hostId, int channel, const QStringLis
     q.bindValue(QStringLiteral(":h"), hostId);
     q.bindValue(QStringLiteral(":i"), channel);
     q.bindValue(QStringLiteral(":t"), types.join(QLatin1Char(',')));
+    if (!q.exec()) {
+        m_lastError = q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+QHash<int, bool> Database::channelFisheye(qint64 hostId) const
+{
+    QHash<int, bool> out;
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT idx, fisheye FROM channels WHERE host_id = :h AND fisheye >= 0"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    if (q.exec())
+        while (q.next())
+            out.insert(q.value(0).toInt(), q.value(1).toInt() == 1);
+    return out;
+}
+
+bool Database::setChannelFisheye(qint64 hostId, int channel, bool fisheye)
+{
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("INSERT INTO channels (host_id, idx, fisheye) VALUES (:h, :i, :f)"
+                             " ON CONFLICT(host_id, idx) DO UPDATE SET fisheye = excluded.fisheye"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":i"), channel);
+    q.bindValue(QStringLiteral(":f"), fisheye ? 1 : 0);
     if (!q.exec()) {
         m_lastError = q.lastError().text();
         return false;

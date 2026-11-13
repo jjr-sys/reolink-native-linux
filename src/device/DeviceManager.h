@@ -387,6 +387,7 @@ private:
         Problem problem = Problem::Connecting; // until first validation lands
         int rotationOverride = 0;              // user view-rotation fix (degrees CW)
         int lensOverride = -1;                 // user's fisheye flag: -1 unset (auto), 0 no, 1 yes
+        int lensRemembered = -1;               // lens seen on an earlier read: -1 none, 0 flat, 1 fisheye
         QString viewMode = QStringLiteral("fisheye"); // how a fisheye camera is shown
         QString mainCodec = QStringLiteral("h264"); // sub stream is always h264
         QSize mainSize;                             // GetEnc-declared main resolution

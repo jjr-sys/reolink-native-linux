@@ -5,6 +5,7 @@
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "device/EventSnapshot.h"
+#include "device/FisheyeDetect.h"
 #include "device/FrigateApi.h"
 #include "device/FrigateLive.h"
 #include "device/QuickReply.h"
@@ -64,6 +65,11 @@ QString displayName(const QString &name, const QString &kind)
 {
     return device::capabilities(device::kindFromString(kind)).frigateApi ? frigate::displayCameraName(name) : name;
 }
+// The lens remembered for a channel (-1 none, 0 flat, 1 fisheye), from Database::channelFisheye.
+int rememberedLens(const QHash<int, bool> &lenses, int channel)
+{
+    return lenses.contains(channel) ? int(lenses.value(channel)) : -1;
+}
 const QStringList kViewModes{"fisheye", "ptz", "panorama", "dual", "quad", "fisheye_ptz"};
 // Load a camera's saved fisheye settings into a device entry.
 template <class Entry>
@@ -110,6 +116,7 @@ DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject
         e.chanName = rec.name;
         e.rotationOverride = loadRotation(rec.id, 0);
         loadLensSettings(e, rec.id, 0);
+        e.lensRemembered = rememberedLens(m_db->channelFisheye(rec.id), 0);
         e.online = device::capabilities(device::kindFromString(rec.kind)).alwaysOnline;
         e.status = e.online ? tr("ready") : tr("connecting…");
         m_entries.append(e);
@@ -510,8 +517,7 @@ QVariant DeviceManager::data(const QModelIndex &index, int role) const
     case RotationRole:
         return e.rotationOverride;
     case IsFisheyeRole:
-        return e.lensOverride >= 0 ? e.lensOverride == 1
-                                   : (e.mainSize.width() > 0 && e.mainSize.width() == e.mainSize.height());
+        return device::isFisheye(e.lensOverride, e.mainSize, e.lensRemembered);
     case ViewModeRole:
         return e.viewMode;
     case HasPtzRole:
@@ -899,6 +905,7 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
     QVector<Entry> fresh;
     fresh.reserve(v.channels.size());
     const QHash<int, QString> chosenNames = m_db->channelNameOverrides(rec.id);
+    const QHash<int, bool> lenses = m_db->channelFisheye(rec.id);
     // Supported event types: kept when this validation read them, so a camera that is
     // offline at a later launch still knows them.
     if (!v.degraded)
@@ -934,6 +941,13 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
         e.problem = Problem::None;
         e.rotationOverride = loadRotation(rec.id, ch.channel);
         loadLensSettings(e, rec.id, ch.channel);
+        // Remember the lens this read saw; keep the earlier one when the size wasn't read.
+        const int seen = device::lensSeen(ch.mainSize);
+        const int before = rememberedLens(lenses, ch.channel);
+        if (seen >= 0 && seen != before && !m_db->setChannelFisheye(rec.id, ch.channel, seen == 1))
+            qCWarning(lcCore) << "could not remember the lens of" << rec.name << ch.channel << ":"
+                              << m_db->lastError();
+        e.lensRemembered = seen >= 0 ? seen : before;
         e.client = v.client;
         if (ch.channel == 0)
             e.battery = v.battery;
