@@ -92,10 +92,13 @@ Item {
         }
     }
     // Keys of a recorder that has been removed are dropped once the device list settles
-    // (an NVR swaps its placeholder row for its channels while it connects).
+    // (an NVR swaps its placeholder row for its channels while it connects), and keys of a
+    // camera removed from a Frigate server.
     function pruneSelection() {
-        if (Devices.count > 0)
+        if (Devices.count > 0) {
             selection.pruneHosts(Devices.hostIds());
+            selection.pruneCameras(Devices.listedCameras());
+        }
     }
     Timer { id: pruneTimer; interval: 8000; onTriggered: page.pruneSelection() }
 

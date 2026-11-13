@@ -56,6 +56,7 @@ public:
     Q_INVOKABLE void moveSite(const QString &site, int dir);
 
     static qint64 hostOfKey(const QString &key, bool *ok = nullptr);
+    static int channelOfKey(const QString &key, bool *ok = nullptr);
 
 signals:
     void hostsChanged();

@@ -171,6 +171,19 @@ void SiteSelection::pruneHosts(const QVariantList &hostIds)
     setKeys(keys, true);
 }
 
+void SiteSelection::pruneCameras(const QVariantMap &listed)
+{
+    QStringList keys;
+    for (const QString &k : std::as_const(m_keys)) {
+        const QVariantList channels = listed.value(QString::number(SiteMap::hostOfKey(k))).toList();
+        bool ok = false;
+        const int channel = SiteMap::channelOfKey(k, &ok);
+        if (channels.isEmpty() || !ok || channels.contains(channel))
+            keys << k;
+    }
+    setKeys(keys, true);
+}
+
 QStringList SiteSelection::fromGrid(const QString &arrangement, int preset)
 {
     static const int kPresets[] = {1, 4, 6, 9, 16, 20, 25};

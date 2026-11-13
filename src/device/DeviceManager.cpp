@@ -2107,6 +2107,20 @@ QVariantList DeviceManager::hostIds() const
     return ids;
 }
 
+QVariantMap DeviceManager::listedCameras() const
+{
+    QVariantMap out;
+    for (const Entry &e : m_entries) {
+        if (!e.kindCaps().frigateApi || !e.validated)
+            continue;
+        const QString host = QString::number(e.rec.id);
+        QVariantList channels = out.value(host).toList();
+        channels.append(e.channel);
+        out.insert(host, channels);
+    }
+    return out;
+}
+
 QString DeviceManager::hostName(qint64 hostId) const
 {
     for (const Entry &e : m_entries)

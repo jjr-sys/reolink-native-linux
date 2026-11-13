@@ -210,6 +210,10 @@ public:
     Q_INVOKABLE QVariantMap cameraInfo(int row) const;
     // Distinct host ids in list order (NVRs and standalone cameras), for grouping.
     Q_INVOKABLE QVariantList hostIds() const;
+    // Channels of each host whose camera list is definitive (a validated Frigate server: its
+    // configured cameras), keyed by host id as text, for SiteSelection::pruneCameras. NVRs
+    // are left out: they list only online channels.
+    Q_INVOKABLE QVariantMap listedCameras() const;
     // The property/site name a host was added under (e.g. "Lascelles"), or empty
     // if hostId is unknown. Distinct from a camera's own display name.
     Q_INVOKABLE QString hostName(qint64 hostId) const;

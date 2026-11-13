@@ -181,6 +181,24 @@ private slots:
         QCOMPARE(s.keys(), QStringList({"1:0", "2:1"}));
     }
 
+    // A camera gone from a host whose camera list is definitive (Frigate's configured cameras;
+    // wayfinder ticket 23) is dropped; hosts not in the map are left alone, since an NVR lists
+    // only its online channels and a camera offline for a while must stay picked.
+    void pruneCamerasDropsOnlyCamerasGoneFromListedHosts()
+    {
+        SiteSelection s;
+        s.setSaved(QStringLiteral("3:1,3:0,5:0,1:4"));
+        s.pruneCameras({{QStringLiteral("3"), QVariantList{0}}});
+        QCOMPARE(s.keys(), QStringList({"3:0", "5:0", "1:4"}));
+        QCOMPARE(SiteMap::channelOfKey(QStringLiteral("3:12")), 12);
+        bool ok = true;
+        SiteMap::channelOfKey(QStringLiteral("3:x"), &ok);
+        QVERIFY(!ok);
+        // An empty list for a host (Frigate unreadable) drops nothing.
+        s.pruneCameras({{QStringLiteral("3"), QVariantList{}}});
+        QCOMPARE(s.keys(), QStringList({"3:0", "5:0", "1:4"}));
+    }
+
     // First launch: the cameras on the grid page that was showing (page one, as the page
     // was never stored): the first `preset` panes, empty panes left out.
     void migrationTakesTheFirstGridPage()

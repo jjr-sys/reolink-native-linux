@@ -15,7 +15,8 @@ namespace rl {
 //  - `keys` is tap order. `paneOrder` is what the page shows: grouped by Site in Site tab
 //    order (from `sites`), tap order within a Site; cameras of an unknown host go last.
 //  - Keys whose camera has not appeared yet are kept (recorders answer late); only
-//    pruneHosts drops keys, for recorders that no longer exist.
+//    pruneHosts drops keys, for recorders that no longer exist; pruneCameras, for cameras gone
+//    from a Frigate server.
 //  - clear() offers undo() until the next change or dropUndo().
 //  - Give it the stored text first (setSaved); saveRequested(text) says a change by the
 //    user is worth storing. Stored text: keys in tap order joined by ",".
@@ -60,6 +61,10 @@ public:
     Q_INVOKABLE int countIn(const QString &site) const;
     // Drop the keys of hosts not in `hostIds`.
     Q_INVOKABLE void pruneHosts(const QVariantList &hostIds);
+    // Drop the keys of cameras gone from a host whose camera list is definitive: `listed` maps
+    // a host id (as text) to the channels it has. Leave hosts not in the map, and an empty list,
+    // alone (an NVR lists only online channels; an unreadable list says nothing).
+    Q_INVOKABLE void pruneCameras(const QVariantMap &listed);
 
     // The first-launch selection from the old Live grid: the panes of page one of the
     // stored arrangement ("hostId:channel" or "-" per pane) at `preset` panes a page.

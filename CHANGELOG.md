@@ -155,6 +155,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
 - **Cameras added to or removed from Frigate show up without restarting the app.** The app
   re-reads Frigate's camera list every five minutes and updates the Site when it changed,
   so a removed camera no longer lingers greyed out or keeps retrying.
+- **A camera removed from Frigate also leaves Live View and Playback.** Its pane, its
+  Playback icon and its share of the Site's bandwidth budget used to stay behind, which could
+  stop another camera from being added. Cameras on a Reolink recorder that are only offline
+  for a while stay picked.
 - **Fisheye cameras keep their views when the recorder is slow to answer.** A camera is
   known as a fisheye from its square picture. The app now remembers that, so a refresh
   where the recorder doesn't report the size (the Lascelles RLN8 sometimes answers with an

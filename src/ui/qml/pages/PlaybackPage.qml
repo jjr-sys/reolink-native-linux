@@ -58,8 +58,8 @@ Item {
         selStore.setValue("keys", keys.join(","));
         selStore.setValue("migrated", true);
     }
-    // Keys of a recorder that has been removed are dropped once the device list settles.
-    // A bare stream (migrated, or picked before) is swapped for the recorder's copy, or dropped.
+    // Keys of a recorder that has been removed, or of a camera removed from a Frigate server,
+    // are dropped once the device list settles. A bare stream (migrated, or picked before) is swapped for the recorder's copy, or dropped.
     Timer {
         id: pruneTimer
         interval: 8000
@@ -67,6 +67,7 @@ Item {
             if (Devices.count === 0)
                 return;
             selection.pruneHosts(Devices.hostIds());
+            selection.pruneCameras(Devices.listedCameras());
             selection.keys.filter(k => Sites.isBareStream(k)).forEach(k => {
                 selection.toggle(k);
                 var instead = Sites.playbackKey(k);

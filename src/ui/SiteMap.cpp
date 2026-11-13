@@ -24,6 +24,16 @@ qint64 SiteMap::hostOfKey(const QString &key, bool *ok)
     return good ? id : 0;
 }
 
+int SiteMap::channelOfKey(const QString &key, bool *ok)
+{
+    const int colon = key.indexOf(QLatin1Char(':'));
+    bool good = false;
+    const int channel = colon > 0 ? key.mid(colon + 1).toInt(&good) : 0;
+    if (ok)
+        *ok = good;
+    return good ? channel : 0;
+}
+
 void SiteMap::setSaved(const QString &text)
 {
     // A QML binding hands back what saveRequested just stored: nothing to reload.
