@@ -163,14 +163,12 @@ Item {
             if (mode === "fisheye_ptz") return 2.5;
             return 16 / 9;                           // ptz, quad: they fill any pane
         }
-        var r = frame > 0 ? frame : 16 / 9;          // never seen: 16:9
-        return rotation % 180 !== 0 ? 1 / r : r;
+        return FrameShape.drawnRatio(frame, rotation);   // never seen: 16:9
     }
     function noteRatio(key, r) {
         if (!key || !(r > 0))
             return;
-        var old = paneRatios[key];
-        if (old && Math.abs(old - r) / old < 0.005)
+        if (!FrameShape.shapeChanged(paneRatios[key] || 0, r))
             return;
         paneRatios[key] = r;
         scheduleMosaic();
@@ -183,8 +181,7 @@ Item {
     function rememberFrame(key, r) {
         if (!key || !(r > 0))
             return;
-        var old = rememberedFrame(key);
-        if (!old || Math.abs(old - r) / old >= 0.005)
+        if (FrameShape.shapeChanged(rememberedFrame(key), r))
             shapeStore.setValue(key, r.toFixed(4));
     }
     // A camera's shape for its drawer card: as drawn in a pane, else as remembered.

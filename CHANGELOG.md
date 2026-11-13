@@ -49,6 +49,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Changed
 
+- **Playback keeps the picture.** Pause, Stop and the end of a recording leave each
+  pane's last picture on screen instead of going black; it stays until a new picture
+  replaces it, the day changes, the playhead moves to where that camera has no
+  footage, or the pane leaves the mosaic. Playback panes now learn each camera's
+  picture shape as Live View does, into the same remembered shapes, so a fisheye
+  camera that Live shows dewarped gets a square pane in Playback instead of a 16:9
+  one with bars.
 - **Events: pictures in their own shape, no black bars.** Each feed card shows the
   camera's snapshot in its own shape (a doorbell tall, a fisheye circle square, a
   wide gate camera wide) at about the area of the old 16:9 card, never wider than

@@ -77,11 +77,53 @@ private slots:
         QCOMPARE(frameshape::fitIn(1600, 900, 0), QSize(1600, 900)); // 16:9 when unknown
     }
 
+    // A camera's remembered shape (step 07, shared by Live and Playback): a new measurement
+    // is saved only when it moves by at least 0.5 %, so decoder jitter doesn't rewrite it.
+    void aFirstMeasurementIsAChange()
+    {
+        QVERIFY(frameshape::shapeChanged(0, 1.0));
+        QVERIFY(frameshape::shapeChanged(-1, 1.0));
+    }
+
+    void jitterIsNotAChange()
+    {
+        QVERIFY(!frameshape::shapeChanged(16.0 / 9, 16.0 / 9 * 1.004));
+        QVERIFY(!frameshape::shapeChanged(1.0, 0.996));
+        QVERIFY(frameshape::shapeChanged(16.0 / 9, 1.0));
+        QVERIFY(frameshape::shapeChanged(1.0, 1.005));
+    }
+
+    void noMeasurementIsNeverAChange()
+    {
+        QVERIFY(!frameshape::shapeChanged(1.0, 0));
+        QVERIFY(!frameshape::shapeChanged(1.0, -3));
+        QVERIFY(!frameshape::shapeChanged(1.0, std::numeric_limits<double>::quiet_NaN()));
+    }
+
+    // The shape a pane is drawn at: the remembered decoded shape (16:9 when never seen),
+    // turned by a quarter rotation.
+    void drawnShapeFollowsTheRememberedOne()
+    {
+        QCOMPARE(frameshape::drawnRatio(1.0, 0), 1.0);
+        QCOMPARE(frameshape::drawnRatio(0.75, 0), 0.75);
+        QCOMPARE(frameshape::drawnRatio(0, 0), 16.0 / 9);
+    }
+
+    void aQuarterRotationTurnsTheShape()
+    {
+        QCOMPARE(frameshape::drawnRatio(16.0 / 9, 90), 9.0 / 16);
+        QCOMPARE(frameshape::drawnRatio(16.0 / 9, 270), 9.0 / 16);
+        QCOMPARE(frameshape::drawnRatio(16.0 / 9, 180), 16.0 / 9);
+        QCOMPARE(frameshape::drawnRatio(0, 90), 9.0 / 16);
+    }
+
     void theQmlFacadeGivesTheSameAnswers()
     {
         FrameShape f;
         QCOMPARE(f.cardSize(560, 0.75), QSizeF(frameshape::cardSize(560, 0.75)));
         QCOMPARE(f.fitIn(1000, 800, 0.75), QSizeF(frameshape::fitIn(1000, 800, 0.75)));
+        QCOMPARE(f.shapeChanged(1.0, 1.2), true);
+        QCOMPARE(f.drawnRatio(0.75, 90), 1 / 0.75);
     }
 };
 

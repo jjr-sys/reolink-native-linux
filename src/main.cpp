@@ -261,6 +261,9 @@ int main(int argc, char *argv[])
         QStringLiteral("openClipTarget"), qEnvironmentVariable("RL_OPEN_CLIP"));
     engine.rootContext()->setContextProperty(
         QStringLiteral("playbackAutoplay"), qEnvironmentVariableIsSet("RL_PLAYBACK_AUTOPLAY"));
+    // RL_PLAYBACK_STOP_MS=<ms>: with RL_PLAYBACK_AUTOPLAY, press Stop that long after it starts.
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("playbackStopMs"), qEnvironmentVariableIntValue("RL_PLAYBACK_STOP_MS"));
     engine.rootContext()->setContextProperty(QStringLiteral("startHidden"),
                                              parser.isSet(hiddenOption) && tray.available());
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,

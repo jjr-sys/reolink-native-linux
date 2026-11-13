@@ -40,6 +40,22 @@ QSize fitIn(double width, double height, double ratio)
     return {qRound(w), qRound(h)};
 }
 
+bool shapeChanged(double remembered, double measured)
+{
+    if (!std::isfinite(measured) || !(measured > 0))
+        return false;
+    if (!std::isfinite(remembered) || !(remembered > 0))
+        return true;
+    // "At least 0.5 %", with room for the rounding of a stored "1.0000"-style value.
+    return std::abs(measured - remembered) / remembered >= 0.005 - 1e-9;
+}
+
+double drawnRatio(double remembered, int rotation)
+{
+    const double r = validRatio(remembered);
+    return rotation % 180 != 0 ? 1 / r : r;
+}
+
 } // namespace frameshape
 
 QSizeF FrameShape::cardSize(double feedWidth, double ratio) const
@@ -50,6 +66,16 @@ QSizeF FrameShape::cardSize(double feedWidth, double ratio) const
 QSizeF FrameShape::fitIn(double width, double height, double ratio) const
 {
     return frameshape::fitIn(width, height, ratio);
+}
+
+bool FrameShape::shapeChanged(double remembered, double measured) const
+{
+    return frameshape::shapeChanged(remembered, measured);
+}
+
+double FrameShape::drawnRatio(double remembered, int rotation) const
+{
+    return frameshape::drawnRatio(remembered, rotation);
 }
 
 } // namespace rl

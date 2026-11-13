@@ -464,18 +464,36 @@ Item {
         if (typeof playbackAutoplay !== "undefined" && playbackAutoplay && segments.length > 0 && !_autoplayed) {
             _autoplayed = true;
             playAt(segments[0].start);
+            if (typeof playbackStopMs !== "undefined" && playbackStopMs > 0)
+                autoStop.start();
         }
+    }
+    Timer {   // test hook: RL_PLAYBACK_STOP_MS
+        id: autoStop
+        interval: typeof playbackStopMs !== "undefined" ? playbackStopMs : 0
+        onTriggered: page.stopAllPanes()
     }
 
     // ---- Mosaic ------------------------------------------------------------------------
     property bool mosaicAnimate: false
     property var mosaicRectByRow: ({})
-    Settings { id: shapeStore; category: "mosaicShapes" }   // Live View keeps each camera's shape
+    // Each camera's decoded shape, shared with Live View ("hostId:channel" = width/height).
+    // A pane measures its picture and saves it here, so a camera Live never measured (a
+    // dewarped fisheye) gets its own shape too (wayfinder/fisheye-and-framing step 07).
+    Settings { id: shapeStore; category: "mosaicShapes" }
+    function rememberedFrame(key) {
+        var v = parseFloat(shapeStore.value(key, 0));
+        return v > 0 ? v : 0;
+    }
+    function rememberFrame(key, r) {
+        if (!key || !FrameShape.shapeChanged(rememberedFrame(key), r))
+            return;
+        shapeStore.setValue(key, r.toFixed(4));
+        scheduleMosaic();
+    }
     function paneRatio(row) {
         var c = Devices.cameraInfo(row);
-        var f = parseFloat(shapeStore.value(cameraKey(row), 0));
-        var r = f > 0 ? f : 16 / 9;
-        return c && (c.rotationOverride || 0) % 180 !== 0 ? 1 / r : r;
+        return FrameShape.drawnRatio(rememberedFrame(cameraKey(row)), c ? (c.rotationOverride || 0) : 0);
     }
     function cardRatio(key) {
         var row = rowsByKey()[key];
@@ -627,6 +645,7 @@ Item {
                         speed: group.speed
                         hdActive: page.hdKeys.indexOf(cameraKey) >= 0
                         segments: page.segsByKey[cameraKey] || []
+                        onFrameRatioChanged: page.rememberFrame(cameraKey, frameRatio)
                         playheadSecs: page.playheadSecs
                         dayEpoch: page.dayStartEpoch
                         onStreamingChanged: page.countStreaming()

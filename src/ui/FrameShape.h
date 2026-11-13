@@ -18,6 +18,14 @@ QSize cardSize(double feedWidth, double ratio);
 // The largest box of `ratio` that fits in `width` x `height` (16:9 when the ratio is unknown).
 QSize fitIn(double width, double height, double ratio);
 
+// Whether a newly measured picture shape should replace the remembered one: a first
+// measurement, or a move of at least 0.5 % (decoder jitter stays put). No measurement never is.
+bool shapeChanged(double remembered, double measured);
+
+// The shape a pane is drawn at: the remembered decoded shape (16:9 if never seen), turned by
+// a quarter rotation (`rotation` in degrees).
+double drawnRatio(double remembered, int rotation);
+
 } // namespace frameshape
 
 // The same for QML (registered as the FrameShape singleton).
@@ -28,6 +36,8 @@ public:
     using QObject::QObject;
     Q_INVOKABLE QSizeF cardSize(double feedWidth, double ratio) const;
     Q_INVOKABLE QSizeF fitIn(double width, double height, double ratio) const;
+    Q_INVOKABLE bool shapeChanged(double remembered, double measured) const;
+    Q_INVOKABLE double drawnRatio(double remembered, int rotation) const;
 };
 
 } // namespace rl

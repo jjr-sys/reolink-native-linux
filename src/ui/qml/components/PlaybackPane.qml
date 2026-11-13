@@ -31,7 +31,50 @@ Rectangle {
     property bool holding: false
     function freeze() { if (streaming) { holding = true; holdTimer.restart(); } }
     Timer { id: holdTimer; interval: 6000; onTriggered: root.holding = false }
-    onStreamingChanged: if (streaming) { holding = false; Qt.callLater(_align); }
+    // Pause, Stop or a recording's end keep the last picture on screen instead of going black
+    // (wayfinder/fisheye-and-framing step 07). It stays until a new picture replaces it, the
+    // day changes, the playhead lands where this camera has no footage, or the pane leaves the
+    // mosaic. Only a stream that really showed a frame leaves one (a refused stream can reach
+    // Streaming without any).
+    property bool kept: false
+    property bool _framed: false   // this stream has put a frame on screen
+    Connections {
+        target: video.videoSink
+        enabled: root.streaming && !root._framed
+        function onVideoFrameChanged() { root._framed = true; }
+    }
+    onStreamingChanged: {
+        if (streaming) {
+            holding = false;
+            kept = false;
+            Qt.callLater(_align);
+            Qt.callLater(measureRatio);
+        } else {
+            kept = _framed;
+            _framed = false;
+        }
+    }
+    onDayEpochChanged: kept = false
+    onPlayheadSecsChanged: if (kept && !covered(playheadSecs)) kept = false
+    readonly property bool showsPicture: streaming || holding || kept
+
+    // The decoded picture's shape (width / height, turned by the rotation), for the mosaic
+    // to remember; 0 until a picture is on screen. Measured as Live View does, ignoring
+    // changes under 3 % so a re-pack resizing the pane doesn't read back as a new shape.
+    readonly property real frameRatio: measuredRatio
+    property real measuredRatio: 0
+    function measureRatio() {
+        var r = video.contentRect;
+        if (!streaming || r.width < 2 || r.height < 2)
+            return;
+        var m = (viewRotation % 180 !== 0) ? r.height / r.width : r.width / r.height;
+        if (!(measuredRatio > 0) || Math.abs(m - measuredRatio) / measuredRatio > 0.03)
+            measuredRatio = m;
+    }
+    Connections {
+        target: video
+        function onContentRectChanged() { root.measureRatio(); }
+    }
     property real speed: 1.0
     // Save the picture on screen as a JPEG named for this camera and the recorded
     // moment; returns the path, or "" if there is no picture yet.
@@ -187,7 +230,11 @@ Rectangle {
         _openWall = Date.now();
         catchUpTimer.stop();
         catchUp = 1.0;
-        return session.playAt(epoch, covered(sec));
+        const result = session.playAt(epoch, covered(sec));
+        // A gap stops the stream inside playAt (keeping its frame): say "No footage" instead.
+        if (!covered(sec))
+            kept = false;
+        return result;
     }
 
     // ---- Keeping in step with the playhead -------------------------------------
@@ -232,7 +279,7 @@ Rectangle {
 
     // A pane that leaves the mosaic (deselected, or its page hides)
     // must not keep a playback stream open on the connection-limited NVR.
-    onVisibleChanged: if (!visible) { _suppressResume = true; player.stop(); }
+    onVisibleChanged: if (!visible) { _suppressResume = true; player.stop(); kept = false; }
 
     // Retry on connection error: NVRs are connection-limited and may
     // momentarily refuse a playback stream while others are opening.
@@ -260,7 +307,7 @@ Rectangle {
             id: video
             anchors.fill: parent
             fillMode: VideoOutput.PreserveAspectFit
-            visible: root.streaming || root.holding
+            visible: root.showsPicture
             orientation: root.viewRotation
             transform: [
                 Scale {
@@ -299,11 +346,22 @@ Rectangle {
         }
     }
 
-    // Per-camera state at the shared playhead.
+    // Per-camera state at the shared playhead; over a kept picture (reopening, an error) on
+    // a dark backing so it reads.
+    Rectangle {
+        anchors.centerIn: stateColumn
+        width: stateColumn.width + 20
+        height: stateColumn.height + 14
+        radius: Theme.radius
+        color: "#a0000000"
+        visible: stateColumn.visible && root.showsPicture
+    }
     Column {
+        id: stateColumn
         anchors.centerIn: parent
         spacing: Theme.spacing
-        visible: (!root.streaming && !root.holding) || root.noPicture
+        visible: !root.showsPicture || root.noPicture || player.state === StreamPlayer.Error
+                 || (root.kept && player.state === StreamPlayer.Connecting)
         BusyIndicator {
             anchors.horizontalCenter: parent.horizontalCenter
             running: player.state === StreamPlayer.Connecting
