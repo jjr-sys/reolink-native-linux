@@ -32,6 +32,7 @@
 #include "ui/EventClip.h"
 #include "ui/EventFeed.h"
 #include "ui/FrameShape.h"
+#include "ui/StillQueue.h"
 #include "ui/MosaicLayout.h"
 
 #include <QApplication>
@@ -219,6 +220,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::CameraNoise>("ReolinkApp.Core", 1, 0, "CameraNoise");
     qmlRegisterType<rl::EventClip>("ReolinkApp.Core", 1, 0, "EventClip");
     qmlRegisterType<rl::MosaicLayout>("ReolinkApp.Core", 1, 0, "MosaicLayout");
+    qmlRegisterType<rl::StillQueue>("ReolinkApp.Core", 1, 0, "StillQueue");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "FrameShape", &frameShape);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);

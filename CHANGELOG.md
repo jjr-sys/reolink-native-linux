@@ -10,6 +10,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **Playback stills.** While Playback is stopped, each pane shows a picture from the
+  playhead's moment instead of black: when the page opens, the day changes, a camera
+  is added, a maximised pane is left, or a timeline drag rests for a quarter second
+  (letting go of the drag plays, as before). A still is the pane's own recording opened at that moment
+  and stopped at its first picture, on the sub stream and silent, at most four at once
+  per recorder; meanwhile the previous picture shows dimmed with a small spinner.
+  Where a camera recorded nothing, it says so without asking the recorder.
 - **Event switches (groundwork).** A camera's event type can be switched off so the
   app no longer stores, pictures, notifies or highlights it, live or from a Frigate
   catch-up. Switching off first reports how many events and how much snapshot space

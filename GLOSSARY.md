@@ -92,6 +92,10 @@ _Avoid_: mock server
 One playback view's decisions about how recorded footage reaches the screen: which transport carries it, whether a seek moves the running stream or reopens it, and when a change of quality or speed needs a reopen.
 _Avoid_: playback state, playback controller
 
+**Still**:
+While Playback is stopped, the one picture a pane shows from the playhead's moment: the pane's own recording opened there and stopped at its first picture, then kept on screen.
+_Avoid_: thumbnail, preview, snapshot (a snapshot is a saved JPEG)
+
 **Playback route**:
 The transport chosen for recorded footage: the NVR's HTTP-FLV sub stream, the native (Baichuan) main stream for HD, or the native sub stream for faster than real time. Direct (Frigate) footage always uses HTTP.
 _Avoid_: playback mode, quality

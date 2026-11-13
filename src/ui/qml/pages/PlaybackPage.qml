@@ -25,8 +25,12 @@ Item {
     // Leaving a maximised pane: the panes it covered stopped while hidden; those with
     // footage start again at the playhead once shown.
     onMaximizedKeyChanged: {
-        if (maximizedKey !== "" || streamingPanes === 0)
+        if (maximizedKey !== "")
             return;
+        if (!isPlaying()) {   // stopped: the panes shown again get their picture at the playhead
+            Qt.callLater(stillsWhereMissing);
+            return;
+        }
         selection.keys.forEach(k => { _resume[k] = "ifStopped"; });
         Qt.callLater(flushResume);
     }
@@ -238,16 +242,69 @@ Item {
     }
 
     // ---- Playing ---------------------------------------------------------------------
-    property int streamingPanes: 0
+    property int streamingPanes: 0   // playing, not fetching a still
     function countStreaming() {
         var n = 0;
         for (var i = 0; i < paneRepeater.count; i++) {
             var p = paneRepeater.itemAt(i);
-            if (p && p.visible && p.streaming) n++;
+            if (p && p.visible && p.streaming && !p.stillMode) n++;
         }
         streamingPanes = n;
     }
+    // Opening or playing (a still being fetched doesn't count).
+    function isPlaying() {
+        if (Object.keys(_resume).length > 0)
+            return true;
+        for (var i = 0; i < paneRepeater.count; i++) {
+            var p = paneRepeater.itemAt(i);
+            if (p && p.visible && p.busy && !p.stillMode) return true;
+        }
+        return false;
+    }
+
+    // ---- Stills (wayfinder/fisheye-and-framing step 08) ---------------------------------
+    // Stopped, each pane shows a picture from the playhead's moment: when a camera's day
+    // arrives (page opened, day changed, camera added), when a maximised pane is left, and
+    // when a timeline drag rests. At most 4 at once per recorder; playing cancels them.
+    StillQueue {
+        id: stills
+        perRecorder: 4
+        onStartStill: (key) => {
+            var p = page.paneOf(key);
+            if (p && p.visible)
+                p.showStillAt(page.playheadSecs, page.epochAt(page.playheadSecs));
+            else
+                Qt.callLater(stills.done, key);
+        }
+    }
+    function stillFor(key) {
+        var p = paneOf(key);
+        if (!p || !p.visible || segsByKey[key] === undefined)
+            return;
+        if (!p.covered(playheadSecs)) {
+            stills.cancel(key);
+            p.showNoFootage();
+            return;
+        }
+        stills.request(key, parseInt(key.split(":")[0]));
+    }
+    // Every pane, at the playhead (a drag came to rest).
+    function stillsAtPlayhead() { selection.keys.forEach(k => stillFor(k)); }
+    // Panes with nothing on screen yet (page opened, panes shown, a camera's day arrived).
+    function stillsWhereMissing() {
+        if (!active || isPlaying())
+            return;
+        selection.keys.forEach(k => {
+            var p = paneOf(k);
+            if (p && p.visible && !p.showsPicture && !p.stillMode)
+                stillFor(k);
+        });
+    }
+    Timer { id: stillRest; interval: 250; onTriggered: if (!page.isPlaying()) page.stillsAtPlayhead() }
+
     function stopAllPanes() {
+        stills.cancelAll();
+        stillRest.stop();
         _resume = ({});
         for (var i = 0; i < paneRepeater.count; i++) {
             var p = paneRepeater.itemAt(i);
@@ -274,6 +331,8 @@ Item {
     // Move the playhead and play every pane from that moment; each answers from its own
     // footage (play, or "no footage").
     function playAt(sec) {
+        stills.cancelAll();
+        stillRest.stop();
         playheadSecs = sec;
         _resume = ({});
         selection.keys.forEach(k => { _resume[k] = true; });
@@ -294,7 +353,7 @@ Item {
                 page.playheadSecs = Math.min(86399, page.playheadSecs + dt * group.speed);
         }
     }
-    onActiveChanged: if (!active) stopAllPanes()
+    onActiveChanged: active ? Qt.callLater(stillsWhereMissing) : stopAllPanes()
 
     function epochAt(sec) {
         var d = new Date(selYear, selMonth - 1, selDay, 0, 0, 0);
@@ -460,6 +519,7 @@ Item {
             statusText.text = qsTr("Event at %1").arg(clockText(playheadSecs + 5));
         }
         flushResume();
+        stillsWhereMissing();
         // Test hook: play the first recording once to check the video path.
         if (typeof playbackAutoplay !== "undefined" && playbackAutoplay && segments.length > 0 && !_autoplayed) {
             _autoplayed = true;
@@ -518,6 +578,7 @@ Item {
             m[p[i].row] = r[i];
         mosaicRectByRow = m;
         Qt.callLater(flushResume);   // panes just shown can start
+        Qt.callLater(stillsWhereMissing);   // ... or, stopped, show their picture
     }
 
     Component.onCompleted: {
@@ -646,6 +707,8 @@ Item {
                         hdActive: page.hdKeys.indexOf(cameraKey) >= 0
                         segments: page.segsByKey[cameraKey] || []
                         onFrameRatioChanged: page.rememberFrame(cameraKey, frameRatio)
+                        onStillDone: (picture) => stills.done(cameraKey, picture)
+                        onStillModeChanged: page.countStreaming()
                         playheadSecs: page.playheadSecs
                         dayEpoch: page.dayStartEpoch
                         onStreamingChanged: page.countStreaming()
@@ -683,7 +746,7 @@ Item {
                 position: page.playheadSecs
                 markStart: page.markStart
                 markEnd: page.rangeArmed ? page.playheadSecs : page.markEnd
-                onSeek: (seconds) => page.playheadSecs = seconds  // move the playhead only
+                onSeek: (seconds) => { page.playheadSecs = seconds; stillRest.restart(); } // stopped: stills when it rests
                 onCommit: (seconds) => page.playAt(seconds)       // play from there on release
             }
 

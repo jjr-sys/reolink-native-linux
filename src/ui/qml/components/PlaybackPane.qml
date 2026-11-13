@@ -41,8 +41,54 @@ Rectangle {
     Connections {
         target: video.videoSink
         enabled: root.streaming && !root._framed
-        function onVideoFrameChanged() { root._framed = true; }
+        function onVideoFrameChanged() {
+            root._framed = true;
+            if (root.stillMode)
+                Qt.callLater(root._leaveStill);
+        }
     }
+
+    // ---- Stills (wayfinder/fisheye-and-framing step 08) ----------------------------
+    // A still is this pane's own stream opened at a moment, stopped at its first picture and
+    // kept. The page's StillQueue says when (a few per recorder at once); `stillDone` frees
+    // the place. Always the sub stream, never with sound. While it loads, the previous
+    // picture shows dimmed with a small spinner.
+    property bool stillMode: false
+    signal stillDone(bool picture)
+    function showStillAt(sec, epoch) {
+        if (!hasSource || !covered(sec)) {
+            if (!_leaveStill())
+                Qt.callLater(root.stillDone, false);
+            showNoFootage();
+            return;
+        }
+        // Always from a stopped stream: a stream still up would only seek in place (no new
+        // first picture), and changing to the sub stream while one is up reopens it.
+        _suppressResume = true;
+        player.stop();
+        stillMode = true;
+        stillGiveUp.restart();
+        _open(sec, epoch);
+    }
+    // Nothing recorded at the playhead: no picture, the overlay says so.
+    function showNoFootage() {
+        stopPlayback();
+        kept = false;
+    }
+    // The one way out of a still (its first picture, giving up, playing, stopping, hiding):
+    // stop first, so the stream is down before `hd` changes back, then free the queue's place.
+    function _leaveStill() {
+        if (!stillMode)
+            return false;
+        const picture = _framed;
+        _suppressResume = true;
+        stillGiveUp.stop();
+        player.stop();          // keeps the picture if one came (step 07)
+        stillMode = false;
+        Qt.callLater(root.stillDone, picture);
+        return true;
+    }
+    Timer { id: stillGiveUp; interval: 8000; onTriggered: root._leaveStill() }
     onStreamingChanged: {
         if (streaming) {
             holding = false;
@@ -177,7 +223,7 @@ Rectangle {
         devices: Devices
         player: player
         deviceRow: root.deviceRow
-        hd: root.hdActive
+        hd: root.hdActive && !root.stillMode
         speed: root.speed
         onReopenNeeded: root.playAtSecs(root.playheadSecs, root.epochOf(root.playheadSecs))
     }
@@ -219,6 +265,7 @@ Rectangle {
     // Play this camera from the given moment (epoch = wall-clock seconds).
     // A gap is a normal outcome, not an error: stop and let the overlay say so.
     function playAtSecs(sec, epoch) {
+        _leaveStill();
         _syncTries = 0;
         _open(sec, epoch);
     }
@@ -273,13 +320,17 @@ Rectangle {
     }
 
     function stopPlayback() {
+        _leaveStill();
         _suppressResume = true; // an ordered stop must stay stopped
         player.stop();
     }
 
     // A pane that leaves the mosaic (deselected, or its page hides)
     // must not keep a playback stream open on the connection-limited NVR.
-    onVisibleChanged: if (!visible) { _suppressResume = true; player.stop(); kept = false; }
+    onVisibleChanged: if (!visible) {
+        stopPlayback();
+        kept = false;
+    }
 
     // Retry on connection error: NVRs are connection-limited and may
     // momentarily refuse a playback stream while others are opening.
@@ -290,7 +341,7 @@ Rectangle {
         playback: true
         speed: root.speed * root.catchUp
         // Off screen or not the chosen pane: no decode, no device held open.
-        muted: root.audioMuted || !root.audioActive || !root.visible
+        muted: root.audioMuted || !root.audioActive || !root.visible || root.stillMode
     }
     Component.onDestruction: player.stop()
 
@@ -308,6 +359,7 @@ Rectangle {
             anchors.fill: parent
             fillMode: VideoOutput.PreserveAspectFit
             visible: root.showsPicture
+            opacity: root.stillMode && !root.streaming ? 0.5 : 1   // the previous picture, loading
             orientation: root.viewRotation
             transform: [
                 Scale {
@@ -346,6 +398,14 @@ Rectangle {
         }
     }
 
+    BusyIndicator {   // a still loading over the previous picture
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 6
+        width: 22; height: 22
+        running: root.stillMode && root.showsPicture
+        visible: running
+    }
     // Per-camera state at the shared playhead; over a kept picture (reopening, an error) on
     // a dark backing so it reads.
     Rectangle {
@@ -361,7 +421,7 @@ Rectangle {
         anchors.centerIn: parent
         spacing: Theme.spacing
         visible: !root.showsPicture || root.noPicture || player.state === StreamPlayer.Error
-                 || (root.kept && player.state === StreamPlayer.Connecting)
+                 || (root.kept && !root.stillMode && player.state === StreamPlayer.Connecting)
         BusyIndicator {
             anchors.horizontalCenter: parent.horizontalCenter
             running: player.state === StreamPlayer.Connecting
