@@ -805,6 +805,8 @@ void DeviceManager::removeDevice(int row)
     stopPushListener(id);
     m_detections.remove(id);
     delete m_frigateLive.take(id);
+    m_frigateListed.remove(id);
+    m_frigateListCheckedAt.remove(id);
     m_db->removeHost(id);
     m_credentials->remove(id);
     m_credentials->removeSecret(restreamKey(id));
@@ -904,6 +906,13 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
     // Build the new per-channel entries.
     QVector<Entry> fresh;
     fresh.reserve(v.channels.size());
+    if (device::capabilities(device::kindFromString(rec.kind)).frigateApi) {
+        QStringList listed;
+        for (const ChannelResult &ch : v.channels)
+            listed.append(ch.name);
+        m_frigateListed.insert(rec.id, listed);
+        m_frigateListCheckedAt.insert(rec.id, QDateTime::currentSecsSinceEpoch()); // just read
+    }
     const QHash<int, QString> chosenNames = m_db->channelNameOverrides(rec.id);
     const QHash<int, bool> lenses = m_db->channelFisheye(rec.id);
     // Supported event types: kept when this validation read them, so a camera that is
@@ -1127,21 +1136,43 @@ void DeviceManager::pollFrigate()
         for (auto it = channelOf.constBegin(); it != channelOf.constEnd(); ++it)
             online.insert(it.value(), true);
         const device::FrigatePoll plan = m_detections[hostId].frigatePlan();
+        const qint64 now = QDateTime::currentSecsSinceEpoch();
+        const bool readList = frigate::cameraListDue(m_frigateListCheckedAt.value(hostId), now);
+        if (readList)
+            m_frigateListCheckedAt.insert(hostId, now);
         m_pending.addFuture(QtConcurrent::run([this, hostId, host, port, channelOf, online,
-                                               plan] {
+                                               plan, readList] {
             QString error;
             const QByteArray body = frigate::httpGet(
                 frigate::eventsUrl(host, port, plan.after, plan.initialized ? 50 : 1), 8000, &error);
             const Json parsed = Json::parse(body.toStdString(), nullptr, false);
             const bool ok = error.isEmpty() && !parsed.is_discarded() && parsed.is_array();
             const QVector<frigate::Event> events = ok ? frigate::parseEvents(parsed) : QVector<frigate::Event>();
+            QStringList listed;
+            if (ok && readList) {
+                QString cfgError;
+                const Json cfg = Json::parse(
+                    frigate::httpGet(frigate::configUrl(host, port), 10000, &cfgError).toStdString(),
+                    nullptr, false);
+                if (cfgError.isEmpty() && !cfg.is_discarded())
+                    listed = frigate::parseCameraNames(cfg);
+                else
+                    qCDebug(lcCore) << "Frigate camera list not read:" << cfgError;
+            }
             QMetaObject::invokeMethod(
                 this,
-                [this, hostId, ok, events, channelOf, online, plan] {
+                [this, hostId, ok, events, channelOf, online, plan, listed] {
                     m_sessions.of(hostId).endPoll();
                     applyConnectivity(hostId, ok, online);
                     if (!ok)
                         return;
+                    if (!listed.isEmpty())
+                        qCDebug(lcCore) << "Frigate host" << hostId << "lists" << listed;
+                    if (frigate::cameraListChanged(m_frigateListed.value(hostId), listed)) {
+                        qCInfo(lcCore) << "Frigate host" << hostId << "now lists" << listed
+                                       << "; re-reading it";
+                        validateAsync(hostId);
+                    }
                     // RL_FRIGATE_BACKFILL=<seconds>: treat the last N seconds of real events
                     // as new, so the event path can be tested without waiting.
                     const int backfill = qEnvironmentVariableIntValue("RL_FRIGATE_BACKFILL");
@@ -1530,8 +1561,8 @@ QString DeviceManager::playbackUrl(int row, qint64 startEpoch, bool mainStream)
         return {};
     const Entry &e = m_entries.at(row);
     if (e.kindCaps().frigateApi) {
-        // Plays from `startEpoch` for a few hours, then stops; a seek opens a new list.
-        return frigate::vodUrl(e.rec.addr, e.rec.port, e.chanName, startEpoch, startEpoch + 3 * 3600);
+        // Plays from `startEpoch` for an hour; Playback reopens past the end, a seek opens a new list.
+        return frigate::playbackVodUrl(e.rec.addr, e.rec.port, e.chanName, startEpoch);
     }
     if (!e.reolinkReady())
         return {};

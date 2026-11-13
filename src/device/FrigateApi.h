@@ -85,8 +85,22 @@ QString recordingsUrl(const QString &host, int port, const QString &camera, qint
 QString summaryUrl(const QString &host, int port, const QString &camera, const QString &timeZone);
 // HLS playlist of the recordings between two instants; plays from `start`.
 QString vodUrl(const QString &host, int port, const QString &camera, qint64 start, qint64 end);
+// How much one Playback list covers. Frigate's VOD refuses lists of more than about 1,000
+// segments (3 h of 10 s segments failed with HTTP 503); Playback reopens at the next second
+// when a list ends, so a shorter list costs nothing visible (wayfinder ticket 23).
+inline constexpr qint64 kPlaybackVodSecs = 3600;
+static_assert(kPlaybackVodSecs / 10 < 1000, "Frigate records 10 s segments; keep a list under ~1,000");
+// The list Playback opens to play `camera` from `start`.
+QString playbackVodUrl(const QString &host, int port, const QString &camera, qint64 start);
 
 QString configUrl(const QString &host, int port);
+// Frigate's camera list is re-read this often, so a camera added or removed there appears or
+// goes in the app without a restart (wayfinder ticket 23).
+inline constexpr qint64 kCameraListSecs = 300;
+bool cameraListDue(qint64 lastCheckedSecs, qint64 nowSecs);
+// Whether Frigate now lists other cameras than the app shows (order ignored). An empty
+// `listed` is an unreadable config, not "no cameras": it never counts as a change.
+bool cameraListChanged(const QStringList &shown, const QStringList &listed);
 QString eventsUrl(const QString &host, int port, double after, int limit);
 QString liveUrl(const QString &host, int port, const QString &camera);
 // The same, signed in with the restream's own login (go2rtc's RTSP username/password, a

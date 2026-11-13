@@ -443,6 +443,10 @@ private:
     QFutureSynchronizer<void> m_pending; // drains in-flight validations at teardown
 
     QTimer m_pollTimer;
+    // Frigate hosts: the cameras the last validation listed, and when the poll last re-read
+    // the list (epoch secs), so a camera added or removed on the server shows up by itself.
+    QHash<qint64, QStringList> m_frigateListed;
+    QHash<qint64, qint64> m_frigateListCheckedAt;
     // Everything about what a host has detected: edges, push-over-poll takeover, Frigate's
     // watermark and burst gate (see Detections.h). The sockets below only feed it.
     QHash<qint64, device::HostDetections> m_detections;

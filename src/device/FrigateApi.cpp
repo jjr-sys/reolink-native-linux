@@ -215,6 +215,26 @@ QString vodUrl(const QString &host, int port, const QString &camera, qint64 star
            + QStringLiteral("/start/%1/end/%2/index.m3u8").arg(start).arg(end);
 }
 
+QString playbackVodUrl(const QString &host, int port, const QString &camera, qint64 start)
+{
+    return vodUrl(host, port, camera, start, start + kPlaybackVodSecs);
+}
+
+bool cameraListDue(qint64 lastCheckedSecs, qint64 nowSecs)
+{
+    return lastCheckedSecs <= 0 || nowSecs - lastCheckedSecs >= kCameraListSecs;
+}
+
+bool cameraListChanged(const QStringList &shown, const QStringList &listed)
+{
+    if (listed.isEmpty())
+        return false;
+    QStringList a = shown, b = listed;
+    a.sort();
+    b.sort();
+    return a != b;
+}
+
 QString configUrl(const QString &host, int port) { return base(host, port) + QStringLiteral("/api/config"); }
 
 QString eventsUrl(const QString &host, int port, double after, int limit)

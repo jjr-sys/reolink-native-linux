@@ -148,6 +148,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Fixed
 
+- **Frigate Playback plays busy stretches again.** Playback asked Frigate for three hours of
+  footage at a time, which Frigate refuses when the camera recorded all of it (over about
+  1,000 pieces), so the camera showed an error. It now asks for an hour at a time and carries
+  on into the next hour by itself.
+- **Cameras added to or removed from Frigate show up without restarting the app.** The app
+  re-reads Frigate's camera list every five minutes and updates the Site when it changed,
+  so a removed camera no longer lingers greyed out or keeps retrying.
 - **Fisheye cameras keep their views when the recorder is slow to answer.** A camera is
   known as a fisheye from its square picture. The app now remembers that, so a refresh
   where the recorder doesn't report the size (the Lascelles RLN8 sometimes answers with an

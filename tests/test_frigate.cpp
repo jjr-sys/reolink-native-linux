@@ -178,6 +178,33 @@ private slots:
         QCOMPARE(summaryUrl("h", 5000, "cam", "Australia/Perth"), QString("http://h:5000/api/cam/recordings/summary?timezone=Australia%2FPerth"));
         QCOMPARE(vodUrl("h", 5000, "cam", 100, 200), QString("http://h:5000/vod/cam/start/100/end/200/index.m3u8"));
     }
+    // Playback asks for one hour from the playhead (wayfinder ticket 23): Frigate's VOD refuses a
+    // list of more than about 1,000 segments ("invalid number of elements in the durations array
+    // 1081" for 3 h of 10 s segments), and Playback reopens at the next second when a list ends.
+    // A camera added to or removed from Frigate shows up in the app without a restart (wayfinder
+    // ticket 23): the host is rebuilt only when the list really changed.
+    void cameraList_changedIgnoresOrder()
+    {
+        const QStringList shown{"bosch_camera", "kitchen"};
+        QVERIFY(!cameraListChanged(shown, {"kitchen", "bosch_camera"}));
+        QVERIFY(cameraListChanged(shown, {"bosch_camera"}));
+        QVERIFY(cameraListChanged(shown, {"bosch_camera", "kitchen", "garage"}));
+        QVERIFY(cameraListChanged({"bosch_camera"}, {"garage"}));
+        // An unreadable config (no cameras parsed) is not a change: keep what's shown.
+        QVERIFY(!cameraListChanged(shown, {}));
+    }
+    // The list is re-read every five minutes, and on the first poll of a host never read.
+    void cameraList_dueEveryFiveMinutes()
+    {
+        QVERIFY(cameraListDue(0, 1000));            // never checked
+        QVERIFY(!cameraListDue(1000, 1000 + 299));
+        QVERIFY(cameraListDue(1000, 1000 + 300));
+    }
+    void playbackVod_isOneHourFromThePlayhead()
+    {
+        QCOMPARE(playbackVodUrl("h", 5000, "cam", 1794510357),
+                 QString("http://h:5000/vod/cam/start/1794510357/end/1794513957/index.m3u8"));
+    }
     // A Frigate live stream must reconnect when it drops; a clip must play once and stop.
     void liveUrls_frigateLiveReconnectsButClipsDoNot()
     {
