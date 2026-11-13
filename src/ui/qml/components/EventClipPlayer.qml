@@ -17,6 +17,18 @@ Item {
     property bool hd: false
     property bool soundOn: false
     property bool closable: true
+    // The picture's shape (wayfinder/fisheye-and-framing step 06): the video's own size once
+    // its first picture arrives, before that this event's snapshot, else the camera's shape
+    // from the feed.
+    property real snapshotRatio: 16 / 9
+    readonly property real pictureRatio: {
+        const r = (clip.frigate ? mediaVideo : video).sourceRect;
+        if (r.width > 0 && r.height > 0)
+            return r.width / r.height;
+        if (eventSnapshot.implicitWidth > 0 && eventSnapshot.implicitHeight > 0)
+            return eventSnapshot.implicitWidth / eventSnapshot.implicitHeight;
+        return snapshotRatio;
+    }
     readonly property bool active: clip.active
     readonly property real eventId: _eventId
     signal openInPlayback(var hostId, var channel, var timestamp)
@@ -215,12 +227,14 @@ Item {
     }
 
     ColumnLayout {
+        id: column
         visible: clip.active
         anchors.fill: parent
         anchors.margins: 12
         spacing: 8
 
         RowLayout {   // title, close
+            id: titleRow
             Layout.fillWidth: true
             Text {
                 Layout.fillWidth: true
@@ -240,9 +254,17 @@ Item {
             }
         }
 
-        Rectangle {   // the picture, 16:9
-            Layout.fillWidth: true
-            Layout.preferredHeight: Math.round(width * 9 / 16)
+        // The picture in its own shape, the largest that fits above the controls: no black bars.
+        Rectangle {
+            id: picture
+            readonly property size box: FrameShape.fitIn(
+                root.width - 2 * column.anchors.margins,
+                root.height - 2 * column.anchors.margins - titleRow.height - progressRow.height
+                    - controlsRow.height - (column.children.length - 1) * column.spacing,
+                root.pictureRatio)
+            Layout.preferredWidth: box.width
+            Layout.preferredHeight: box.height
+            Layout.alignment: Qt.AlignHCenter
             color: Theme.paneBackground
             radius: 4
             clip: true
@@ -261,6 +283,7 @@ Item {
             }
             // The snapshot until the first picture: no black flash.
             Image {
+                id: eventSnapshot
                 anchors.fill: parent
                 visible: (root.phase === "starting" && !root._hadPicture) || root.phase === "failed"
                 source: root._thumbnail.length > 0 ? "file://" + root._thumbnail : ""
@@ -337,6 +360,7 @@ Item {
         // Progress over the window (−5 s to +30 s; Frigate −15 s), or a running clock once
         // Keep playing has made it open-ended.
         Item {
+            id: progressRow
             Layout.fillWidth: true
             Layout.preferredHeight: 26
             Rectangle {
@@ -387,6 +411,7 @@ Item {
         }
 
         RowLayout {   // controls
+            id: controlsRow
             Layout.fillWidth: true
             spacing: 6
             Repeater {

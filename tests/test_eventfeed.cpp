@@ -3,6 +3,7 @@
 #include "ui/EventFeed.h"
 
 #include <QDateTime>
+#include <QImage>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTimeZone>
@@ -38,6 +39,25 @@ class TestEventFeed : public QObject
         e.camera = QStringLiteral("Kitchen");
         QVERIFY(m_db->addEvent(e) > 0);
     }
+    // An event with a snapshot of the given pixel size (an empty size: a path to nothing).
+    void addSnap(qint64 host, int ch, qint64 ts, QSize size)
+    {
+        const QString path = m_dir.filePath(QStringLiteral("snap%1_%2.jpg").arg(++m_snaps).arg(ts));
+        if (!size.isEmpty()) {
+            QImage img(size, QImage::Format_RGB32);
+            img.fill(Qt::gray);
+            QVERIFY(img.save(path, "JPG"));
+        }
+        EventRecord e;
+        e.hostId = host;
+        e.channel = ch;
+        e.timestamp = ts;
+        e.type = QStringLiteral("person");
+        e.camera = QStringLiteral("Kitchen");
+        e.thumbnail = path;
+        QVERIFY(m_db->addEvent(e) > 0);
+    }
+    int m_snaps = 0;
     // A feed of host 1 channel 0, every type supported, the clock an hour after the test
     // day, with one app run covering everything unless a test says otherwise.
     void setUp(EventFeed &f, const QStringList &supported = kAll())
@@ -405,6 +425,49 @@ private slots:
         f.setCameraKey(QStringLiteral("1:3"));
         QCOMPARE(rows(f), QStringList({"event:vehicle"}));
         QCOMPARE(f.counts().value("person").toInt(), 0);
+    }
+
+    // wayfinder/fisheye-and-framing step 06: the feed's cards take its camera's picture shape,
+    // read from the newest snapshot's file header; 16:9 when there is none.
+    void pictureRatioIsSixteenByNineWithoutSnapshots()
+    {
+        add(1, 0, m_day.from + 100, "person");
+        EventFeed f;
+        setUp(f);
+        QCOMPARE(f.pictureRatio(), 16.0 / 9);
+    }
+
+    void pictureRatioComesFromTheNewestSnapshot()
+    {
+        addSnap(1, 0, m_day.from + 100, QSize(640, 360));   // older, a different shape
+        addSnap(1, 0, m_day.from + 200, QSize(640, 853));   // the Doorbell's shape
+        add(1, 0, m_day.from + 300, "vehicle");              // newest, no snapshot
+        EventFeed f;
+        setUp(f);
+        QCOMPARE(f.pictureRatio(), 640.0 / 853);
+    }
+
+    void pictureRatioFollowsTheCamera()
+    {
+        addSnap(1, 0, m_day.from + 100, QSize(640, 640));
+        addSnap(1, 3, m_day.from + 100, QSize(640, 180));
+        EventFeed f;
+        setUp(f);
+        QCOMPARE(f.pictureRatio(), 1.0);
+        QSignalSpy spy(&f, &EventFeed::pictureRatioChanged);
+        f.setCameraKey(QStringLiteral("1:3"));
+        QCOMPARE(f.pictureRatio(), 640.0 / 180);
+        QCOMPARE(spy.count(), 1);
+        f.refresh();                                         // unchanged: no signal
+        QCOMPARE(spy.count(), 1);
+    }
+
+    void anUnreadableSnapshotMeansSixteenByNine()
+    {
+        addSnap(1, 0, m_day.from + 100, QSize());            // the file is gone
+        EventFeed f;
+        setUp(f);
+        QCOMPARE(f.pictureRatio(), 16.0 / 9);
     }
 
     void aCameraWithNoTypesSaysSo()

@@ -6,6 +6,7 @@
 #include "device/EventSwitches.h"
 
 #include <QDateTime>
+#include <QImageReader>
 #include <QTimeZone>
 
 #include <algorithm>
@@ -337,8 +338,33 @@ void EventFeed::refresh()
     }
     applyRows(rows);
     updateNewRows(false);
+    QString newestThumbnail;
+    for (const Row &r : std::as_const(rows))
+        if (!r.gap && !r.thumbnail.isEmpty()) {
+            newestThumbnail = r.thumbnail;
+            break;
+        }
+    updatePictureRatio(newestThumbnail);
     m_counts = counts;
     emit refreshed();
+}
+
+// Read only the file's header (no decode), and only when the newest snapshot changes.
+void EventFeed::updatePictureRatio(const QString &newestThumbnail)
+{
+    if (newestThumbnail == m_ratioPath && !newestThumbnail.isEmpty())
+        return;
+    m_ratioPath = newestThumbnail;
+    double ratio = 16.0 / 9;
+    if (!newestThumbnail.isEmpty()) {
+        const QSize size = QImageReader(newestThumbnail).size();
+        if (size.width() > 0 && size.height() > 0)
+            ratio = double(size.width()) / size.height();
+    }
+    if (qFuzzyCompare(ratio, m_pictureRatio))
+        return;
+    m_pictureRatio = ratio;
+    emit pictureRatioChanged();
 }
 
 } // namespace rl

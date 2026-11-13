@@ -31,6 +31,7 @@
 #include "ui/CameraNoise.h"
 #include "ui/EventClip.h"
 #include "ui/EventFeed.h"
+#include "ui/FrameShape.h"
 #include "ui/MosaicLayout.h"
 
 #include <QApplication>
@@ -194,6 +195,7 @@ int main(int argc, char *argv[])
                          alertSounds.play(sound, rl::AlertSounds::Detection);
                      });
     rl::DeviceDiscovery discovery;
+    rl::FrameShape frameShape;   // picture-shaped frames for QML (fisheye-and-framing step 06)
     rl::BoschTourController boschTour(&credentials);
     rl::Updater updater;
     rl::DownloadQueue downloads([&devices](int row) { return devices.downloadSource(row); });
@@ -217,6 +219,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::CameraNoise>("ReolinkApp.Core", 1, 0, "CameraNoise");
     qmlRegisterType<rl::EventClip>("ReolinkApp.Core", 1, 0, "EventClip");
     qmlRegisterType<rl::MosaicLayout>("ReolinkApp.Core", 1, 0, "MosaicLayout");
+    qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "FrameShape", &frameShape);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Events", &events);

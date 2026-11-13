@@ -19,6 +19,9 @@ Item {
     readonly property int listWidth: 260
     readonly property int feedWidth: 560
     readonly property int railWidth: 44     // the date bar beside the feed
+    // A card's picture: the camera's own shape at about a 16:9 card's area, never wider than
+    // the feed, so no black bars (wayfinder/fisheye-and-framing step 06).
+    readonly property size cardPicture: FrameShape.cardSize(feedView.width, feed.pictureRatio)
     readonly property bool showPlayer: width >= 1150
 
     onVisibleChanged: if (visible) { Events.markAllRead(); page.now = new Date(); }
@@ -840,14 +843,15 @@ Item {
                         }
                     }
 
-                    // The snapshot at full width (16:9), tap to open in Playback.
+                    // The snapshot in the camera's own shape, centred; tap to play it.
                     Rectangle {
                         id: snap
                         visible: !ev.slim
                         anchors.top: caption.bottom
                         anchors.topMargin: 6
-                        width: parent.width
-                        height: Math.round(width * 9 / 16)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: page.cardPicture.width
+                        height: page.cardPicture.height
                         radius: 4
                         color: Theme.paneBackground
                         clip: true
@@ -907,7 +911,7 @@ Item {
     EventDateBar {
         id: dateBar
         feed: feed
-        eventHeight: 28 + 6 + Math.round(feedView.width * 9 / 16)
+        eventHeight: 28 + 6 + page.cardPicture.height
         slimHeight: 28
         headerHeight: 30
         spacing: feedView.spacing
@@ -1076,6 +1080,7 @@ Item {
         width: page.width - x
         visible: page.showPlayer || active
         z: page.showPlayer ? 0 : 5
+        snapshotRatio: feed.pictureRatio
         onOpenInPlayback: (h, c, t) => page.jumpToPlayback(h, c, t)
         onStepRequested: (d) => page.stepClip(d)
         Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.border; visible: page.showPlayer }

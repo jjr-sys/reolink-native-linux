@@ -43,6 +43,9 @@ class EventFeed : public QAbstractListModel
     // and the date bar's band covers rows [0, newUntilRow).
     Q_PROPERTY(qint64 seenLine READ seenLine WRITE setSeenLine NOTIFY seenLineChanged)
     Q_PROPERTY(int newUntilRow READ newUntilRow NOTIFY newUntilRowChanged)
+    // The shown camera's picture shape (width / height) from its newest snapshot; 16:9 when
+    // it has none (wayfinder/fisheye-and-framing step 06).
+    Q_PROPERTY(double pictureRatio READ pictureRatio NOTIFY pictureRatioChanged)
 
 public:
     enum Role {
@@ -81,6 +84,7 @@ public:
     qint64 seenLine() const { return m_seenLine; }
     void setSeenLine(qint64 t);
     int newUntilRow() const { return m_newUntilRow; }
+    double pictureRatio() const { return m_pictureRatio; }
 
     Q_INVOKABLE static QStringList defaultTypes(const QStringList &supported);
     // Turn a type on or off; emits typesToggled so the page can remember the set.
@@ -110,6 +114,7 @@ signals:
     void refreshed();
     void seenLineChanged();
     void newUntilRowChanged();
+    void pictureRatioChanged();
 
 private:
     struct Row
@@ -123,6 +128,7 @@ private:
     void applyRows(const QVector<Row> &rows);
     qint64 now() const;
     void updateNewRows(bool lineMoved);
+    void updatePictureRatio(const QString &newestThumbnail);
 
     QPointer<EventManager> m_events;
     Database *m_db = nullptr;
@@ -138,6 +144,8 @@ private:
     QVector<Row> m_rows;
     qint64 m_seenLine = -1;
     int m_newUntilRow = 0;
+    double m_pictureRatio = 16.0 / 9;
+    QString m_ratioPath;            // the snapshot m_pictureRatio was read from
 };
 
 } // namespace rl

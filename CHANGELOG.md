@@ -49,6 +49,12 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Changed
 
+- **Events: pictures in their own shape, no black bars.** Each feed card shows the
+  camera's snapshot in its own shape (a doorbell tall, a fisheye circle square, a
+  wide gate camera wide) at about the area of the old 16:9 card, never wider than
+  the feed, centred. The clip player shows the picture as large as fits in its own
+  shape, from the snapshot's shape until the video's first picture. Nothing is
+  cropped. The date bar follows the new card heights.
 - **Events: clicking a snapshot plays it in the clip player** instead of opening
   Playback; Open in Playback is in the event's ⋯ and the player.
 
