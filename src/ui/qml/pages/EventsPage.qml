@@ -892,8 +892,10 @@ Item {
                             // A dewarp samples the whole circle, so it must fill the item.
                             fillMode: feed.dewarp ? Image.Stretch : Image.PreserveAspectFit
                             asynchronous: true
-                            // The stored snapshot's width (fixed, so switching view never reloads it).
-                            sourceSize.width: 640
+                            // Snapshots are HD (ticket 11): an ordinary card decodes a card-sized copy,
+                            // a fisheye circle one as big as its view samples (1024²; fixed per
+                            // camera, so switching view never reloads it).
+                            sourceSize.width: feed.circle ? 1024 : 640
                             visible: ev.thumbnail.length > 0
                         }
                         // A fisheye's circle in the camera's view and aim (step 09). Built only
@@ -902,6 +904,7 @@ Item {
                             anchors.fill: parent
                             active: feed.dewarp && snapImage.status === Image.Ready
                             sourceComponent: FisheyeView {
+                                captureSize: 1024   // a card is at most 560 px wide
                                 sourceItem: snapImage
                                 viewMode: page.cameraViewMode
                                 cameraKey: page.camera

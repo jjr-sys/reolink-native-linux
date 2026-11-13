@@ -4,6 +4,7 @@
 
 #include "core/Log.h"
 #include "core/Paths.h"
+#include "device/EventSnapshot.h"
 #include "device/FrigateApi.h"
 #include "device/FrigateLive.h"
 #include "device/QuickReply.h"
@@ -20,7 +21,6 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QImage>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QSet>
@@ -79,23 +79,6 @@ void loadLensSettings(Entry &e, qint64 hostId, int channel)
 } // namespace
 
 
-namespace {
-// Downscaled JPEG in the thumbnail cache; false if it could not be written.
-bool saveEventThumbnail(const QByteArray &jpeg, const QString &path)
-{
-    const QImage img = QImage::fromData(jpeg);
-    bool ok = false;
-    if (!img.isNull())
-        ok = img.scaledToWidth(qMin(640, img.width()), Qt::SmoothTransformation)
-                 .save(path, "JPG", 85);
-    if (!ok) {
-        QFile f(path);
-        ok = f.open(QIODevice::WriteOnly) && f.write(jpeg) == jpeg.size();
-    }
-    return ok;
-}
-
-} // namespace
 
 DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject *parent)
     : QAbstractListModel(parent), m_db(db), m_credentials(credentials),
@@ -1360,9 +1343,9 @@ void DeviceManager::captureEventThumbnail(qint64 hostId, int channel, qint64 eve
         return;
     const QString path = Paths::thumbnailsDir() + QStringLiteral("/event_%1.jpg").arg(eventId);
     auto finish = [this, eventId, path](const QByteArray &jpeg) {
-        // Downscale so 100 cached thumbnails stay small (a Snap off a 4K/8K camera can
-        // be several MB); silent on failure: an event without one keeps its placeholder.
-        if (jpeg.isEmpty() || !saveEventThumbnail(jpeg, path))
+        // Kept in HD, at most 2560 px wide (fisheye-and-framing ticket 11); silent on
+        // failure: an event without one keeps its placeholder.
+        if (jpeg.isEmpty() || !device::storeEventSnapshot(jpeg, path))
             return;
         QMetaObject::invokeMethod(
             this, [this, eventId, path] { emit eventThumbnailReady(eventId, path); },

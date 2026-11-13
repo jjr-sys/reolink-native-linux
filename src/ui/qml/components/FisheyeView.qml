@@ -20,6 +20,9 @@ Item {
     property Item sourceItem: null
     property string viewMode: "ptz"
     property string cameraKey: ""    // "hostId:channel"
+    // The circle is captured at this size (square) for every tile to sample: 2048 keeps an HD
+    // circle's detail when a view is zoomed in (fisheye-and-framing ticket 11).
+    property int captureSize: 2048
 
     // The lens circle inside the square frame (as fisheye::kLensCx/Cy/Radius).
     readonly property real lensCx: 0.5
@@ -43,7 +46,7 @@ Item {
         hideSource: true
         live: true
         visible: false
-        textureSize: Qt.size(1024, 1024)
+        textureSize: Qt.size(root.captureSize, root.captureSize)
     }
 
     Rectangle { anchors.fill: parent; color: Theme.paneBackground; z: -1 }

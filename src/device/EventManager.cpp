@@ -3,6 +3,7 @@
 #include "DeviceManager.h"
 #include "device/Detections.h"
 #include "device/EventHistory.h"
+#include "device/EventSnapshot.h"
 #include "device/FrigateApi.h"
 
 #include "core/Paths.h"
@@ -11,7 +12,6 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QImage>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
@@ -22,23 +22,6 @@
 
 namespace rl {
 
-// Downscaled JPEG in the thumbnail cache; false if it could not be written. Mirrors
-// DeviceManager's saveEventThumbnail() — duplicated rather than shared for a few
-// lines that the two call sites (live capture vs. Frigate's own historical
-// snapshot) don't otherwise have anything in common to share.
-static bool saveThumbnail(const QByteArray &jpeg, const QString &path)
-{
-    const QImage img = QImage::fromData(jpeg);
-    bool ok = false;
-    if (!img.isNull())
-        ok = img.scaledToWidth(qMin(640, img.width()), Qt::SmoothTransformation)
-                 .save(path, "JPG", 85);
-    if (!ok) {
-        QFile f(path);
-        ok = f.open(QIODevice::WriteOnly) && f.write(jpeg) == jpeg.size();
-    }
-    return ok;
-}
 
 EventManager::EventManager(Database *db, DeviceManager *devices, QObject *parent)
     : QAbstractListModel(parent), m_db(db), m_devices(devices)
@@ -661,7 +644,7 @@ void EventManager::fetchHistoryThumbnails(qint64 hostId, const QVector<QPair<qin
             if (jpeg.isEmpty())
                 continue;
             const QString path = Paths::thumbnailsDir() + QStringLiteral("/event_%1.jpg").arg(dbId);
-            if (!saveThumbnail(jpeg, path))
+            if (!device::storeEventSnapshot(jpeg, path))   // HD, as Reolink's (ticket 11)
                 continue;
             QMetaObject::invokeMethod(
                 this, [this, dbId, path] { onThumbnailReady(dbId, path); }, Qt::QueuedConnection);

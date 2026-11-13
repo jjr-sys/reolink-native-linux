@@ -21,6 +21,14 @@ While the project is pre-1.0, minor versions may still change behaviour.
   other tabs), double-click puts a turned view back. Flat
   snapshots (Frigate's Kitchen) and ordinary cameras are unchanged; stored files stay
   as they were.
+- **Event snapshots in HD.** New event snapshots are kept at the camera's own resolution, up
+  to 2560 px wide: the camera's JPEG is stored untouched (sharper, and smaller than
+  re-encoding it), and only wider pictures (4K and up) are shrunk to 2560 px. They used
+  to be shrunk to 640 px. Frigate's snapshots are kept the same way. Ordinary feed cards
+  still load a card-sized copy, so scrolling stays quick; fisheye cards, the clip player
+  and Save snapshot use the HD picture, and dewarped views sample a 2048² capture
+  (1024² on cards). Measured: about 0.7–0.8 GB a day across the Sites, about 24 GB once
+  30 days have built up. Snapshots already stored stay as they were.
 - **Fisheye views in the Events clip player, in HD.** The player shows a fisheye camera's
   circle (the recording, and its snapshot before the first picture) in the camera's view,
   with a Playback pane's controls: view icons on hover, right-click View menu with Reset

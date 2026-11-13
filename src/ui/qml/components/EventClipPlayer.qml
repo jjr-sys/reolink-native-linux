@@ -301,8 +301,8 @@ Item {
                 anchors.fill: parent
                 visible: (root.phase === "starting" && !root._hadPicture) || root.phase === "failed"
                 source: root._thumbnail.length > 0 ? "file://" + root._thumbnail : ""
-                // Stretched only under the view (hidden then), so the raw circle never shows stretched.
-                fillMode: fisheyeLoader.active ? Image.Stretch : Image.PreserveAspectFit
+                // Stretched for the view, which turns on as soon as the picture has loaded.
+                fillMode: root.dewarp ? Image.Stretch : Image.PreserveAspectFit
                 asynchronous: true
             }
             // The camera's view over whichever circle is up: the recording, or its snapshot
