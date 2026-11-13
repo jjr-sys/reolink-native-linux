@@ -426,6 +426,8 @@ private:
     // Runs on a worker: loads the password from the keyring (or stores newPassword
     // first), logs in, fetches device info + encoding + abilities, updates the row
     // on the GUI thread. storeNew persists newPassword to the keyring first.
+    // Give each Frigate camera its kept number (wayfinder ticket 24) and keep new ones.
+    void numberFrigateCameras(qint64 hostId, QVector<ChannelResult> &channels);
     void validateAsync(qint64 hostId, const QString &newPassword = QString(),
                        bool storeNew = false);
     Validation validateFrigate(const HostRecord &rec, const QString &password);

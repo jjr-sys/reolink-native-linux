@@ -14,7 +14,7 @@ class TestDatabase : public QObject
     Q_OBJECT
 
     // Current schema version; bump alongside new migrations in Database.cpp.
-    static constexpr int kSchemaVersion = 7;
+    static constexpr int kSchemaVersion = 8;
 
     static constexpr qint64 kHour = 3600;
     static constexpr qint64 kDay = 24 * kHour;
@@ -381,6 +381,33 @@ private slots:
         QCOMPARE(db.channelFisheye(id).value(0, false), true);
         QVERIFY(db.setChannelFisheye(id, 0, false));
         QCOMPARE(db.channelFisheye(id).value(0, true), false);
+    }
+
+    // Frigate cameras keep their number by name (wayfinder ticket 24): the name each number
+    // was given, and every number with a row, survive a name override and event types.
+    void channelSourceNames()
+    {
+        QTemporaryDir dir;
+        Database db(dir.filePath("t.db"), QStringLiteral("test_chsource"));
+        QVERIFY(db.open());
+        HostRecord rec;
+        rec.kind = QStringLiteral("frigate");
+        rec.name = QStringLiteral("Lascelles");
+        rec.addr = QStringLiteral("10.0.0.3");
+        const qint64 id = db.addHost(rec);
+        QVERIFY(db.channelSourceNames(id).isEmpty());
+        QVERIFY(db.setChannelEventTypes(id, 1, {"person"}));          // an old, unnamed row
+        QVERIFY(db.setChannelSourceName(id, 0, QStringLiteral("bosch_camera")));
+        QVERIFY(db.setChannelSourceName(id, 2, QStringLiteral("garage")));
+        QVERIFY(db.setChannelNameOverride(id, 2, QStringLiteral("Garage door")));
+        const QHash<QString, int> names = db.channelSourceNames(id);
+        QCOMPARE(names.size(), 2);
+        QCOMPARE(names.value("bosch_camera", -1), 0);
+        QCOMPARE(names.value("garage", -1), 2);
+        QCOMPARE(db.channelNumbersInUse(id), QSet<int>({0, 1, 2}));
+        add(db, id, 5, kNow, "person");                                 // history, no settings row
+        QCOMPARE(db.channelNumbersInUse(id), QSet<int>({0, 1, 2, 5}));
+        QCOMPARE(db.channelEventTypes(id).value(1), QStringList({"person"}));
     }
 
     void hostCrud()

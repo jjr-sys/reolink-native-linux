@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QSet>
 #include <QSqlDatabase>
 #include <QString>
 #include <QStringList>
@@ -81,6 +82,11 @@ public:
     // The lens each channel was last seen with (true fisheye), only channels seen so far.
     QHash<int, bool> channelFisheye(qint64 hostId) const;
     bool setChannelFisheye(qint64 hostId, int channel, bool fisheye);
+    // The number the app gave each Frigate camera, by its Frigate name (wayfinder ticket 24),
+    // and every channel number the host has used: settings, events, seen/switch/noise choices.
+    QHash<QString, int> channelSourceNames(qint64 hostId) const;
+    QSet<int> channelNumbersInUse(qint64 hostId) const;
+    bool setChannelSourceName(qint64 hostId, int channel, const QString &name);
 
     // Event switches: the pairs switched off, and switching one off or on.
     QVector<EventSwitchKey> switchedOffEvents() const;

@@ -200,6 +200,40 @@ private slots:
         QVERIFY(!cameraListDue(1000, 1000 + 299));
         QVERIFY(cameraListDue(1000, 1000 + 300));
     }
+
+    // A Frigate camera keeps its number for good, by name (wayfinder ticket 24): removing one
+    // never renumbers the others, so their saved settings, picks and events stay with them.
+    void channels_firstReadNumbersInListOrder()
+    {
+        const auto ch = assignChannels({"bosch_camera", "garage", "kitchen"}, {}, {});
+        QCOMPARE(ch.value("bosch_camera"), 0);
+        QCOMPARE(ch.value("garage"), 1);
+        QCOMPARE(ch.value("kitchen"), 2);
+        // An install from before names were kept: today's numbering stands, whatever rows exist.
+        QCOMPARE(assignChannels({"bosch_camera"}, {}, {0, 1}).value("bosch_camera"), 0);
+    }
+    void channels_removingOneKeepsTheOthers()
+    {
+        const QHash<QString, int> known{{"bosch_camera", 0}, {"garage", 1}, {"kitchen", 2}};
+        const auto ch = assignChannels({"bosch_camera", "kitchen"}, known, {0, 1, 2});
+        QCOMPARE(ch.size(), 2);
+        QCOMPARE(ch.value("bosch_camera"), 0);
+        QCOMPARE(ch.value("kitchen"), 2);
+    }
+    // A new camera takes the lowest number no camera has used on this server (a number with
+    // old history or settings is never handed to a different camera); one that comes back
+    // gets its own number again.
+    void channels_newCameraTakesTheLowestUnusedNumber()
+    {
+        const QHash<QString, int> known{{"bosch_camera", 0}, {"kitchen", 2}};
+        auto ch = assignChannels({"bosch_camera", "garage", "kitchen"}, known, {0, 2});
+        QCOMPARE(ch.value("garage"), 1);
+        ch = assignChannels({"bosch_camera", "garage"}, {{"bosch_camera", 0}}, {0, 1});
+        QCOMPARE(ch.value("garage"), 2);   // 1 has an unnamed row (old history): skipped
+        ch = assignChannels({"bosch_camera", "kitchen"}, {{"bosch_camera", 0}, {"kitchen", 1}}, {0, 1});
+        QCOMPARE(ch.value("kitchen"), 1);
+    }
+
     void playbackVod_isOneHourFromThePlayhead()
     {
         QCOMPARE(playbackVodUrl("h", 5000, "cam", 1794510357),

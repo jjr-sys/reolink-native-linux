@@ -19,6 +19,7 @@
 #include "protocol/ReolinkHttpClient.h"
 
 #include <QDateTime>
+#include <algorithm>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -895,6 +896,17 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
     if (!v.degraded)
         session.validationSucceeded();
 
+    // Frigate cameras keep their number by name (wayfinder ticket 24): set each one's channel
+    // before anything is stored or shown per channel.
+    if (device::capabilities(device::kindFromString(rec.kind)).frigateApi) {
+        QStringList listed;
+        for (const ChannelResult &ch : std::as_const(v.channels))
+            listed.append(ch.name);
+        numberFrigateCameras(rec.id, v.channels);
+        m_frigateListed.insert(rec.id, listed);
+        m_frigateListCheckedAt.insert(rec.id, QDateTime::currentSecsSinceEpoch()); // just read
+    }
+
     // Update the host record (name/model/kind), persist once.
     if (!v.hostName.isEmpty())
         rec.name = v.hostName;
@@ -906,13 +918,6 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
     // Build the new per-channel entries.
     QVector<Entry> fresh;
     fresh.reserve(v.channels.size());
-    if (device::capabilities(device::kindFromString(rec.kind)).frigateApi) {
-        QStringList listed;
-        for (const ChannelResult &ch : v.channels)
-            listed.append(ch.name);
-        m_frigateListed.insert(rec.id, listed);
-        m_frigateListCheckedAt.insert(rec.id, QDateTime::currentSecsSinceEpoch()); // just read
-    }
     const QHash<int, QString> chosenNames = m_db->channelNameOverrides(rec.id);
     const QHash<int, bool> lenses = m_db->channelFisheye(rec.id);
     // Supported event types: kept when this validation read them, so a camera that is
@@ -972,6 +977,26 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
         m_entries.insert(first + j, fresh.at(j));
     endInsertRows();
     emit countChanged();
+}
+
+void DeviceManager::numberFrigateCameras(qint64 hostId, QVector<ChannelResult> &channels)
+{
+    QStringList names;
+    for (const ChannelResult &ch : std::as_const(channels))
+        names.append(ch.name);
+    const QHash<QString, int> known = m_db->channelSourceNames(hostId);
+    const QHash<QString, int> number =
+        frigate::assignChannels(names, known, m_db->channelNumbersInUse(hostId));
+    for (ChannelResult &ch : channels) {
+        ch.channel = number.value(ch.name);
+        if (known.value(ch.name, -1) != ch.channel
+            && !m_db->setChannelSourceName(hostId, ch.channel, ch.name))
+            qCWarning(lcCore) << "could not keep the number of Frigate camera" << ch.name << ":"
+                              << m_db->lastError();
+    }
+    // Rows follow the numbers, which is Frigate's order until a camera is removed.
+    std::sort(channels.begin(), channels.end(),
+              [](const ChannelResult &a, const ChannelResult &b) { return a.channel < b.channel; });
 }
 
 void DeviceManager::postValidation(qint64 hostId, const Validation &v)

@@ -158,6 +158,12 @@ bool Database::migrate()
         QStringLiteral("ALTER TABLE channels ADD COLUMN fisheye INTEGER NOT NULL DEFAULT -1"),
     };
 
+    // Frigate camera numbers by name (wayfinder ticket 24): the Frigate camera name a channel
+    // number was given, so removing a camera never renumbers the others.
+    static const QStringList migrationsV8 = {
+        QStringLiteral("ALTER TABLE channels ADD COLUMN source_name TEXT NOT NULL DEFAULT ''"),
+    };
+
     // Ordered migrations; each bumps the stored version by one.
     const QVector<QPair<int, const QStringList *>> steps = {
         {1, &migrationsV1},
@@ -167,6 +173,7 @@ bool Database::migrate()
         {5, &migrationsV5},
         {6, &migrationsV6},
         {7, &migrationsV7},
+        {8, &migrationsV8},
     };
 
     const int current = schemaVersion();
@@ -861,6 +868,49 @@ bool Database::setChannelFisheye(qint64 hostId, int channel, bool fisheye)
     q.bindValue(QStringLiteral(":h"), hostId);
     q.bindValue(QStringLiteral(":i"), channel);
     q.bindValue(QStringLiteral(":f"), fisheye ? 1 : 0);
+    if (!q.exec()) {
+        m_lastError = q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+QHash<QString, int> Database::channelSourceNames(qint64 hostId) const
+{
+    QHash<QString, int> out;
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT source_name, idx FROM channels WHERE host_id = :h AND source_name <> ''"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    if (q.exec())
+        while (q.next())
+            out.insert(q.value(0).toString(), q.value(1).toInt());
+    return out;
+}
+
+QSet<int> Database::channelNumbersInUse(qint64 hostId) const
+{
+    QSet<int> out;
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT idx FROM channels WHERE host_id = :h"
+                             " UNION SELECT DISTINCT channel FROM events WHERE host_id = :h"
+                             " UNION SELECT channel FROM camera_seen WHERE host_id = :h"
+                             " UNION SELECT channel FROM event_switches_off WHERE host_id = :h"
+                             " UNION SELECT channel FROM event_noise_kept WHERE host_id = :h"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    if (q.exec())
+        while (q.next())
+            out.insert(q.value(0).toInt());
+    return out;
+}
+
+bool Database::setChannelSourceName(qint64 hostId, int channel, const QString &name)
+{
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("INSERT INTO channels (host_id, idx, source_name) VALUES (:h, :i, :n)"
+                             " ON CONFLICT(host_id, idx) DO UPDATE SET source_name = excluded.source_name"));
+    q.bindValue(QStringLiteral(":h"), hostId);
+    q.bindValue(QStringLiteral(":i"), channel);
+    q.bindValue(QStringLiteral(":n"), name);
     if (!q.exec()) {
         m_lastError = q.lastError().text();
         return false;

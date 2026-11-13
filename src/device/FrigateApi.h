@@ -3,6 +3,8 @@
 #include "protocol/Json.h"
 
 #include <QByteArray>
+#include <QHash>
+#include <QSet>
 #include <QString>
 #include <QList>
 #include <QStringList>
@@ -101,6 +103,14 @@ bool cameraListDue(qint64 lastCheckedSecs, qint64 nowSecs);
 // Whether Frigate now lists other cameras than the app shows (order ignored). An empty
 // `listed` is an unreadable config, not "no cameras": it never counts as a change.
 bool cameraListChanged(const QStringList &shown, const QStringList &listed);
+// The app's number (channel) for each camera Frigate lists (wayfinder ticket 24). A camera keeps
+// the number it was given (`known`, by Frigate camera name); a new one takes the lowest number
+// no camera has used on this server (`taken`: every number with saved settings or history), so
+// removing a camera never renumbers the others. With no names kept yet (first read, or an
+// install from before this): the list's own order (0, 1, 2…), the numbering used until now.
+// A camera renamed in Frigate is a new camera to the app (new number; old settings stay behind).
+QHash<QString, int> assignChannels(const QStringList &names, const QHash<QString, int> &known,
+                                   const QSet<int> &taken);
 QString eventsUrl(const QString &host, int port, double after, int limit);
 QString liveUrl(const QString &host, int port, const QString &camera);
 // The same, signed in with the restream's own login (go2rtc's RTSP username/password, a

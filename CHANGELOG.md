@@ -155,6 +155,11 @@ While the project is pre-1.0, minor versions may still change behaviour.
 - **Cameras added to or removed from Frigate show up without restarting the app.** The app
   re-reads Frigate's camera list every five minutes and updates the Site when it changed,
   so a removed camera no longer lingers greyed out or keeps retrying.
+- **Frigate cameras keep their place when another is removed.** The app numbered a Frigate
+  server's cameras by their order in its list, so removing one could hand the next camera
+  another's name, HD and fisheye settings, picks and history. Each camera now keeps its number
+  for good, and a new camera never takes over an old camera's number. (A camera renamed in
+  Frigate counts as a new camera.)
 - **A camera removed from Frigate also leaves Live View and Playback.** Its pane, its
   Playback icon and its share of the Site's bandwidth budget used to stay behind, which could
   stop another camera from being added. Cameras on a Reolink recorder that are only offline

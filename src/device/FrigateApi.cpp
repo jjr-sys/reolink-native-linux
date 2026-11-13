@@ -235,6 +235,33 @@ bool cameraListChanged(const QStringList &shown, const QStringList &listed)
     return a != b;
 }
 
+QHash<QString, int> assignChannels(const QStringList &names, const QHash<QString, int> &known,
+                                   const QSet<int> &taken)
+{
+    QHash<QString, int> out;
+    if (known.isEmpty()) {
+        for (int i = 0; i < names.size(); ++i)
+            out.insert(names.at(i), i);
+        return out;
+    }
+    QSet<int> used = taken;
+    for (auto it = known.constBegin(); it != known.constEnd(); ++it)
+        used.insert(it.value());
+    for (const QString &name : names)
+        if (known.contains(name))
+            out.insert(name, known.value(name));
+    int next = 0;
+    for (const QString &name : names) {
+        if (out.contains(name))
+            continue;
+        while (used.contains(next))
+            ++next;
+        out.insert(name, next);
+        used.insert(next);
+    }
+    return out;
+}
+
 QString configUrl(const QString &host, int port) { return base(host, port) + QStringLiteral("/api/config"); }
 
 QString eventsUrl(const QString &host, int port, double after, int limit)
