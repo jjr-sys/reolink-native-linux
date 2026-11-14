@@ -54,6 +54,9 @@ class StreamPlayer : public QObject
     Q_PROPERTY(State state READ state NOTIFY stateChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY errorStringChanged)
     Q_PROPERTY(qint64 framesDecoded READ framesDecoded NOTIFY framesDecodedChanged)
+    // Recording time of the frame on screen, ms since the epoch, from the recorder client's
+    // frame-time SEI (media/FrameTimeSei.h); 0 until a tagged frame shows. Notified ≥ 4×/s.
+    Q_PROPERTY(qint64 frameEpochMs READ frameEpochMs NOTIFY frameEpochMsChanged)
     Q_PROPERTY(bool loop READ loop WRITE setLoop NOTIFY loopChanged)
     Q_PROPERTY(bool retryOnError READ retryOnError WRITE setRetryOnError NOTIFY retryOnErrorChanged)
     Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
@@ -69,7 +72,7 @@ class StreamPlayer : public QObject
     // Recorded playback: sound gets a short, fixed cushion so it stays in step with the
     // (already paced) picture, instead of live view's longer, self-adjusting one.
     // Loudness, 0..1 on a perceptual scale (a volume slider's value). Survives stop().
-    // Recorded-playback speed: 1 = real time; 0.25 to 8 are offered. Above 1 the picture
+    // Recorded-playback speed: 1 = real time; 0.25 to 16 are offered. Above 1 the picture
     // can only go as fast as the link delivers it, and sound is muted at any speed but 1.
     Q_PROPERTY(qreal speed READ speed WRITE setSpeed NOTIFY speedChanged)
     Q_PROPERTY(qreal volume READ volume WRITE setVolume NOTIFY volumeChanged)
@@ -98,6 +101,7 @@ public:
         std::atomic<bool> abort{false};
         std::atomic<bool> loop{false};
         std::atomic<qint64> framesDecoded{0};
+        std::atomic<qint64> frameEpochMs{0};
         std::atomic<int> playoutFrames{0};
         std::atomic<int> playoutPeakFrames{0};
         std::atomic<qint64> playoutBytes{0};
@@ -177,6 +181,7 @@ public:
     State state() const { return m_state; }
     QString errorString() const { return m_errorString; }
     qint64 framesDecoded() const;
+    qint64 frameEpochMs() const;
 
     bool loop() const { return m_loop; }
     void setLoop(bool loop);
@@ -228,6 +233,7 @@ public:
     // Public so the worker helpers can reach it; not part of the QML API.
     void applyStateFromWorker(const std::shared_ptr<Session> &s, State state, const QString &error);
     void applyFramesTickFromWorker(const std::shared_ptr<Session> &s);
+    void applyFrameEpochFromWorker(const std::shared_ptr<Session> &s);
     void applyRecordingState(const std::shared_ptr<Session> &s, bool recording,
                              const QString &path, const QString &error);
     void applyAudioFromWorker(const std::shared_ptr<Session> &s, const QByteArray &pcm);
@@ -247,6 +253,7 @@ signals:
     void stateChanged();
     void errorStringChanged();
     void framesDecodedChanged();
+    void frameEpochMsChanged();
     void loopChanged();
     void retryOnErrorChanged();
     void recordingChanged();

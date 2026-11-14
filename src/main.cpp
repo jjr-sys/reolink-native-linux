@@ -269,6 +269,9 @@ int main(int argc, char *argv[])
     // RL_PLAYBACK_STOP_MS=<ms>: with RL_PLAYBACK_AUTOPLAY, press Stop that long after it starts.
     engine.rootContext()->setContextProperty(
         QStringLiteral("playbackStopMs"), qEnvironmentVariableIntValue("RL_PLAYBACK_STOP_MS"));
+    // RL_PLAYBACK_FAST=<n>: with RL_PLAYBACK_AUTOPLAY, press » (fast forward) n times once it plays.
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("playbackFastSteps"), qEnvironmentVariableIntValue("RL_PLAYBACK_FAST"));
     engine.rootContext()->setContextProperty(QStringLiteral("startHidden"),
                                              parser.isSet(hiddenOption) && tray.available());
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,

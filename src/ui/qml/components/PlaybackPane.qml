@@ -137,6 +137,19 @@ Rectangle {
         function onContentRectChanged() { root.measureRatio(); }
     }
     property real speed: 1.0
+    property int direction: 1
+    property string speedText: ""   // "▶ 4×", from the page
+    // A Frigate pane while the group plays off 1× forward (wayfinder/playback-controls
+    // ticket 11): it stops on its last picture, says "1× only", and the page starts it again
+    // at the playhead when the group is back at 1× forward.
+    property bool frozen: false
+    onFrozenChanged: if (frozen) stopPlayback()
+    // Recording time of the frame on screen, seconds into the selected day; -1 until this
+    // stream (or this seek) has shown a tagged frame. Drives the playhead off 1×.
+    property real _epochAtOpen: 0
+    readonly property real frameSecs: streaming && player.frameEpochMs > 0
+                                      && player.frameEpochMs !== _epochAtOpen
+                                      ? player.frameEpochMs / 1000 - dayEpoch : -1
     // Save the picture on screen as a JPEG named for this camera and the recorded
     // moment; returns the path, or "" if there is no picture yet.
     function snapshot(epoch) {
@@ -280,6 +293,8 @@ Rectangle {
     // Play this camera from the given moment (epoch = wall-clock seconds).
     // A gap is a normal outcome, not an error: stop and let the overlay say so.
     function playAtSecs(sec, epoch) {
+        if (frozen)
+            return;
         _leaveStill();
         _syncTries = 0;
         _open(sec, epoch);
@@ -290,6 +305,7 @@ Rectangle {
         _suppressResume = false;
         _openSec = sec;
         _openWall = Date.now();
+        _epochAtOpen = player.frameEpochMs;   // a seek in place keeps the old time until a new frame
         catchUpTimer.stop();
         catchUp = 1.0;
         const result = session.playAt(epoch, covered(sec));
@@ -427,6 +443,28 @@ Rectangle {
         }
     }
 
+    // Off 1× forward: the speed on a playing pane, "1× only" on a frozen Frigate pane.
+    Rectangle {
+        readonly property bool atSpeed: !root.frozen && root.streaming
+                                        && (root.speed !== 1 || root.direction !== 1)
+        visible: root.hasSource && (root.frozen || atSpeed)
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter   // clear of the name and the view icons
+        anchors.topMargin: 6
+        radius: 3
+        color: root.frozen ? "#c0000000" : Theme.accent
+        width: badgeText.implicitWidth + 12
+        height: badgeText.implicitHeight + 6
+        Text {
+            id: badgeText
+            anchors.centerIn: parent
+            font.pixelSize: 11
+            font.bold: !root.frozen
+            color: root.frozen ? "white" : Theme.window
+            text: root.frozen ? qsTr("⏸ 1× only")
+                  : root.speedText + (root.speed === 16 ? qsTr(" · keyframes") : "")
+        }
+    }
     BusyIndicator {   // a still loading over the previous picture
         anchors.top: parent.top
         anchors.right: parent.right

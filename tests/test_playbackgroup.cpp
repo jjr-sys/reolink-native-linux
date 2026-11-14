@@ -29,7 +29,7 @@ struct Fixture {
     Fixture()
     {
         map.setHosts({host(1, QStringLiteral("Woorabinda")), host(2, QStringLiteral("Farm")),
-                      host(4, QStringLiteral("Farm Hikvision"))});
+                      host(4, QStringLiteral("Farm Hikvision")), host(3, QStringLiteral("Farm Frigate"))});
         selection.setSites(&map);
         group.setSelection(&selection);
         group.setMonth(2026, 11);
@@ -121,17 +121,162 @@ private slots:
         QCOMPARE(f.group.selectedKey(), QStringLiteral("2:5")); // adding keeps the choice
     }
 
-    // One speed for every pane.
-    void speedIsOneValueForAllPanes()
+    // Speed and direction (wayfinder/playback-controls ticket 11, layout B4): one value for
+    // every pane, stepped by the four speed buttons; ◀ / ▶ play at 1× that way.
+    void fastForwardSteps2_4_8_16_then1()
     {
         Fixture f;
+        f.selection.setSaved(QStringLiteral("2:0"));
         QCOMPARE(f.group.speed(), 1.0);
+        QCOMPARE(f.group.direction(), 1);
+        QList<double> seen;
+        for (int i = 0; i < 5; ++i) {
+            f.group.stepFast(1);
+            seen << f.group.speed();
+        }
+        QCOMPARE(seen, (QList<double>{2, 4, 8, 16, 1}));
+        QCOMPARE(f.group.direction(), 1);
+    }
+
+    void slowForwardStepsHalf_quarter_then1()
+    {
+        Fixture f;
+        f.selection.setSaved(QStringLiteral("2:0"));
+        QList<double> seen;
+        for (int i = 0; i < 3; ++i) {
+            f.group.stepSlow(1);
+            seen << f.group.speed();
+        }
+        QCOMPARE(seen, (QList<double>{0.5, 0.25, 1}));
+    }
+
+    // Switching between the fast and slow cycles starts the other cycle afresh.
+    void otherCycleStartsAtItsFirstStep()
+    {
+        Fixture f;
+        f.selection.setSaved(QStringLiteral("2:0"));
+        f.group.stepFast(1);
+        f.group.stepFast(1); // 4x
+        f.group.stepSlow(1);
+        QCOMPARE(f.group.speed(), 0.5);
+        f.group.stepFast(1);
+        QCOMPARE(f.group.speed(), 2.0);
+        f.group.playForward();
+        QCOMPARE(f.group.speed(), 1.0);
+    }
+
+    // Until reverse play is built (ticket 12) the backward buttons do nothing.
+    void backwardIsOffUntilReversePlay()
+    {
+        Fixture f;
+        f.selection.setSaved(QStringLiteral("2:0"));
+        QVERIFY(!f.group.reverseAvailable());
+        f.group.stepFast(1);
         QSignalSpy spy(&f.group, &PlaybackGroup::speedChanged);
-        f.group.setSpeed(4.0);
-        QCOMPARE(f.group.speed(), 4.0);
-        f.group.setSpeed(3.0); // not on the menu
-        QCOMPARE(f.group.speed(), 4.0);
-        QCOMPARE(spy.count(), 1);
+        f.group.stepFast(-1);
+        f.group.stepSlow(-1);
+        f.group.playBackward();
+        QCOMPARE(f.group.direction(), 1);
+        QCOMPARE(f.group.speed(), 2.0);
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // Backwards (once reverse play exists): « steps 2 → 4 → 1×, slow back ½ → ¼ → 1×,
+    // and both end at 1× backwards.
+    void backwardCyclesEndAt1xBackwards()
+    {
+        Fixture f;
+        f.selection.setSaved(QStringLiteral("2:0"));
+        f.group.setReverseAvailable(true);
+        QList<double> seen;
+        for (int i = 0; i < 3; ++i) {
+            f.group.stepFast(-1);
+            seen << f.group.speed();
+            QCOMPARE(f.group.direction(), -1);
+        }
+        QCOMPARE(seen, (QList<double>{2, 4, 1}));
+        seen.clear();
+        for (int i = 0; i < 3; ++i) {
+            f.group.stepSlow(-1);
+            seen << f.group.speed();
+        }
+        QCOMPARE(seen, (QList<double>{0.5, 0.25, 1}));
+        QCOMPARE(f.group.direction(), -1);
+        // A forward button from backwards starts the forward cycle.
+        f.group.stepFast(1);
+        QCOMPARE(f.group.speed(), 2.0);
+        QCOMPARE(f.group.direction(), 1);
+        f.group.playBackward();
+        QCOMPARE(f.group.speed(), 1.0);
+        QCOMPARE(f.group.direction(), -1);
+    }
+
+    // A new day or a change of selected cameras resets to ▶ 1×; selecting another pane
+    // or re-ordering the panes keeps the speed.
+    void newDayOrCameraSetResetsTo1xForward()
+    {
+        Fixture f;
+        f.selection.setSaved(QStringLiteral("2:0,2:1"));
+        f.group.stepFast(1);
+        f.group.select(QStringLiteral("2:1"));
+        f.selection.swap(QStringLiteral("2:0"), QStringLiteral("2:1"));
+        QCOMPARE(f.group.speed(), 2.0);
+        f.selection.toggle(QStringLiteral("1:3"));
+        QCOMPARE(f.group.speed(), 1.0);
+        f.group.stepFast(1);
+        f.group.newDay();
+        QCOMPARE(f.group.speed(), 1.0);
+        QCOMPARE(f.group.direction(), 1);
+    }
+
+    // Frigate plays at 1× forward only: with only Frigate panes selected the speed buttons
+    // and ◀ do nothing (the page greys them).
+    void onlyFrigatePanesLockTheSpeed()
+    {
+        Fixture f;
+        f.group.setReverseAvailable(true);
+        f.selection.setSaved(QStringLiteral("3:0"));
+        f.group.setDirectKeys({QStringLiteral("3:0")});
+        QVERIFY(f.group.speedLocked());
+        f.group.stepFast(1);
+        f.group.stepSlow(1);
+        f.group.playBackward();
+        QCOMPARE(f.group.speed(), 1.0);
+        QCOMPARE(f.group.direction(), 1);
+        // A Reolink pane alongside unlocks it.
+        f.selection.toggle(QStringLiteral("2:0"));
+        QVERIFY(!f.group.speedLocked());
+        f.group.stepFast(1);
+        QCOMPARE(f.group.speed(), 2.0);
+        // Nothing selected is not "only Frigate".
+        f.selection.clear();
+        QVERIFY(!f.group.speedLocked());
+    }
+
+    // Off 1× forward the Frigate panes freeze ("1× only").
+    void offNormalIsAnythingBut1xForward()
+    {
+        Fixture f;
+        f.selection.setSaved(QStringLiteral("2:0"));
+        f.group.setReverseAvailable(true);
+        QVERIFY(!f.group.offNormal());
+        f.group.stepSlow(1);
+        QVERIFY(f.group.offNormal());
+        f.group.playBackward();
+        QVERIFY(f.group.offNormal());
+        f.group.playForward();
+        QVERIFY(!f.group.offNormal());
+    }
+
+    // The speed as text above the buttons.
+    void speedLabel()
+    {
+        QCOMPARE(PlaybackGroup::speedLabel(1, 1.0, false), QStringLiteral("▶ 1×"));
+        QCOMPARE(PlaybackGroup::speedLabel(1, 16.0, false), QStringLiteral("▶ 16×"));
+        QCOMPARE(PlaybackGroup::speedLabel(-1, 0.5, false), QStringLiteral("◀ ½×"));
+        QCOMPARE(PlaybackGroup::speedLabel(1, 0.25, false), QStringLiteral("▶ ¼×"));
+        QCOMPARE(PlaybackGroup::speedLabel(1, 4.0, true), QStringLiteral("Paused · 4×"));
+        QCOMPARE(PlaybackGroup::speedLabel(1, 1.0, true), QStringLiteral("Paused"));
     }
 };
 

@@ -10,9 +10,24 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **New Playback speed controls.** The speed menu is replaced by a centred group:
+  « · slow back · ◀ · ⏸ · ▶ · slow forward · », with the speed written above it ("▶ 4×",
+  "Paused"). » steps 2× → 4× → 8× → 16× → back to 1×; slow forward steps ½× → ¼× → 1×;
+  ▶ plays at 1×. Keys: **L** = », **K** = pause / play on, **←/→** = 10 s back / forward
+  (J and the backward buttons arrive with reverse play). ↺10 s / ↻10 s move left with the
+  tools. Jumps and timeline clicks keep the speed; a new day or a change of cameras goes
+  back to ▶ 1×. Off 1× the sound is muted, each playing pane shows its speed, an HD pane
+  shows "SD at speed" above 1×, and Frigate panes stop on their last picture with
+  "1× only", catching up at the playhead back at 1× (with only Frigate panes the speed
+  buttons are greyed).
+- **The playhead follows the recording off 1×.** It now tracks the recording time of the
+  frames on screen (the recorder's 16× runs a little faster than 16×, and a slow link holds
+  it back) instead of counting wall time.
+
 - **Fast Playback on Reolink recorders, paced by the recorder.** Playback now asks the
   recorder to play at the chosen speed instead of downloading as fast as the link allows,
-  so 2×, 4×, 8× and the new **16×** play smoothly. 16× shows one picture per keyframe,
+  so 2×, 4×, 8× and the new **16×** play smoothly (16× reaches the recorder since the new
+  speed controls; before them the app stopped at 8×). 16× shows one picture per keyframe,
   which is the recorder's own fast-forward. ¼× and ½× still play at 1× on the recorder
   and are slowed by the app. Above 1× an HD pane plays the standard-quality stream (the
   recorder sends HD at speed as keyframes only) and returns to HD at 1×. Seeking within a

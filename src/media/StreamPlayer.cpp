@@ -1,5 +1,6 @@
 #include "StreamPlayer.h"
 #include "core/Backoff.h"
+#include "media/FrameTimeSei.h"
 #include "media/HttpAuth.h"
 #include "media/LiveUrl.h"
 
@@ -200,6 +201,31 @@ void postFramesTick(const std::shared_ptr<Session> &s)
     QMetaObject::invokeMethod(p, [p, s] {
         p->applyFramesTickFromWorker(s);
     }, Qt::QueuedConnection);
+}
+
+void postFrameEpoch(const std::shared_ptr<Session> &s)
+{
+    QMutexLocker lock(&s->backMutex);
+    if (!s->player)
+        return;
+    StreamPlayer *p = s->player;
+    QMetaObject::invokeMethod(p, [p, s] {
+        p->applyFrameEpochFromWorker(s);
+    }, Qt::QueuedConnection);
+}
+
+// The recording time a frame was tagged with (media/FrameTimeSei.h), or -1.
+qint64 frameEpochOf(const AVFrame *frame)
+{
+    for (int i = 0; i < frame->nb_side_data; ++i) {
+        const AVFrameSideData *sd = frame->side_data[i];
+        if (sd->type != AV_FRAME_DATA_SEI_UNREGISTERED)
+            continue;
+        const qint64 t = rl::frametime::fromUserData(sd->data, int(sd->size));
+        if (t >= 0)
+            return t;
+    }
+    return -1;
 }
 
 // Hand a decoded frame to the player on the GUI thread, where the QML-owned sink lives
@@ -759,6 +785,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     qint64 perfHwTransferFrames = 0;
     qint64 perfSoftwareFrames = 0;
 
+    qint64 frameEpochPostedWall = 0; // when the frame time was last posted to the GUI
     // Drain one decoded frame at a time; shared by the normal and flush paths.
     auto receiveFrames = [&]() {
         while (avcodec_receive_frame(dec, frame) == 0 && !s->abort.load()) {
@@ -769,6 +796,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                 av_frame_unref(frame);
                 continue;
             }
+            const qint64 frameEpoch = frameEpochOf(frame); // before a transfer drops side data
             // Keep compatible VAAPI NV12 surfaces on the GPU. If export is not
             // available for this stream, use the existing transfer/upload path.
             QVideoFrame vaapiVideoFrame;
@@ -865,6 +893,14 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                         ++perfSoftwareFrames;
                 }
                 const qint64 n = s->framesDecoded.fetch_add(1) + 1;
+                if (frameEpoch >= 0) {
+                    const qint64 was = s->frameEpochMs.exchange(frameEpoch);
+                    // At most 4 a second, and at once on a jump back (a seek).
+                    if (frameEpoch < was || av_gettime_relative() - frameEpochPostedWall >= 250000) {
+                        frameEpochPostedWall = av_gettime_relative();
+                        postFrameEpoch(s);
+                    }
+                }
                 if (!streaming) {
                     streaming = true;
                     *streamingOut = true;
@@ -1215,7 +1251,7 @@ void StreamPlayer::resetPlayout()
 
 void StreamPlayer::setSpeed(qreal speed)
 {
-    speed = qBound<qreal>(0.25, speed, 8.0);
+    speed = qBound<qreal>(0.25, speed, 16.0); // 16x = the recorder's keyframe mode (cmd 381)
     if (qFuzzyCompare(m_speed->load(), speed))
         return;
     m_speed->store(speed); // read per frame by both pacing loops
@@ -1332,6 +1368,12 @@ void StreamPlayer::applyFramesTickFromWorker(const std::shared_ptr<Session> &s)
 {
     if (s == m_session)
         emit framesDecodedChanged();
+}
+
+void StreamPlayer::applyFrameEpochFromWorker(const std::shared_ptr<Session> &s)
+{
+    if (s == m_session)
+        emit frameEpochMsChanged();
 }
 
 void StreamPlayer::applyRecordingState(const std::shared_ptr<Session> &s, bool recording,
@@ -1465,6 +1507,11 @@ void StreamPlayer::setVideoSink(QVideoSink *sink)
         m_session->sink = sink;
     }
     emit videoSinkChanged();
+}
+
+qint64 StreamPlayer::frameEpochMs() const
+{
+    return m_session ? m_session->frameEpochMs.load() : 0;
 }
 
 qint64 StreamPlayer::framesDecoded() const

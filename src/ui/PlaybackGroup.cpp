@@ -28,13 +28,94 @@ void PlaybackGroup::setSelection(SiteSelection *selection)
     onSelectionChanged();
 }
 
-void PlaybackGroup::setSpeed(double speed)
+void PlaybackGroup::setSpeed(int direction, double speed)
 {
-    static const double kSpeeds[] = {0.25, 0.5, 1.0, 2.0, 4.0, 8.0};
-    if (speed == m_speed || std::find(std::begin(kSpeeds), std::end(kSpeeds), speed) == std::end(kSpeeds))
+    if (direction == m_direction && speed == m_speed)
         return;
+    m_direction = direction;
     m_speed = speed;
     emit speedChanged();
+}
+
+bool PlaybackGroup::canStep(int direction) const
+{
+    return !m_locked && (direction == 1 || (direction == -1 && m_reverse));
+}
+
+void PlaybackGroup::stepFast(int direction)
+{
+    if (!canStep(direction))
+        return;
+    const double top = direction == 1 ? 16.0 : 4.0;
+    if (direction != m_direction || m_speed < 2.0)
+        setSpeed(direction, 2.0);
+    else
+        setSpeed(direction, m_speed >= top ? 1.0 : m_speed * 2);
+}
+
+void PlaybackGroup::stepSlow(int direction)
+{
+    if (!canStep(direction))
+        return;
+    if (direction == m_direction && m_speed == 0.5)
+        setSpeed(direction, 0.25);
+    else if (direction == m_direction && m_speed == 0.25)
+        setSpeed(direction, 1.0);
+    else
+        setSpeed(direction, 0.5);
+}
+
+void PlaybackGroup::playBackward()
+{
+    if (canStep(-1))
+        setSpeed(-1, 1.0);
+}
+
+void PlaybackGroup::setReverseAvailable(bool on)
+{
+    if (on == m_reverse)
+        return;
+    m_reverse = on;
+    emit reverseAvailableChanged();
+    if (!on && m_direction == -1)
+        setSpeed(1, 1.0);
+}
+
+void PlaybackGroup::setDirectKeys(const QStringList &keys)
+{
+    if (keys == m_direct)
+        return;
+    m_direct = keys;
+    updateLocked();
+}
+
+void PlaybackGroup::updateLocked()
+{
+    bool locked = false;
+    if (m_selection && !m_selection->keys().isEmpty()) {
+        locked = true;
+        for (const QString &k : m_selection->keys())
+            if (!m_direct.contains(k)) {
+                locked = false;
+                break;
+            }
+    }
+    if (locked)
+        setSpeed(1, 1.0);
+    if (locked == m_locked)
+        return;
+    m_locked = locked;
+    emit speedLockedChanged();
+}
+
+QString PlaybackGroup::speedLabel(int direction, double speed, bool paused)
+{
+    const QString x = speed == 0.25 ? QStringLiteral("¼") : speed == 0.5 ? QStringLiteral("½")
+                                                                       : QString::number(speed);
+    if (paused)
+        return direction == 1 && speed == 1.0 ? QStringLiteral("Paused")
+                                              : QStringLiteral("Paused · %1×").arg(x);
+    return (direction == 1 ? QStringLiteral("▶ ") : QStringLiteral("◀ ")) + x + QStringLiteral("×");
 }
 
 void PlaybackGroup::setMonth(int year, int month)
@@ -67,6 +148,13 @@ void PlaybackGroup::onSelectionChanged()
     const QStringList order = m_selection ? m_selection->paneOrder() : QStringList();
     if (!order.contains(m_selected))
         setSelected(order.isEmpty() ? QString() : order.first());
+    QStringList keys = m_selection ? m_selection->keys() : QStringList();
+    keys.sort();
+    if (keys != m_keysSeen) {
+        m_keysSeen = keys;
+        setSpeed(1, 1.0);
+    }
+    updateLocked();
     recompute();
 }
 

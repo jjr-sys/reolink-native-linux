@@ -1,4 +1,5 @@
 #include "BaichuanClient.h"
+#include "media/FrameTimeSei.h"
 
 #include "protocol/BcCrypto.h"
 #include "protocol/BcLiveFramePacer.h"
@@ -420,6 +421,10 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
         if (paceLive && (f.microseconds != 0 || livePacer.hasAnchor())) {
             livePacer.push(f.annexB, f.microseconds,
                            liveClock.nsecsElapsed() / 1000, f.keyFrame);
+        } else if (pace && keyTime != 0) {
+            // Recorded playback: tag the frame with its recording time for the playhead.
+            const qint64 sinceKeyUs = qMax<qint64>(0, qint64(f.microseconds) - qint64(keyMicros));
+            pushAnnexB(frametime::tag(f.annexB, f.codec, qint64(keyTime) * 1000 + sinceKeyUs / 1000));
         } else {
             pushAnnexB(f.annexB);
         }

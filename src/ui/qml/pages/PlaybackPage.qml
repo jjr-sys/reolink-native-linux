@@ -2,6 +2,7 @@ import QtCore
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import ReolinkApp
 import ReolinkApp.Core
 
@@ -81,6 +82,21 @@ Item {
     PlaybackGroup {
         id: group
         selection: selection
+        // Frigate panes play at 1× forward only (wayfinder/playback-controls ticket 11).
+        directKeys: { Devices.count; selection.count;
+                      return selection.keys.filter(k => page.isDirectKey(k)); }
+        // Back at 1× forward, the frozen Frigate panes catch up at the playhead.
+        onSpeedChanged: {
+            if (offNormal || !page.isPlaying())
+                return;
+            selection.keys.filter(k => page.isDirectKey(k))
+                     .forEach(k => { page._resume[k] = "ifStopped"; });
+            Qt.callLater(page.flushResume);
+        }
+    }
+    function isDirectKey(key) {
+        var r = rowsByKey()[key];
+        return r !== undefined && Devices.isDirectAt(r);
     }
     readonly property string selectedKey: group.selectedKey
     readonly property int selectedRow: { Devices.count; selection.count;
@@ -341,6 +357,9 @@ Item {
     }
     // Advance the playhead in real time while streaming, from the first picture on (the
     // panes keep in step with it). Measured, not counted, so timer jitter doesn't add up.
+    // Off 1× it follows the recording time of the frames on screen instead (the recorder's
+    // 16× runs nearer 20×, and a slow link holds it back): the selected pane's, or the first
+    // Reolink pane's when the selected one is Frigate.
     property real _tickWall: 0
     Timer {
         interval: 250; repeat: true
@@ -350,9 +369,26 @@ Item {
             var now = Date.now();
             var dt = (now - page._tickWall) / 1000;
             page._tickWall = now;
+            var f = group.offNormal ? page.frameDriverSecs() : -1;
+            if (f >= 0) {
+                page.playheadSecs = Math.max(0, Math.min(86399, f));
+                return;
+            }
             if (page.playheadSecs < 86399)
                 page.playheadSecs = Math.min(86399, page.playheadSecs + dt * group.speed);
         }
+    }
+    function frameDriverSecs() {
+        var sel = paneOf(selectedKey);
+        if (sel && sel.visible && !sel.frozen && sel.frameSecs >= 0)
+            return sel.frameSecs;
+        var order = selection.paneOrder;
+        for (var i = 0; i < order.length; i++) {
+            var p = paneOf(order[i]);
+            if (p && p.visible && !p.frozen && p.frameSecs >= 0)
+                return p.frameSecs;
+        }
+        return -1;
     }
     onActiveChanged: active ? Qt.callLater(stillsWhereMissing) : stopAllPanes()
 
@@ -361,7 +397,18 @@ Item {
         return Math.floor(d.getTime() / 1000) + Math.floor(sec);
     }
     readonly property real dayStartEpoch: new Date(selYear, selMonth - 1, selDay).getTime() / 1000
-    function speedText(v) { return (v === 0.25 ? "0.25" : v === 0.5 ? "0.5" : String(v)) + "×"; }
+    // The speed buttons (layout B4): change the group's speed, and start playing if stopped.
+    function speedAction(fn) {
+        fn();
+        if (!isPlaying())
+            playAt(playheadSecs);
+    }
+    function togglePause() {
+        if (isPlaying())
+            stopAllPanes();
+        else
+            playAt(playheadSecs);
+    }
     // Jump the playhead by `secs`, keeping each pane's last picture until its new one.
     function skip(secs) {
         var to = Math.max(0, Math.min(86399, playheadSecs + secs));
@@ -525,6 +572,9 @@ Item {
         if (typeof playbackAutoplay !== "undefined" && playbackAutoplay && segments.length > 0 && !_autoplayed) {
             _autoplayed = true;
             playAt(segments[0].start);
+            if (typeof playbackFastSteps !== "undefined")
+                for (var n = 0; n < playbackFastSteps; n++)
+                    group.stepFast(1);
             if (typeof playbackStopMs !== "undefined" && playbackStopMs > 0)
                 autoStop.start();
         }
@@ -711,9 +761,13 @@ Item {
                         onFisheyeLensChanged: page.scheduleMosaic()
                         onFisheyeModeChanged: page.scheduleMosaic()
                         selected: page.selectedKey === cameraKey
-                        audioMuted: AudioPrefs.playbackMuted
+                        // Sound plays at 1× forward only.
+                        audioMuted: AudioPrefs.playbackMuted || group.offNormal
                         audioActive: page.active && selected
-                        speed: group.speed
+                        frozen: { Devices.count; return Devices.isDirectAt(index) && group.offNormal; }
+                        speed: frozen ? 1 : group.speed
+                        direction: group.direction
+                        speedText: { group.speed; group.direction; return group.label(false); }
                         hdActive: page.hdKeys.indexOf(cameraKey) >= 0
                         segments: page.segsByKey[cameraKey] || []
                         onFrameRatioChanged: page.rememberFrame(cameraKey, frameRatio)
@@ -760,29 +814,41 @@ Item {
                 onCommit: (seconds) => page.playAt(seconds)       // play from there on release
             }
 
-            RowLayout {
+            // Layout B4 (wayfinder/playback-controls ticket 11): tools on the left, the centred
+            // « · slow back · ◀ · ⏸ · ▶ · slow forward · » cluster with the speed as text
+            // above it, sound / status / quality on the right.
+            Item {
+                id: bar
                 Layout.fillWidth: true
-                spacing: Theme.spacing
+                Layout.preferredHeight: Math.max(leftTools.height, centre.height, rightTools.height)
+                readonly property bool playing: page.streamingPanes > 0
+                readonly property string frigateTip: qsTr("Frigate plays at 1× forward only")
+                readonly property string reverseTip: qsTr("Coming in reverse play")
                 component Ctl: Rectangle {
+                    id: ctl
                     property string glyph: ""
                     property string tip: ""
                     property string caption: ""   // small label along the bottom edge
                     property color glyphColor: Theme.text
+                    property bool big: false      // ◀ ⏸ ▶
+                    property bool lit: false      // the speed playing now
+                    property bool dim: false      // greyed: the tooltip says why
                     signal activated()
-                    width: 34; height: 30; radius: Theme.radius
-                    color: cHover.hovered ? Theme.surfaceAlt : Theme.surface
-                    border.color: Theme.border
+                    width: big ? 44 : 34; height: big ? 40 : 30; radius: Theme.radius
+                    color: lit ? Theme.accent : cHover.hovered && !dim ? Theme.surfaceAlt : Theme.surface
+                    border.color: lit ? Theme.accent : Theme.border
+                    opacity: dim ? 0.35 : 1
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
                         y: parent.caption !== "" ? 2 : (parent.height - height) / 2
-                        text: parent.glyph; color: parent.glyphColor
-                        font.pixelSize: parent.caption !== "" ? 13 : 14
+                        text: parent.glyph; color: ctl.lit ? Theme.window : parent.glyphColor
+                        font.pixelSize: ctl.big ? 17 : parent.caption !== "" ? 13 : 14
                     }
                     Text {
                         visible: parent.caption !== ""
                         anchors.horizontalCenter: parent.horizontalCenter
                         y: parent.height - height - 2
-                        text: parent.caption; color: Theme.textMuted; font.pixelSize: 9
+                        text: parent.caption; color: ctl.lit ? Theme.window : Theme.textMuted; font.pixelSize: 9
                     }
                     HoverHandler { id: cHover }
                     ToolTip {
@@ -793,173 +859,234 @@ Item {
                         contentItem: Text { text: tip; color: Theme.text; font.pixelSize: 11 }
                         background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
                     }
-                    TapHandler { onTapped: parent.activated() }
+                    TapHandler { enabled: !ctl.dim; onTapped: ctl.activated() }
                 }
-                // Play/pause drives every pane (a stream is one-shot, so play re-opens it).
-                Ctl {
-                    readonly property bool playing: page.streamingPanes > 0
-                    glyph: playing ? "⏸" : "▶"
-                    tip: playing ? qsTr("Pause") : qsTr("Play")
-                    onActivated: playing ? page.stopAllPanes() : page.playAt(page.playheadSecs)
+                component Sep: Rectangle {
+                    width: 1; height: 24; color: Theme.border
+                    anchors.verticalCenter: parent.verticalCenter
                 }
-                // Sound: the selected pane's, once its stream has an audio track.
-                Ctl {
-                    visible: page.audioAvailable
-                    glyph: AudioPrefs.playbackMuted ? "🔇" : "🔊"
-                    tip: AudioPrefs.playbackMuted ? qsTr("Unmute the selected pane") : qsTr("Mute")
-                    onActivated: AudioPrefs.playbackMuted = !AudioPrefs.playbackMuted
-                }
-                // Skip back/forward 10 s. There is no reverse play: back means jumping back.
-                Ctl { glyph: "⏪"; caption: qsTr("-10s"); tip: qsTr("Back 10 seconds"); onActivated: page.skip(-10) }
-                Ctl { glyph: "⏩"; caption: qsTr("+10s"); tip: qsTr("Forward 10 seconds"); onActivated: page.skip(10) }
-                // Speed, for every pane (Frigate footage plays at 1×).
-                Rectangle {
-                    visible: page.anyReolink
-                    width: 52; height: 30; radius: Theme.radius
-                    color: spdHover.hovered ? Theme.surfaceAlt : Theme.surface
-                    border.color: group.speed !== 1 ? Theme.accent : Theme.border
-                    Text { anchors.centerIn: parent; text: page.speedText(group.speed)
-                           color: group.speed !== 1 ? Theme.accent : Theme.text; font.pixelSize: 12 }
-                    HoverHandler { id: spdHover }
-                    ToolTip {
-                        visible: spdHover.hovered
-                        delay: 500
-                        x: (parent.width - width) / 2
-                        y: -height - 8
-                        contentItem: Text { text: qsTr("Playback speed for every pane (sound only plays at 1×)")
-                                            color: Theme.text; font.pixelSize: 11 }
-                        background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
-                    }
-                    TapHandler { onTapped: speedMenu.popup() }
-                    ThemedMenu {
-                        id: speedMenu
-                        ThemedMenuItem { text: page.speedText(0.25); onTriggered: group.speed = 0.25 }
-                        ThemedMenuItem { text: page.speedText(0.5);  onTriggered: group.speed = 0.5 }
-                        ThemedMenuItem { text: page.speedText(1);    onTriggered: group.speed = 1 }
-                        ThemedMenuItem { text: page.speedText(2);    onTriggered: group.speed = 2 }
-                        ThemedMenuItem { text: page.speedText(4);    onTriggered: group.speed = 4 }
-                        ThemedMenuItem { text: page.speedText(8);    onTriggered: group.speed = 8 }
-                        ThemedMenuItem { text: page.speedText(16);   onTriggered: group.speed = 16 }
-                    }
-                }
-                Ctl { glyph: "📷"; tip: qsTr("Save a snapshot of every pane")
-                      onActivated: page.snapshot() }
-                Ctl { glyph: "⏹"; tip: qsTr("Stop"); onActivated: page.stopAllPanes() }
-                // Export: a clip of the selected pane from the playhead.
-                Rectangle {
-                    id: exportBtn
-                    visible: page.selectedRow >= 0 && !page.selectedDirect
-                    width: expRow.implicitWidth + 18; height: 30; radius: Theme.radius
-                    color: expHover.hovered ? Theme.surfaceAlt : Theme.surface
-                    border.color: Theme.border
-                    Row {
-                        id: expRow
-                        anchors.centerIn: parent
-                        spacing: 5
-                        Text { text: qsTr("Export clip"); color: Theme.text; font.pixelSize: 12
-                               anchors.verticalCenter: parent.verticalCenter }
-                        Text { text: "▾"; color: Theme.textMuted
-                               font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
-                    }
-                    HoverHandler { id: expHover }
-                    ToolTip {
-                        visible: expHover.hovered
-                        delay: 500
-                        y: -height - 8
-                        contentItem: Text { text: qsTr("A clip of the selected pane from the playhead")
-                                            color: Theme.text; font.pixelSize: 11 }
-                        background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
-                    }
-                    TapHandler { onTapped: exportMenu.popup() }
-                    ThemedMenu {
-                        id: exportMenu
-                        ThemedMenuItem { text: qsTr("15 seconds"); onTriggered: page.exportClip(15) }
-                        ThemedMenuItem { text: qsTr("30 seconds"); onTriggered: page.exportClip(30) }
-                        ThemedMenuItem { text: qsTr("1 minute");  onTriggered: page.exportClip(60) }
-                        ThemedMenuItem { text: qsTr("2 minutes"); onTriggered: page.exportClip(120) }
-                    }
-                }
-                // Range: press to mark the start, again to mark the end (then the download
-                // dialog opens for the selected pane's camera).
-                Ctl {
-                    visible: page.selectedRow >= 0 && !page.selectedDirect
-                    glyph: page.rangeArmed ? "■" : "●"
-                    glyphColor: "#ff4d4d"
-                    tip: page.rangeArmed ? qsTr("Stop: mark the end of the range here")
-                                         : qsTr("Record: mark the start of a range here")
-                    onActivated: page.toggleRange()
-                }
-                Text {
-                    visible: page.markStart >= 0
-                    text: page.rangeArmed ? qsTr("● from %1").arg(page.clockText(page.markStart))
-                        : page.markEnd > page.markStart
-                        ? page.clockText(page.markStart) + " – " + page.clockText(page.markEnd)
-                        : qsTr("from %1").arg(page.clockText(page.markStart))
-                    color: page.rangeArmed ? "#ff4d4d" : Theme.accent; font.pixelSize: 12
-                    Layout.alignment: Qt.AlignVCenter
-                    TapHandler { onTapped: { page.markStart = -1; page.markEnd = -1; page.rangeArmed = false; } }
-                }
-                Rectangle {
-                    visible: page.selectedRow >= 0 && !page.selectedDirect
-                    width: dlRow.implicitWidth + 18; height: 30; radius: Theme.radius
-                    color: dlHover.hovered ? Theme.surfaceAlt : Theme.surface
-                    border.color: Theme.border
-                    Text { id: dlRow; anchors.centerIn: parent; text: qsTr("Download range…")
-                           color: Theme.text; font.pixelSize: 12 }
-                    HoverHandler { id: dlHover }
-                    TapHandler { onTapped: page.openDownloadDialog() }
-                }
-                Rectangle {
-                    id: dlBtn
-                    visible: page.anyReolink
-                    width: dlBtnText.implicitWidth + 18; height: 30; radius: Theme.radius
-                    color: dlBtnHover.hovered ? Theme.surfaceAlt : Theme.surface
-                    border.color: Downloads.activeCount > 0 ? Theme.accent : Theme.border
-                    Text { id: dlBtnText; anchors.centerIn: parent
-                           text: Downloads.activeCount > 0 ? qsTr("⬇ Downloads (%1)").arg(Downloads.activeCount)
-                                                           : qsTr("⬇ Downloads")
-                           color: Theme.text; font.pixelSize: 12 }
-                    HoverHandler { id: dlBtnHover }
-                    TapHandler { onTapped: dlPanel.opened ? dlPanel.close() : dlPanel.open() }
-                    DownloadsPanel { id: dlPanel; x: 0; y: -height - 8 }
-                }
-                Item { Layout.fillWidth: true }
-                Text {
-                    id: statusText
-                    text: ""
-                    color: Theme.textMuted
-                    font.pixelSize: 12
-                    elide: Text.ElideRight
-                    Layout.maximumWidth: 320
-                }
-                // Quality of the selected pane: low by default; HD only within the Site budget.
-                Rectangle {
-                    id: hdBtn
-                    readonly property bool on: page.hdKeys.indexOf(page.selectedKey) >= 0
-                    visible: page.selectedRow >= 0 && !page.selectedDirect
-                    width: 52; height: 30; radius: Theme.radius
-                    color: on ? Theme.accent : (hdHover.hovered ? Theme.surfaceAlt : Theme.surface)
-                    border.color: on ? Theme.accent : Theme.border
-                    Text {
-                        anchors.centerIn: parent
-                        text: parent.on ? qsTr("HD") : qsTr("SD")
-                        color: parent.on ? Theme.window : Theme.text
-                        font.pixelSize: 12; font.bold: true
-                    }
-                    HoverHandler { id: hdHover }
-                    ToolTip {
-                        visible: hdHover.hovered
-                        delay: 500
-                        x: (parent.width - width) / 2
-                        y: -height - 8
-                        contentItem: Text {
-                            text: hdBtn.on ? qsTr("Switch the selected pane to SD")
-                                                   : qsTr("Switch the selected pane to HD (full resolution)")
-                            color: Theme.text; font.pixelSize: 11
+
+                Row {
+                    id: leftTools
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Theme.spacing
+                    // Jump 10 s, keeping the speed.
+                    Ctl { glyph: "↺"; caption: qsTr("10s"); tip: qsTr("Back 10 seconds (←)"); onActivated: page.skip(-10) }
+                    Ctl { glyph: "↻"; caption: qsTr("10s"); tip: qsTr("Forward 10 seconds (→)"); onActivated: page.skip(10) }
+                    Sep {}
+                    Ctl { glyph: "📷"; tip: qsTr("Save a snapshot of every pane")
+                          onActivated: page.snapshot() }
+                    Ctl { glyph: "⏹"; tip: qsTr("Stop"); onActivated: page.stopAllPanes() }
+                    // Export: a clip of the selected pane from the playhead.
+                    Rectangle {
+                        id: exportBtn
+                        visible: page.selectedRow >= 0 && !page.selectedDirect
+                        width: expRow.implicitWidth + 18; height: 30; radius: Theme.radius
+                        color: expHover.hovered ? Theme.surfaceAlt : Theme.surface
+                        border.color: Theme.border
+                        Row {
+                            id: expRow
+                            anchors.centerIn: parent
+                            spacing: 5
+                            Text { text: qsTr("Export clip"); color: Theme.text; font.pixelSize: 12
+                                   anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "▾"; color: Theme.textMuted
+                                   font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
                         }
-                        background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                        HoverHandler { id: expHover }
+                        ToolTip {
+                            visible: expHover.hovered
+                            delay: 500
+                            y: -height - 8
+                            contentItem: Text { text: qsTr("A clip of the selected pane from the playhead")
+                                                color: Theme.text; font.pixelSize: 11 }
+                            background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                        }
+                        TapHandler { onTapped: exportMenu.popup() }
+                        ThemedMenu {
+                            id: exportMenu
+                            ThemedMenuItem { text: qsTr("15 seconds"); onTriggered: page.exportClip(15) }
+                            ThemedMenuItem { text: qsTr("30 seconds"); onTriggered: page.exportClip(30) }
+                            ThemedMenuItem { text: qsTr("1 minute");  onTriggered: page.exportClip(60) }
+                            ThemedMenuItem { text: qsTr("2 minutes"); onTriggered: page.exportClip(120) }
+                        }
                     }
-                    TapHandler { onTapped: page.toggleHd(page.selectedKey) }
+                    // Range: press to mark the start, again to mark the end (then the download
+                    // dialog opens for the selected pane's camera).
+                    Ctl {
+                        visible: page.selectedRow >= 0 && !page.selectedDirect
+                        glyph: page.rangeArmed ? "■" : "●"
+                        glyphColor: "#ff4d4d"
+                        tip: page.rangeArmed ? qsTr("Stop: mark the end of the range here")
+                                             : qsTr("Record: mark the start of a range here")
+                        onActivated: page.toggleRange()
+                    }
+                    Text {
+                        visible: page.markStart >= 0
+                        text: page.rangeArmed ? qsTr("● from %1").arg(page.clockText(page.markStart))
+                            : page.markEnd > page.markStart
+                            ? page.clockText(page.markStart) + " – " + page.clockText(page.markEnd)
+                            : qsTr("from %1").arg(page.clockText(page.markStart))
+                        color: page.rangeArmed ? "#ff4d4d" : Theme.accent; font.pixelSize: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        TapHandler { onTapped: { page.markStart = -1; page.markEnd = -1; page.rangeArmed = false; } }
+                    }
+                    Rectangle {
+                        visible: page.selectedRow >= 0 && !page.selectedDirect
+                        width: dlRow.implicitWidth + 18; height: 30; radius: Theme.radius
+                        color: dlHover.hovered ? Theme.surfaceAlt : Theme.surface
+                        border.color: Theme.border
+                        Text { id: dlRow; anchors.centerIn: parent; text: qsTr("Download range…")
+                               color: Theme.text; font.pixelSize: 12 }
+                        HoverHandler { id: dlHover }
+                        TapHandler { onTapped: page.openDownloadDialog() }
+                    }
+                    Rectangle {
+                        id: dlBtn
+                        visible: page.anyReolink
+                        width: dlBtnText.implicitWidth + 18; height: 30; radius: Theme.radius
+                        color: dlBtnHover.hovered ? Theme.surfaceAlt : Theme.surface
+                        border.color: Downloads.activeCount > 0 ? Theme.accent : Theme.border
+                        Text { id: dlBtnText; anchors.centerIn: parent
+                               text: Downloads.activeCount > 0 ? qsTr("⬇ Downloads (%1)").arg(Downloads.activeCount)
+                                                               : qsTr("⬇ Downloads")
+                               color: Theme.text; font.pixelSize: 12 }
+                        HoverHandler { id: dlBtnHover }
+                        TapHandler { onTapped: dlPanel.opened ? dlPanel.close() : dlPanel.open() }
+                        DownloadsPanel { id: dlPanel; x: 0; y: -height - 8 }
+                    }
+                }
+
+                Column {
+                    id: centre
+                    // Centred in the bar, pushed aside rather than over the tools when narrow.
+                    x: Math.max(leftTools.width + 12,
+                                Math.min((bar.width - width) / 2, bar.width - rightTools.width - 12 - width))
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 2
+                    readonly property bool locked: group.speedLocked
+                    readonly property bool noReverse: !group.reverseAvailable || locked
+                    readonly property string backTip: locked ? bar.frigateTip : bar.reverseTip
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: { group.speed; group.direction; return group.label(!bar.playing); }
+                        color: group.offNormal ? Theme.accent : Theme.textMuted
+                        font.pixelSize: 12; font.bold: group.offNormal
+                    }
+                    Row {
+                        spacing: 5
+                        Ctl {
+                            anchors.verticalCenter: parent.verticalCenter
+                            glyph: "«"; caption: qsTr("fast"); dim: centre.noReverse
+                            lit: bar.playing && group.direction === -1 && group.speed >= 2
+                            tip: dim ? centre.backTip : qsTr("Fast backwards: 2× → 4× → back to 1× (J)")
+                            onActivated: page.speedAction(() => group.stepFast(-1))
+                        }
+                        Ctl {
+                            anchors.verticalCenter: parent.verticalCenter
+                            glyph: "◀½"; caption: qsTr("slow"); dim: centre.noReverse
+                            lit: bar.playing && group.direction === -1 && group.speed < 1
+                            tip: dim ? centre.backTip : qsTr("Slow backwards: ½× → ¼× → back to 1×")
+                            onActivated: page.speedAction(() => group.stepSlow(-1))
+                        }
+                        Ctl {
+                            big: true; glyph: "◀"; dim: centre.noReverse
+                            lit: bar.playing && group.direction === -1 && group.speed === 1
+                            tip: dim ? centre.backTip : qsTr("Play backwards at 1×")
+                            onActivated: page.speedAction(() => group.playBackward())
+                        }
+                        Ctl {
+                            big: true; glyph: "⏸"
+                            glyphColor: bar.playing ? Theme.text : Theme.accent
+                            tip: bar.playing ? qsTr("Pause (K)") : qsTr("Paused: K plays on at this speed")
+                            onActivated: if (bar.playing) page.stopAllPanes()
+                        }
+                        Ctl {
+                            big: true; glyph: "▶"
+                            lit: bar.playing && !group.offNormal
+                            tip: qsTr("Play at 1×")
+                            onActivated: page.speedAction(() => group.playForward())
+                        }
+                        Ctl {
+                            anchors.verticalCenter: parent.verticalCenter
+                            glyph: "▶½"; caption: qsTr("slow"); dim: centre.locked
+                            lit: bar.playing && group.direction === 1 && group.speed < 1
+                            tip: dim ? bar.frigateTip : qsTr("Slow forwards: ½× → ¼× → back to 1×")
+                            onActivated: page.speedAction(() => group.stepSlow(1))
+                        }
+                        Ctl {
+                            anchors.verticalCenter: parent.verticalCenter
+                            glyph: "»"; caption: qsTr("fast"); dim: centre.locked
+                            lit: bar.playing && group.direction === 1 && group.speed >= 2
+                            tip: dim ? bar.frigateTip : qsTr("Fast forwards: 2× → 4× → 8× → 16× → back to 1× (L)")
+                            onActivated: page.speedAction(() => group.stepFast(1))
+                        }
+                    }
+                }
+
+                Row {
+                    id: rightTools
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Theme.spacing
+                    // Sound: the selected pane's, once its stream has an audio track; 1× forward only.
+                    Ctl {
+                        visible: page.audioAvailable
+                        glyph: AudioPrefs.playbackMuted || group.offNormal ? "🔇" : "🔊"
+                        tip: group.offNormal ? qsTr("Sound plays at 1× forward only")
+                           : AudioPrefs.playbackMuted ? qsTr("Unmute the selected pane") : qsTr("Mute")
+                        onActivated: AudioPrefs.playbackMuted = !AudioPrefs.playbackMuted
+                    }
+                    Text {
+                        id: statusText
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: ""
+                        color: Theme.textMuted
+                        font.pixelSize: 12
+                        elide: Text.ElideRight
+                        width: Math.min(implicitWidth, 320)
+                    }
+                    // Quality of the selected pane: low by default; HD only within the Site budget.
+                    Rectangle {
+                        id: hdBtn
+                        readonly property bool on: page.hdKeys.indexOf(page.selectedKey) >= 0
+                        visible: page.selectedRow >= 0 && !page.selectedDirect
+                        width: 52; height: 30; radius: Theme.radius
+                        color: on && !atSpeed ? Theme.accent : (hdHover.hovered ? Theme.surfaceAlt : Theme.surface)
+                        border.color: on ? Theme.accent : Theme.border
+                        // HD plays the sub stream above 1× (PlaybackSession::chooseRoute): "SD at speed".
+                        readonly property bool atSpeed: on && (group.speed > 1 || group.direction !== 1)
+                        Column {
+                            anchors.centerIn: parent
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: hdBtn.on && !hdBtn.atSpeed ? qsTr("HD") : qsTr("SD")
+                                color: hdBtn.on && !hdBtn.atSpeed ? Theme.window : hdBtn.atSpeed ? Theme.accent : Theme.text
+                                font.pixelSize: 12; font.bold: true
+                            }
+                            Text {
+                                visible: hdBtn.atSpeed
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: qsTr("at speed"); color: Theme.accent; font.pixelSize: 8
+                            }
+                        }
+                        HoverHandler { id: hdHover }
+                        ToolTip {
+                            visible: hdHover.hovered
+                            delay: 500
+                            x: (parent.width - width) / 2
+                            y: -height - 8
+                            contentItem: Text {
+                                text: hdBtn.atSpeed ? qsTr("HD comes back at 1× forward")
+                                    : hdBtn.on ? qsTr("Switch the selected pane to SD")
+                                                       : qsTr("Switch the selected pane to HD (full resolution)")
+                                color: Theme.text; font.pixelSize: 11
+                            }
+                            background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
+                        }
+                        TapHandler { onTapped: page.toggleHd(page.selectedKey) }
+                    }
                 }
             }
         }
@@ -986,11 +1113,31 @@ Item {
                 onDateSelected: (y, m, d) => {
                     page.stopAllPanes();
                     page.selYear = y; page.selMonth = m; page.selDay = d;
+                    group.newDay();
                     page.refresh();
                 }
             }
         }
     }
+
+    // Keys (wayfinder/playback-controls ticket 11): J = «, K = pause / play on, L = »,
+    // ←/→ = 10 s back / forward. Only while Playback is on screen; a text field that has
+    // focus keeps its own keys.
+    readonly property bool keysOn: active && !(Window.activeFocusItem
+                                               && Window.activeFocusItem.cursorPosition !== undefined)
+    Shortcut {
+        sequence: "J"
+        enabled: page.keysOn && group.reverseAvailable && !group.speedLocked
+        onActivated: page.speedAction(() => group.stepFast(-1))
+    }
+    Shortcut { sequence: "K"; enabled: page.keysOn; onActivated: page.togglePause() }
+    Shortcut {
+        sequence: "L"
+        enabled: page.keysOn && !group.speedLocked
+        onActivated: page.speedAction(() => group.stepFast(1))
+    }
+    Shortcut { sequence: "Left"; enabled: page.keysOn; onActivated: page.skip(-10) }
+    Shortcut { sequence: "Right"; enabled: page.keysOn; onActivated: page.skip(10) }
 
     UndoToast {
         id: undoToast
