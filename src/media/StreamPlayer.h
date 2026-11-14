@@ -113,6 +113,9 @@ public:
         // Reverse play: keyframe groups arrive newest first; each is shown backwards
         // (media/ReversePlay.h). Fixed for the session.
         bool reverse = false;
+        // HD fast forward: windows of the main stream the player paces by the frames'
+        // recording times (media/ReversePlay.h ForwardPacer). Fixed for the session.
+        bool forwardWindows = false;
         std::atomic<int> holdW{0}, holdH{0};
         std::atomic<bool> holdFisheye{false};
         std::atomic<int> playoutFrames{0};
@@ -197,6 +200,8 @@ public:
     qint64 frameEpochMs() const;
     // The next start() plays a reverse-play source (wayfinder/playback-controls ticket 12).
     void setReversePlayback(bool on) { m_reverse = on; }
+    // The next start() plays forwards in windows (wayfinder/live-replay ticket 09).
+    void setForwardWindows(bool on) { m_forwardWindows = on; }
     QSize holdPaneSize() const { return m_holdPane; }
     void setHoldPaneSize(const QSize &size);
     bool holdFisheye() const { return m_holdFisheye; }
@@ -322,6 +327,7 @@ private:
     qreal m_volume = 1.0;
     std::shared_ptr<std::atomic<double>> m_speed = std::make_shared<std::atomic<double>>(1.0);
     bool m_reverse = false;
+    bool m_forwardWindows = false;
     QSize m_holdPane;
     bool m_holdFisheye = false;
     bool m_linkTooSlow = false;

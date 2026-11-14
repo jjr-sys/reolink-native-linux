@@ -862,6 +862,9 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     // Groups that take longer to decode than to show (8K at 4×): too slow, like a slow link.
     rl::reverse::LinkPace decodePace;
     bool decodeSlowSaid = false;
+    // HD fast forward: paced here by the frames' recording times (live-replay ticket 09).
+    rl::reverse::ForwardPacer forwardPacer;
+    bool forwardSlowSaid = false;
     auto queueReversed = [&](QList<rl::reverse::GopReverser<QVideoFrame>::Item> items) {
         if (items.isEmpty())
             return;
@@ -984,6 +987,18 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                     (playbackStartUs + qint64(double(ptsUs - firstPtsUs) / pacedSpeed)) - av_gettime_relative();
                 if (waitUs > 0 && waitUs < 2000000)
                     abortableSleepUs(s.get(), waitUs);
+            } else if (s->forwardWindows) {
+                // Windows arrive faster than they play: show each frame at its recording
+                // time ÷ the speed. Falling behind (decoding or link) drops HD to SD.
+                const qint64 waitUs = forwardPacer.waitUs(
+                    frameEpoch, s->speed->load(std::memory_order_relaxed), av_gettime_relative());
+                if (waitUs > 0)
+                    abortableSleepUs(s.get(), waitUs);
+                if (forwardPacer.tooSlow() && !forwardSlowSaid) {
+                    forwardSlowSaid = true;
+                    qCInfo(lcMedia) << redacted(source) << "HD fast forward: can't keep up at this speed";
+                    postTooSlow(s);
+                }
             }
 
             // Live RTSP with smoothing on: give the frame its camera timestamp and the
@@ -1756,6 +1771,7 @@ void StreamPlayer::start()
     s->audioWanted.store(!m_muted && speed() == 1.0);
     s->smoothing.store(m_smoothing);
     s->reverse = m_reverse;
+    s->forwardWindows = m_forwardWindows;
     ++m_sessionId;
     s->holdW.store(m_holdPane.width());
     s->holdH.store(m_holdPane.height());

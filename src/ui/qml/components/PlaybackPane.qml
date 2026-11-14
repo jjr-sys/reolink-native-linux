@@ -167,9 +167,12 @@ Rectangle {
     signal clicked()
     // Reverse play reached the start of this camera's recording (ticket 12).
     signal reverseEnded()
-    // HD can't keep up backwards (the link or the decoding): this pane plays SD until the user's
-    // next play, jump or change of direction (live-replay ticket 06).
-    readonly property bool linkSlow: session.linkSlow && direction < 0
+    // HD fast forward found nothing ahead: a gap, the day's end, the newest footage (ticket 09).
+    signal forwardEnded()
+    // HD in windows can't keep up (the link or the decoding; forwards also a window refused near
+    // now): this pane plays SD until the user's next play, jump or change of direction
+    // (live-replay tickets 06, 09). PlaybackSession decides when that holds HD back.
+    readonly property bool linkSlow: session.hdHeldBack
     // The page calls this for the opens the user makes (not for the app's own restarts).
     function clearLinkSlow() { session.clearLinkSlow(); }
     property real _reverseRestartWall: 0   // the page's last restart of this pane backwards
@@ -292,6 +295,13 @@ Rectangle {
                 // Backwards, the stream ends at the start of a recording: the page decides.
                 if (root.direction < 0 && !root.stillMode) {
                     root.reverseEnded();
+                    return;
+                }
+                // HD fast forward runs until nothing is ahead (live-replay ticket 09): the page
+                // goes on to the next recording, or stops at the day's end.
+                if (session.route === PlaybackSession.BaichuanForwardMain && !root.stillMode
+                    && !root.covered(root.playheadSecs + 1)) {
+                    root.forwardEnded();
                     return;
                 }
                 if (!root.covered(root.playheadSecs + 1))

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/BcMediaParser.h"
+#include "media/ReversePlay.h"
 
 #include <QByteArray>
 #include <QDate>
@@ -30,6 +31,8 @@ class QTcpSocket;
 // No AGPL neolink code.
 namespace rl {
 
+class BcDownloadPort;
+
 class BaichuanClient
 {
 public:
@@ -46,6 +49,9 @@ public:
         // Recorded playback backwards from startEpoch (wayfinder/playback-controls ticket 12):
         // windows fetched with cmd 143, keyframe groups sent newest first (media/ReversePlay.h).
         bool reverse = false;
+        // HD fast forward (wayfinder/live-replay ticket 09): windows ahead of startEpoch,
+        // fetched with cmd 143, whole keyframe groups sent in order; the player paces them.
+        bool forwardWindows = false;
     };
 
     explicit BaichuanClient(Params params);
@@ -68,8 +74,10 @@ public:
     void setAudioHandler(std::function<void(const QByteArray &)> handler);
     // Playback speed shared with the player (1 = real time). Read as frames are paced.
     void setSpeedCell(std::shared_ptr<std::atomic<double>> cell) { m_speed = std::move(cell); }
-    // Reverse play on the main stream: called once (network thread) when the link can't feed
-    // it (media/ReversePlay.h LinkPace). Set before start().
+    // Windows of the main stream (reverse play, HD fast forward): called once (network thread)
+    // when the link can't feed them (media/ReversePlay.h LinkPace), or forwards when the
+    // windows run out (the newest footage, a gap, an error): play SD from there. Set before
+    // start().
     void setLinkSlowHandler(std::function<void()> handler) { m_linkSlow = std::move(handler); }
 
     // Blocking read of decoded Annex-B bytes (for an AVIOContext read callback).
@@ -82,6 +90,16 @@ public:
 private:
     void run();                                    // worker entry
     void runReverse();                             // reverse play: windows behind the playhead
+    void runForwardWindows();                      // HD fast forward: windows ahead of it
+    struct FetchedWindow {
+        QList<reverse::Frame> frames;
+        double fetchSecs = 0;
+        bool failed = false;   // refused or broken off (no recording there is not a failure)
+    };
+    FetchedWindow fetchWindow(BcDownloadPort &port, qint64 startSecs, qint64 endSecs);
+    void pushFrames(const QList<reverse::Frame> &gop, bool keysOnly);
+    // Backwards at this speed sends keyframes only, as the recorder's 16× does forwards.
+    static constexpr double kKeyframesOnlySpeed = 16.0;
     bool connectAndLogin(QTcpSocket &sock, QByteArray &aesKey);
     bool startStream(QTcpSocket &sock, const QByteArray &aesKey);
     // Recorder-paced replay (cmd 381/382/383, wayfinder/playback-controls ticket 10).

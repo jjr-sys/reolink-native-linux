@@ -26,9 +26,12 @@ class PlaybackSession : public QObject
     Q_PROPERTY(int direction READ direction WRITE setDirection NOTIFY directionChanged)
     Q_PROPERTY(bool linkSlow READ linkSlow WRITE setLinkSlow NOTIFY linkSlowChanged)
     Q_PROPERTY(rl::PlaybackSession::Route route READ route NOTIFY routeChanged)
+    // linkSlow is holding HD back right now ("SD · too slow" on the HD chip).
+    Q_PROPERTY(bool hdHeldBack READ hdHeldBack NOTIFY hdHeldBackChanged)
 
 public:
-    enum class Route { Http, BaichuanMain, BaichuanSub, BaichuanReverse, BaichuanReverseMain };
+    enum class Route { Http, BaichuanMain, BaichuanSub, BaichuanReverse, BaichuanReverseMain,
+                       BaichuanForwardMain };
     Q_ENUM(Route)
     enum class Outcome { Gap, NoSource, Opened, OpenedHd, SeekedInPlace };
     Q_ENUM(Outcome)
@@ -41,10 +44,13 @@ public:
 
     // Pure policy. Direct (Frigate) footage is one HTTP stream at 1x: HD and speed
     // do not apply. A Reolink NVR always plays over native Baichuan: HD = main stream,
-    // else sub, at any speed. (Its HTTP-FLV playback endpoint is not used: NVRs drop
-    // every playback.bcs request (live FLV works), and it needs RTMP enabled anyway.)
-    // Backwards (direction -1) plays windows of the stream (ticket 12): the main stream when HD
-    // (live-replay ticket 06), else the sub stream.
+    // else sub. (Its HTTP-FLV playback endpoint is not used: NVRs drop every playback.bcs
+    // request (live FLV works), and it needs RTMP enabled anyway.)
+    // HD holds up to kHdTopSpeed both ways (live-replay ticket 09), SD above. Forwards at 1×
+    // and slower the recorder paces the main stream; above 1× it sends only its keyframes, so
+    // HD fast forward fetches windows of it (BaichuanForwardMain). Backwards (direction -1)
+    // always plays windows (ticket 12): the main stream when HD (live-replay ticket 06).
+    static constexpr double kHdTopSpeed = 4.0;
     static Route chooseRoute(bool hd, double speed, bool direct, int direction = 1);
     Route route() const;
 
@@ -60,12 +66,14 @@ public:
     void setSpeed(double speed);
     int direction() const { return m_direction; }
     void setDirection(int direction);
-    // HD can't keep up backwards (the link or the decoding, StreamPlayer::linkTooSlow): play SD
+    // HD in windows can't keep up (the link or the decoding, StreamPlayer::linkTooSlow; or
+    // forwards, the windows ran out near now): play SD while windows would carry HD,
     // until the next open the user makes — a play, jump or seek calls clearLinkSlow() (no reopen
     // of its own: that open is the reopen), and a change of direction clears it too.
     bool linkSlow() const { return m_linkSlow; }
     void setLinkSlow(bool slow);
     Q_INVOKABLE void clearLinkSlow();
+    bool hdHeldBack() const { return m_hdHeldBack; }
 
     // Play the wall-clock moment `epoch`. `covered` is the caller's timeline verdict
     // (a gap is normal: stop, no error). A native session is moved in place when one
@@ -85,6 +93,7 @@ signals:
     void directionChanged();
     void linkSlowChanged();
     void routeChanged();
+    void hdHeldBackChanged();
     // The transport for the current moment changed while playing: replay it.
     void reopenNeeded();
 
@@ -92,7 +101,8 @@ private:
     template <typename Change> void changeRouteAware(Change change);
     bool direct() const { return m_transport->direct(m_row); }
     Outcome openHttp(qint64 epoch);
-    bool openOrSeekNative(qint64 epoch, bool main, bool reverse = false);
+    bool openOrSeekNative(qint64 epoch, bool main, NativeWindows windows = NativeWindows::None);
+    void updateHdHeldBack();
 
     Outcome playAtImpl(double epochSecs, bool covered);
     std::unique_ptr<PlaybackTransport> m_transport;
@@ -106,9 +116,10 @@ private:
     // change opens the other stream instead of seeking the running one in place.
     bool m_nativeOpen = false;
     bool m_openMain = false;
-    bool m_openReverse = false;
+    NativeWindows m_openWindows = NativeWindows::None;
     int m_direction = 1;
     bool m_linkSlow = false;
+    bool m_hdHeldBack = false;
 };
 
 } // namespace rl

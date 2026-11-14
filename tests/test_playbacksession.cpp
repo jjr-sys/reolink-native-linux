@@ -30,10 +30,13 @@ public:
     {
         opens.append({Route::Http, row, epoch, u});
     }
-    void openBaichuan(int row, qint64 epoch, bool main, bool reverse) override
+    void openBaichuan(int row, qint64 epoch, bool main, NativeWindows windows) override
     {
-        opens.append({reverse ? (main ? Route::BaichuanReverseMain : Route::BaichuanReverse)
-                              : main ? Route::BaichuanMain : Route::BaichuanSub,
+        opens.append({windows == NativeWindows::Backward
+                          ? (main ? Route::BaichuanReverseMain : Route::BaichuanReverse)
+                      : windows == NativeWindows::Forward ? Route::BaichuanForwardMain
+                      : main                              ? Route::BaichuanMain
+                                                          : Route::BaichuanSub,
                       row, epoch, {}});
     }
     void stop() override { ++stops; isStreaming = false; }
@@ -82,16 +85,22 @@ private slots:
         QCOMPARE(PlaybackSession::chooseRoute(false, 2.0, false), Route::BaichuanSub);
         QCOMPARE(PlaybackSession::chooseRoute(true, 1.0, false), Route::BaichuanMain);
         QCOMPARE(PlaybackSession::chooseRoute(true, 0.5, false), Route::BaichuanMain);
-        // Above 1x the recorder sends the main stream as keyframes only, so HD plays the sub
-        // stream at speed and comes back at 1x (wayfinder/playback-controls ticket 10).
-        QCOMPARE(PlaybackSession::chooseRoute(true, 2.0, false), Route::BaichuanSub);
+        // Above 1x the recorder sends the main stream as keyframes only, so HD fast forward
+        // fetches windows of it instead, up to 4x (wayfinder/live-replay ticket 09); above
+        // that HD plays the sub stream at speed (recorder-paced, 16x keyframes only).
+        QCOMPARE(PlaybackSession::chooseRoute(true, 2.0, false), Route::BaichuanForwardMain);
+        QCOMPARE(PlaybackSession::chooseRoute(true, 4.0, false), Route::BaichuanForwardMain);
+        QCOMPARE(PlaybackSession::chooseRoute(true, 8.0, false), Route::BaichuanSub);
         QCOMPARE(PlaybackSession::chooseRoute(true, 16.0, false), Route::BaichuanSub);
+        QCOMPARE(PlaybackSession::chooseRoute(false, 4.0, false), Route::BaichuanSub);
         // Direct (Frigate) footage has one HTTP stream at 1x: HD and speed are ignored.
         QCOMPARE(PlaybackSession::chooseRoute(true, 4.0, true), Route::Http);
-        // Backwards: windows of the stream (ticket 12); HD plays the main stream backwards at
-        // any speed while the link keeps up (live-replay ticket 06); Frigate stays HTTP.
+        // Backwards: windows of the stream (ticket 12); HD plays the main stream backwards up
+        // to 4x while the link keeps up (live-replay tickets 06, 09), SD above; Frigate HTTP.
         QCOMPARE(PlaybackSession::chooseRoute(true, 1.0, false, -1), Route::BaichuanReverseMain);
         QCOMPARE(PlaybackSession::chooseRoute(true, 4.0, false, -1), Route::BaichuanReverseMain);
+        QCOMPARE(PlaybackSession::chooseRoute(true, 8.0, false, -1), Route::BaichuanReverse);
+        QCOMPARE(PlaybackSession::chooseRoute(true, 16.0, false, -1), Route::BaichuanReverse);
         QCOMPARE(PlaybackSession::chooseRoute(false, 0.25, false, -1), Route::BaichuanReverse);
         QCOMPARE(PlaybackSession::chooseRoute(false, 1.0, true, -1), Route::Http);
     }
@@ -245,9 +254,9 @@ private slots:
         f.s.setHd(true);
         QCOMPARE(spy.count(), 1);
     }
-    // HD above 1x reopens on the sub stream (keyframes only on main at speed, ticket 10);
-    // slow speeds keep HD.
-    void speedAboveOneInHdReopensOnSub()
+    // HD above 4x reopens on the sub stream (keyframes only on main at speed, ticket 10; HD
+    // to 4x in windows, live-replay ticket 09); slow speeds keep HD.
+    void speedAbove4xInHdReopensOnSub()
     {
         Fixture f;
         f.s.setHd(true);
@@ -255,7 +264,7 @@ private slots:
         QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
         f.s.setSpeed(0.5);
         QCOMPARE(spy.count(), 0);
-        f.s.setSpeed(2.0);
+        f.s.setSpeed(8.0);
         QCOMPARE(spy.count(), 1);
         QCOMPARE(f.s.route(), Route::BaichuanSub);
     }
@@ -343,6 +352,58 @@ private slots:
         QVERIFY(!f.s.linkSlow());
         f.s.setDirection(-1);
         QCOMPARE(f.s.route(), Route::BaichuanReverseMain);
+    }
+    // HD fast forward (live-replay ticket 09): 1x → 2x reopens on windows of the main stream,
+    // 2x → 4x keeps the run, 4x → 8x reopens on the sub stream; a windowed run never seeks in
+    // place (its windows are fetched ahead of the old moment).
+    void hdFastForwardPlaysMainWindowsUpTo4x()
+    {
+        Fixture f;
+        f.s.setHd(true);
+        QCOMPARE(f.s.playAt(6000), Outcome::OpenedHd);
+        QCOMPARE(f.t->opens.last().route, Route::BaichuanMain);
+        f.t->isStreaming = true;
+        QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
+        f.s.setSpeed(2.0);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(f.s.playAt(6000), Outcome::OpenedHd);
+        QCOMPARE(f.t->opens.last().route, Route::BaichuanForwardMain);
+        f.s.setSpeed(4.0);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(f.s.playAt(7000), Outcome::OpenedHd); // a seek reopens
+        QCOMPARE(f.t->seeks, 0);
+        f.s.setSpeed(8.0);
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(f.s.playAt(7000), Outcome::Opened);
+        QCOMPARE(f.t->opens.last().route, Route::BaichuanSub);
+    }
+    // Too slow forwards (or the windows run out near now) drops to SD at speed until the user's
+    // next open, as backwards; recorder-paced HD at 1x is not affected.
+    void slowLinkDropsHdFastForwardToSd()
+    {
+        Fixture f;
+        f.s.setHd(true);
+        f.s.setSpeed(4.0);
+        QCOMPARE(f.s.playAt(6000), Outcome::OpenedHd);
+        f.t->isStreaming = true;
+        QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
+        QVERIFY(!f.s.hdHeldBack());
+        f.s.setLinkSlow(true);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(f.s.route(), Route::BaichuanSub);
+        QVERIFY(f.s.hdHeldBack());          // the HD chip says "too slow"
+        f.s.setSpeed(1.0);
+        QCOMPARE(f.s.route(), Route::BaichuanMain);
+        QVERIFY(!f.s.hdHeldBack());         // recorder-paced HD at 1x is not held back
+        f.s.setSpeed(8.0);
+        QVERIFY(!f.s.hdHeldBack());         // SD at speed anyway
+        f.s.setSpeed(2.0);
+        QCOMPARE(f.s.route(), Route::BaichuanSub);
+        QSignalSpy held(&f.s, &PlaybackSession::hdHeldBackChanged);
+        f.s.clearLinkSlow();
+        QCOMPARE(f.s.route(), Route::BaichuanForwardMain);
+        QVERIFY(!f.s.hdHeldBack());
+        QCOMPARE(held.count(), 1);
     }
     void hdOnDirectRowDoesNotReopen()
     {

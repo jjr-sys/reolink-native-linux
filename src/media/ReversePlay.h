@@ -109,6 +109,48 @@ private:
     bool m_tooSlow = false;
 };
 
+// HD fast forward (wayfinder/live-replay ticket 09): above 1× the recorder sends the main stream
+// as keyframes only, so the app fetches windows of it ahead of the playhead (cmd 143), sends
+// whole keyframe groups in order and paces them itself.
+//
+// The recording seconds to fetch from `fromMs` on: `slackSecs` before it (the window must hold
+// the keyframe the playhead's group starts on) to `lengthSecs` after its second.
+Window windowFrom(qint64 fromMs, int lengthSecs = 10, int slackSecs = 4);
+
+// A fetched window's groups to send, in order: from the last keyframe at or before `fromMs`
+// (else the first after it), frames from `ceilingMs` (the next midnight) on dropped. Only
+// complete groups — the trailing one, cut by the window's end, is fetched again from
+// nextFromMs — unless `last` (the longest window, or the day's end), which sends it too.
+// Nothing sent but nextFromMs set: fetch a longer window from there (one group, or frames
+// with no keyframe yet). nextFromMs is -1 when the run ends: nothing at or after `fromMs`
+// (the newest footage or a gap), or after `last`.
+struct ForwardGops {
+    QList<QList<Frame>> inOrder;
+    qint64 nextFromMs = -1;
+};
+ForwardGops forwardGops(const QList<Frame> &window, qint64 fromMs, qint64 ceilingMs, bool last);
+
+// The player's pacing of windowed forward play: each frame shown at its recording time ÷ the
+// speed after the anchor (the first frame, a change of speed, a jump of more than 5 s or back
+// in the recording). A frame more than a second late re-anchors there (no rush to catch up);
+// twice within 20 s of footage means too slow (HD drops to SD, as backwards).
+class ForwardPacer
+{
+public:
+    // Microseconds to wait before showing the frame of `epochMs` at `nowUs` (a monotonic
+    // clock); 0 = at once; at most a second.
+    qint64 waitUs(qint64 epochMs, double speed, qint64 nowUs);
+    bool tooSlow() const { return m_tooSlow; }
+
+private:
+    qint64 m_anchorMs = -1;
+    qint64 m_anchorUs = 0;
+    double m_speed = 0;
+    qint64 m_lastMs = -1;
+    qint64 m_lateMs = -1;     // the recording time of the last late frame
+    bool m_tooSlow = false;
+};
+
 // How long to wait before showing a frame of `epochMs` after one of `prevMs` (backwards):
 // the gap in recording time divided by the speed; at once for the first frame or an
 // out-of-order one; at most a second.

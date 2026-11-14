@@ -1,5 +1,7 @@
 #include "ui/PlaybackGroup.h"
 
+#include "media/PlaybackSession.h"
+
 #include <QCoreApplication>
 #include <QSet>
 
@@ -43,15 +45,20 @@ bool PlaybackGroup::canStep(int direction) const
     return !m_locked && (direction == 1 || (direction == -1 && m_reverse));
 }
 
+bool PlaybackGroup::sdAtSpeed() const
+{
+    return m_speed > PlaybackSession::kHdTopSpeed;
+}
+
 void PlaybackGroup::stepFast(int direction)
 {
     if (!canStep(direction))
         return;
-    const double top = direction == 1 ? 16.0 : 4.0;
+    // One ladder both ways (wayfinder/live-replay ticket 09).
     if (direction != m_direction || m_speed < 2.0)
         setSpeed(direction, 2.0);
     else
-        setSpeed(direction, m_speed >= top ? 1.0 : m_speed * 2);
+        setSpeed(direction, m_speed >= kTopSpeed ? 1.0 : m_speed * 2);
 }
 
 void PlaybackGroup::stepSlow(int direction)

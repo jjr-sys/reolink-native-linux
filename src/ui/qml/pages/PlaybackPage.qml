@@ -448,6 +448,31 @@ Item {
         }
         playAt(prev, true);
     }
+    function nextStart(key, sec) {
+        var segs = segsByKey[key] || [];
+        var best = -1;
+        for (var i = 0; i < segs.length; i++)
+            if (segs[i].start > sec + 0.5 && (best < 0 || segs[i].start < best))
+                best = segs[i].start;
+        return best;
+    }
+    // HD fast forward ran out of footage ahead (live-replay ticket 09). The leading camera's takes
+    // every pane to the start of its next recording, or stops when there is none that day.
+    function onForwardEnded(key) {
+        if (group.direction <= 0 || key !== reverseLeadKey())
+            return;
+        var next = nextStart(key, playheadSecs);
+        if (next < 0) {
+            stopAllPanes();
+            statusText.text = qsTr("Nothing later that day");
+            return;
+        }
+        for (var i = 0; i < paneRepeater.count; i++) {
+            var p = paneRepeater.itemAt(i);
+            if (p) p.freeze();
+        }
+        playAt(next, true);
+    }
     // Backwards, panes that aren't leading play at their own pace: one that stopped at the
     // start of its recording starts again when the playhead reaches earlier footage of it,
     // and one more than 5 s from the playhead starts again at the playhead.
@@ -878,6 +903,7 @@ Item {
                         onVisibleChanged: page.countStreaming()
                         onClicked: group.select(cameraKey)
                         onReverseEnded: page.onReverseEnded(cameraKey)
+                        onForwardEnded: page.onForwardEnded(cameraKey)
                         onDoubleClicked: {
                             page.maximizedKey = isMax ? "" : cameraKey;
                             group.select(cameraKey);
@@ -1080,7 +1106,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             glyph: "«"; caption: qsTr("fast"); dim: centre.noReverse
                             lit: bar.playing && group.direction === -1 && group.speed >= 2
-                            tip: dim ? centre.backTip : qsTr("Fast backwards: 2× → 4× → back to 1× (J)")
+                            tip: dim ? centre.backTip : qsTr("Fast backwards: 2× → 4× → 8× → 16× → back to 1× (J)")
                             onActivated: page.speedAction(() => group.stepFast(-1))
                         }
                         Ctl {
@@ -1155,9 +1181,9 @@ Item {
                         width: 52; height: 30; radius: Theme.radius
                         color: on && !sdNow ? Theme.accent : (hdHover.hovered ? Theme.surfaceAlt : Theme.surface)
                         border.color: on ? Theme.accent : Theme.border
-                        // HD plays the sub stream above 1× (PlaybackSession::chooseRoute): "SD at speed".
-                        // Backwards stays HD while the link and decoding keep up (live-replay ticket 06).
-                        readonly property bool atSpeed: on && group.direction > 0 && group.speed > 1
+                        // HD holds up to 4× both ways while the link and decoding keep up; above
+                        // that the sub stream plays (PlaybackSession::chooseRoute): "SD at speed".
+                        readonly property bool atSpeed: on && group.sdAtSpeed
                         // paneRepeater.count: re-read when panes are created (itemAt isn't notifying).
                         readonly property bool linkSlow: { paneRepeater.count;
                             var p = page.selectedRow >= 0 ? paneRepeater.itemAt(page.selectedRow) : null;
@@ -1174,7 +1200,7 @@ Item {
                             Text {
                                 visible: hdBtn.sdNow
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                text: hdBtn.linkSlow ? qsTr("too slow") : qsTr("at speed")
+                                text: hdBtn.atSpeed ? qsTr("at speed") : qsTr("too slow")
                                 color: Theme.accent; font.pixelSize: 8
                             }
                         }
@@ -1185,8 +1211,8 @@ Item {
                             x: (parent.width - width) / 2
                             y: -height - 8
                             contentItem: Text {
-                                text: hdBtn.linkSlow ? qsTr("SD: the link or this computer is too slow for HD backwards here; HD is tried again on the next play, jump or change of direction")
-                                : hdBtn.atSpeed ? qsTr("HD comes back at 1× forward")
+                                text: hdBtn.atSpeed ? qsTr("HD comes back at 4× or slower")
+                                : hdBtn.linkSlow ? qsTr("SD: HD can't keep up here (the link, this computer, or the newest footage); HD is tried again on the next play, jump or change of direction")
                                     : hdBtn.on ? qsTr("Switch the selected pane to SD")
                                                        : qsTr("Switch the selected pane to HD (full resolution)")
                                 color: Theme.text; font.pixelSize: 11

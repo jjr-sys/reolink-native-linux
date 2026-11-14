@@ -20,7 +20,7 @@ namespace rl {
 //    there is always one: the first in pane order to start with, or when it is removed.
 //    HD, sound, Export and Download range act on it.
 //  - Speed and direction (wayfinder/playback-controls ticket 11, layout B4): one value for
-//    every pane. » steps 2 → 4 → 8 → 16 → 1× forwards (2 → 4 → 1× backwards), the slow
+//    every pane. » and « step 2 → 4 → 8 → 16 → 1× (one ladder both ways), the slow
 //    buttons ½ → ¼ → 1×; a button of the other cycle or direction starts its cycle afresh.
 //    ◀ / ▶ play at 1× that way. Backwards needs reverseAvailable (reverse play, ticket 12).
 //    A new day or a change of selected cameras resets to 1× forward. With only Frigate
@@ -34,11 +34,15 @@ class PlaybackGroup : public QObject
     Q_PROPERTY(double speed READ speed NOTIFY speedChanged)
     Q_PROPERTY(int direction READ direction NOTIFY speedChanged)          // 1 forward, -1 backward
     Q_PROPERTY(bool offNormal READ offNormal NOTIFY speedChanged)         // anything but 1× forward
+    // Above the HD top speed every pane plays SD ("SD · at speed", PlaybackSession::chooseRoute).
+    Q_PROPERTY(bool sdAtSpeed READ sdAtSpeed NOTIFY speedChanged)
     Q_PROPERTY(bool reverseAvailable READ reverseAvailable WRITE setReverseAvailable NOTIFY reverseAvailableChanged)
     Q_PROPERTY(QStringList directKeys READ directKeys WRITE setDirectKeys NOTIFY directKeysChanged)
     Q_PROPERTY(bool speedLocked READ speedLocked NOTIFY speedLockedChanged)
 
 public:
+    static constexpr double kTopSpeed = 16.0; // the recorder's keyframe mode (cmd 381)
+
     explicit PlaybackGroup(QObject *parent = nullptr);
 
     SiteSelection *selection() const { return m_selection; }
@@ -48,6 +52,7 @@ public:
     double speed() const { return m_speed; }
     int direction() const { return m_direction; }
     bool offNormal() const { return m_direction != 1 || m_speed != 1.0; }
+    bool sdAtSpeed() const;
     bool reverseAvailable() const { return m_reverse; }
     void setReverseAvailable(bool on);
     QStringList directKeys() const { return m_direct; }

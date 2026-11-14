@@ -181,20 +181,26 @@ private slots:
         QCOMPARE(spy.count(), 0);
     }
 
-    // Backwards (once reverse play exists): « steps 2 → 4 → 1×, slow back ½ → ¼ → 1×,
-    // and both end at 1× backwards.
+    // Backwards (once reverse play exists): « steps 2 → 4 → 8 → 16 → 1× like » (one ladder
+    // both ways, live-replay ticket 09), slow back ½ → ¼ → 1×, and both end at 1× backwards.
     void backwardCyclesEndAt1xBackwards()
     {
         Fixture f;
         f.selection.setSaved(QStringLiteral("2:0"));
         f.group.setReverseAvailable(true);
         QList<double> seen;
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 5; ++i) {
             f.group.stepFast(-1);
             seen << f.group.speed();
             QCOMPARE(f.group.direction(), -1);
         }
-        QCOMPARE(seen, (QList<double>{2, 4, 1}));
+        QCOMPARE(seen, (QList<double>{2, 4, 8, 16, 1}));
+        f.group.stepFast(-1);
+        f.group.stepFast(-1);
+        QVERIFY(!f.group.sdAtSpeed());      // HD holds to 4x both ways
+        f.group.stepFast(-1);
+        QVERIFY(f.group.sdAtSpeed());       // 8x: SD at speed
+        f.group.playBackward();
         seen.clear();
         for (int i = 0; i < 3; ++i) {
             f.group.stepSlow(-1);

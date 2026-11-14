@@ -1,5 +1,7 @@
 #include "media/ReversePlay.h"
 
+#include <algorithm>
+
 namespace rl::reverse {
 
 Window windowBefore(qint64 cutoffMs, int lengthSecs, int slackSecs)
@@ -64,6 +66,84 @@ void LinkPace::window(double fetchSecs, double playSecs)
     m_slowInARow = fetchSecs > 0.8 * playSecs ? m_slowInARow + 1 : 0;
     if (m_slowInARow >= 2)
         m_tooSlow = true;
+}
+
+Window windowFrom(qint64 fromMs, int lengthSecs, int slackSecs)
+{
+    Window w;
+    const qint64 second = fromMs / 1000;
+    w.startSecs = second - slackSecs;
+    w.endSecs = second + lengthSecs;
+    return w;
+}
+
+ForwardGops forwardGops(const QList<Frame> &window, qint64 fromMs, qint64 ceilingMs, bool last)
+{
+    ForwardGops g;
+    const bool ahead = std::any_of(window.begin(), window.end(), [&](const Frame &f) {
+        return f.epochMs >= fromMs && f.epochMs < ceilingMs;
+    });
+    if (!ahead)
+        return g;
+    // Start on the last keyframe at or before the playhead, else the first after it.
+    qint64 startMs = -1;
+    for (const Frame &f : window)
+        if (f.key && f.epochMs >= 0 && f.epochMs <= fromMs && f.epochMs > startMs)
+            startMs = f.epochMs;
+    if (startMs < 0)
+        for (const Frame &f : window)
+            if (f.key && f.epochMs > fromMs && f.epochMs < ceilingMs) {
+                startMs = f.epochMs;
+                break;
+            }
+    if (startMs < 0) {             // frames ahead, no keyframe yet: a longer window
+        if (!last)
+            g.nextFromMs = fromMs;
+        return g;
+    }
+    QList<QList<Frame>> groups;
+    for (const Frame &f : window) {
+        if (f.epochMs < startMs || f.epochMs >= ceilingMs)
+            continue;
+        if (f.key)
+            groups.append(QList<Frame>());
+        if (groups.isEmpty())
+            continue;
+        groups.last().append(f);
+    }
+    if (groups.isEmpty())
+        return g;
+    if (!last) {
+        g.nextFromMs = groups.last().first().epochMs;
+        groups.removeLast();
+    }
+    g.inOrder = std::move(groups);
+    return g;
+}
+
+qint64 ForwardPacer::waitUs(qint64 epochMs, double speed, qint64 nowUs)
+{
+    if (epochMs < 0 || speed <= 0)
+        return 0;
+    const qint64 last = m_lastMs;
+    m_lastMs = epochMs;
+    auto anchor = [&] {
+        m_anchorMs = epochMs;
+        m_anchorUs = nowUs;
+        m_speed = speed;
+        return qint64(0);
+    };
+    if (m_anchorMs < 0 || speed != m_speed || epochMs < last || epochMs - last > 5000)
+        return anchor();
+    const qint64 dueUs = m_anchorUs + qint64(double(epochMs - m_anchorMs) * 1000.0 / speed);
+    const qint64 wait = dueUs - nowUs;
+    if (wait < -1'000'000) {
+        if (m_lateMs >= 0 && epochMs - m_lateMs <= 20'000)
+            m_tooSlow = true;
+        m_lateMs = epochMs;
+        return anchor();
+    }
+    return qBound(qint64(0), wait, qint64(1'000'000));
 }
 
 qint64 waitUs(qint64 prevMs, qint64 epochMs, double speed)
