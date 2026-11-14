@@ -2,6 +2,7 @@
 
 #include "protocol/BcCrypto.h"
 #include "protocol/BcLiveFramePacer.h"
+#include "protocol/BcReplay.h"
 
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -95,22 +96,6 @@ bool parseMessage(QByteArray &buf, Msg &m)
     m.body = buf.mid(headerLen, static_cast<int>(bodyLen));
     buf.remove(0, headerLen + static_cast<int>(bodyLen));
     return true;
-}
-
-QByteArray timeXml(const QString &tag, const QDateTime &dt)
-{
-    const QDate d = dt.date();
-    const QTime t = dt.time();
-    return QStringLiteral("<%1><year>%2</year><month>%3</month><day>%4</day>"
-                          "<hour>%5</hour><minute>%6</minute><second>%7</second></%1>")
-        .arg(tag)
-        .arg(d.year())
-        .arg(d.month())
-        .arg(d.day())
-        .arg(t.hour())
-        .arg(t.minute())
-        .arg(t.second())
-        .toUtf8();
 }
 
 } // namespace
@@ -267,17 +252,51 @@ bool BaichuanClient::startStream(QTcpSocket &sock, const QByteArray &aesKey)
         return true;
     }
 
-    // Recorded playback by time (cmd 143). Media follows on msg_num 20.
-    sendPlayback(sock, aesKey, m_p.startEpoch);
+    // Recorded playback, paced by the recorder (cmd 381). Media follows on msg_num 20.
+    sendReplayStart(sock, aesKey, m_p.startEpoch, wantedReplaySpeed());
     m_streamTail = netBuf;
     return true;
 }
 
-// Request recorded playback from `startEpoch` by time (cmd 143). Used both to
-// start playback and to seek in place. Structure verified across independent
-// PCAP-derived implementations: a FileInfoList/FileInfo with the channel, stream,
-// and a start/end time range.
-void BaichuanClient::sendPlayback(QTcpSocket &sock, const QByteArray &aesKey, qint64 startEpoch)
+int BaichuanClient::wantedReplaySpeed() const
+{
+    return bc::recorderSpeed(m_speed ? m_speed->load(std::memory_order_relaxed) : 1.0);
+}
+
+// A request on this client's stream, in the playback framing (header channel = camera,
+// msg_num 20, no Extension), with an AES body (empty = header only).
+void BaichuanClient::sendOnStream(QTcpSocket &sock, const QByteArray &aesKey, quint32 cmd,
+                                  const QByteArray &xml)
+{
+    sock.write(frame(cmd, m_p.channel, m_p.mainStream ? 0 : 1, 20, 0, 0x6414,
+                     xml.isEmpty() ? QByteArray() : bc::aesCfb(xml, aesKey, false)));
+    sock.flush();
+}
+
+void BaichuanClient::sendReplayStart(QTcpSocket &sock, const QByteArray &aesKey, qint64 startEpoch,
+                                     int speed)
+{
+    const QDateTime start = QDateTime::fromSecsSinceEpoch(startEpoch);
+    m_replayDay = start.date();
+    m_replaySpeed = speed;
+    sendOnStream(sock, aesKey, bc::kReplayStart, bc::replayStartXml(m_p.channel, m_p.mainStream, speed, start));
+}
+
+void BaichuanClient::sendReplaySeek(QTcpSocket &sock, const QByteArray &aesKey, qint64 toEpoch)
+{
+    sendOnStream(sock, aesKey, bc::kReplaySeek,
+                 bc::replaySeekXml(m_p.channel, m_p.mainStream, QDateTime::fromSecsSinceEpoch(toEpoch)));
+}
+
+void BaichuanClient::sendReplayStop(QTcpSocket &sock, const QByteArray &aesKey)
+{
+    sendOnStream(sock, aesKey, bc::kReplayStop, QByteArray());
+}
+
+// Request the day's footage from `startEpoch` by time (cmd 143, a download: unpaced).
+// Structure verified across independent PCAP-derived implementations: a
+// FileInfoList/FileInfo with the channel, stream, and a start/end time range.
+void BaichuanClient::sendDownloadByTime(QTcpSocket &sock, const QByteArray &aesKey, qint64 startEpoch)
 {
     const quint8 streamByte = m_p.mainStream ? 0 : 1;
     const QByteArray streamName = m_p.mainStream ? QByteArrayLiteral("mainStream")
@@ -293,8 +312,8 @@ void BaichuanClient::sendPlayback(QTcpSocket &sock, const QByteArray &aesKey, qi
         "<logicChnBitmap>255</logicChnBitmap>\n<channelId>" + ch + "</channelId>\n" + uidEl +
         "<supportSub>" + QByteArray(m_p.mainStream ? "0" : "1") + "</supportSub>\n"
         "<streamType>" + streamName + "</streamType>\n"
-        + timeXml(QStringLiteral("startTime"), start) + "\n"
-        + timeXml(QStringLiteral("endTime"), dayEnd) + "\n</FileInfo>\n</FileInfoList>\n</body>\n";
+        + bc::timeXml("startTime", start) + "\n"
+        + bc::timeXml("endTime", dayEnd) + "\n</FileInfo>\n</FileInfoList>\n</body>\n";
     sock.write(frame(143, m_p.channel, streamByte, 20, 0, 0x6414, bc::aesCfb(byTime, aesKey, false)));
     sock.flush();
 }
@@ -343,6 +362,15 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
     BcLiveFramePacer livePacer;
     quint32 firstMicros = 0;
     double pacedSpeed = 1.0; // speed the pacing anchor was set at
+    // Where playback is (for speed changes): only keyframes carry a usable wall-clock time
+    // (other frames' `time` is junk), so it is the last keyframe's time plus the frame clock since.
+    quint32 lastTime = 0;
+    quint32 keyTime = 0, keyMicros = 0;
+    // A restart waits for the recorder to answer the stop (382) before the new start (381):
+    // sent back to back, the stop also ends the new replay. 0 = none pending.
+    qint64 restartAt = 0;
+    int restartSpeed = 1;
+    QElapsedTimer restartWait;
     parser.onVideo = [&](const BcMediaParser::VideoFrame &f) {
         if (f.codec != BcMediaParser::Codec::Unknown) {
             QMutexLocker lock(&m_mutex);
@@ -360,6 +388,12 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
             started = true;
             seekTarget = 0;
         }
+        if (f.keyFrame && f.time != 0) {
+            keyTime = f.time;
+            keyMicros = f.microseconds;
+        }
+        if (keyTime != 0)
+            lastTime = keyTime + quint32(qMax<qint64>(0, qint64(f.microseconds) - qint64(keyMicros)) / 1000000);
         if (pace && f.microseconds) {
             if (!clock.isValid()) {
                 clock.start();
@@ -417,8 +451,24 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
                 m_seekEpoch = 0;
             }
         }
+        // A new recorder speed restarts the replay from the last frame shown (382 then 381);
+        // ¼× and ½× stay at 1× on the recorder and only change the pacing below.
+        if (seekTo <= 0 && pace && started && lastTime != 0 && wantedReplaySpeed() != m_replaySpeed)
+            seekTo = lastTime;
         if (seekTo > 0) {
-            sendPlayback(sock, aesKey, seekTo);
+            const int speed = wantedReplaySpeed();
+            if (restartAt == 0 && speed == m_replaySpeed
+                && bc::seekInPlace(m_replayDay, QDateTime::fromSecsSinceEpoch(seekTo))) {
+                sendReplaySeek(sock, aesKey, seekTo);
+            } else {
+                if (restartAt == 0) {
+                    sendReplayStop(sock, aesKey);
+                    restartWait.start(); // a later seek while waiting keeps this deadline
+                }
+                restartAt = seekTo;
+                restartSpeed = speed;
+                m_replaySpeed = speed; // so the speed check above doesn't fire again meanwhile
+            }
             parser.reset();
             started = false;
             seekTarget = seekTo; // discard until an I-frame at the new position
@@ -426,10 +476,20 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
                 m_audioHandler(QByteArray()); // drop sound queued from the old position
             clock.invalidate();
             firstMicros = 0;
+            keyTime = keyMicros = 0;
             QMutexLocker lock(&m_mutex);
             m_ring.clear(); // drop queued old-position frames so playback jumps
             m_cond.wakeAll();
         }
+        // Start the new replay once the stop is answered (or after 2 s without an answer), with
+        // a fresh parser: anything of the old replay still in flight was dropped meanwhile.
+        auto startPendingReplay = [&] {
+            parser.reset();
+            sendReplayStart(sock, aesKey, restartAt, restartSpeed);
+            restartAt = 0;
+        };
+        if (restartAt > 0 && restartWait.elapsed() > 2000)
+            startPendingReplay();
         if (!parseMessage(netBuf, m)) {
             // Short wait so abort is honored quickly; recorded playback bursts then
             // stalls, so nudge it with a keep-alive after ~1s of silence.
@@ -455,7 +515,9 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
             netBuf.append(sock.readAll());
             continue;
         }
-        if (m.msgNum != streamMsgNum)
+        if (restartAt > 0 && m.id == bc::kReplayStop)
+            startPendingReplay();
+        if (m.msgNum != streamMsgNum || restartAt > 0) // the old replay's frames: dropped
             continue;
         // FullAES: the Extension carries <encryptLen> — AES-decrypt that many bytes
         // of the payload, the remainder is plaintext.

@@ -839,6 +839,7 @@ Item {
                         ThemedMenuItem { text: page.speedText(2);    onTriggered: group.speed = 2 }
                         ThemedMenuItem { text: page.speedText(4);    onTriggered: group.speed = 4 }
                         ThemedMenuItem { text: page.speedText(8);    onTriggered: group.speed = 8 }
+                        ThemedMenuItem { text: page.speedText(16);   onTriggered: group.speed = 16 }
                     }
                 }
                 Ctl { glyph: "📷"; tip: qsTr("Save a snapshot of every pane")

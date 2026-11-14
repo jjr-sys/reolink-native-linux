@@ -3,6 +3,7 @@
 #include "media/BcMediaParser.h"
 
 #include <QByteArray>
+#include <QDate>
 #include <QMutex>
 #include <QString>
 #include <QWaitCondition>
@@ -76,7 +77,15 @@ private:
     void run();                                    // worker entry
     bool connectAndLogin(QTcpSocket &sock, QByteArray &aesKey);
     bool startStream(QTcpSocket &sock, const QByteArray &aesKey);
-    void sendPlayback(QTcpSocket &sock, const QByteArray &aesKey, qint64 startEpoch);
+    // Recorder-paced replay (cmd 381/382/383, wayfinder/playback-controls ticket 10).
+    void sendReplayStart(QTcpSocket &sock, const QByteArray &aesKey, qint64 startEpoch, int speed);
+    void sendReplaySeek(QTcpSocket &sock, const QByteArray &aesKey, qint64 toEpoch);
+    void sendReplayStop(QTcpSocket &sock, const QByteArray &aesKey);
+    void sendOnStream(QTcpSocket &sock, const QByteArray &aesKey, quint32 cmd, const QByteArray &xml);
+    // cmd 143 download of the day from `startEpoch`: unpaced, used before 381; kept for the
+    // reverse-play windows (wayfinder/playback-controls ticket 12).
+    void sendDownloadByTime(QTcpSocket &sock, const QByteArray &aesKey, qint64 startEpoch);
+    int wantedReplaySpeed() const;
     void pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint16 streamMsgNum);
     void pushAnnexB(const QByteArray &bytes);
 
@@ -92,6 +101,9 @@ private:
     QByteArray m_ring;        // decoded Annex-B awaiting the reader
     bool m_finished = false;  // worker done producing
     qint64 m_seekEpoch = 0;   // pending in-place seek target (0 = none)
+    // The running replay (network thread only): the day it was started on and its speed.
+    QDate m_replayDay;
+    int m_replaySpeed = 1;
     QString m_format;         // "h264"/"hevc", guarded by m_mutex
     bool m_started = false;
     QByteArray m_loginTail;   // socket bytes buffered past the login reply

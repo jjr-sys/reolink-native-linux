@@ -84,10 +84,11 @@ PlaybackSession::~PlaybackSession() = default;
 
 PlaybackSession::Route PlaybackSession::chooseRoute(bool hd, double speed, bool direct)
 {
-    Q_UNUSED(speed); // the native session paces itself from the shared speed setting
     if (direct)
         return Route::Http;
-    return hd ? Route::BaichuanMain : Route::BaichuanSub;
+    // Above 1x the recorder sends the main stream as keyframes only (wayfinder/playback-controls
+    // ticket 10), so HD plays the sub stream at speed and comes back at 1x.
+    return hd && speed <= 1.0 ? Route::BaichuanMain : Route::BaichuanSub;
 }
 
 PlaybackSession::Route PlaybackSession::route() const

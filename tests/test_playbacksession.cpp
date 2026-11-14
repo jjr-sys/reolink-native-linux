@@ -79,7 +79,11 @@ private slots:
         QCOMPARE(PlaybackSession::chooseRoute(false, 0.5, false), Route::BaichuanSub);
         QCOMPARE(PlaybackSession::chooseRoute(false, 2.0, false), Route::BaichuanSub);
         QCOMPARE(PlaybackSession::chooseRoute(true, 1.0, false), Route::BaichuanMain);
-        QCOMPARE(PlaybackSession::chooseRoute(true, 4.0, false), Route::BaichuanMain);
+        QCOMPARE(PlaybackSession::chooseRoute(true, 0.5, false), Route::BaichuanMain);
+        // Above 1x the recorder sends the main stream as keyframes only, so HD plays the sub
+        // stream at speed and comes back at 1x (wayfinder/playback-controls ticket 10).
+        QCOMPARE(PlaybackSession::chooseRoute(true, 2.0, false), Route::BaichuanSub);
+        QCOMPARE(PlaybackSession::chooseRoute(true, 16.0, false), Route::BaichuanSub);
         // Direct (Frigate) footage has one HTTP stream at 1x: HD and speed are ignored.
         QCOMPARE(PlaybackSession::chooseRoute(true, 4.0, true), Route::Http);
     }
@@ -231,14 +235,19 @@ private slots:
         f.s.setHd(true);
         QCOMPARE(spy.count(), 1);
     }
-    void speedChangeInHdKeepsRoute()
+    // HD above 1x reopens on the sub stream (keyframes only on main at speed, ticket 10);
+    // slow speeds keep HD.
+    void speedAboveOneInHdReopensOnSub()
     {
         Fixture f;
         f.s.setHd(true);
         f.t->isStreaming = true;
         QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
-        f.s.setSpeed(2.0);
+        f.s.setSpeed(0.5);
         QCOMPARE(spy.count(), 0);
+        f.s.setSpeed(2.0);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(f.s.route(), Route::BaichuanSub);
     }
     void hdOnDirectRowDoesNotReopen()
     {

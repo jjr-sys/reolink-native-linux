@@ -10,6 +10,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **Fast Playback on Reolink recorders, paced by the recorder.** Playback now asks the
+  recorder to play at the chosen speed instead of downloading as fast as the link allows,
+  so 2×, 4×, 8× and the new **16×** play smoothly. 16× shows one picture per keyframe,
+  which is the recorder's own fast-forward. ¼× and ½× still play at 1× on the recorder
+  and are slowed by the app. Above 1× an HD pane plays the standard-quality stream (the
+  recorder sends HD at speed as keyframes only) and returns to HD at 1×. Seeking within a
+  day now moves the running replay instead of restarting it.
 - **Fisheye views in the Events feed.** A fisheye camera's circle snapshots (Woorabinda
   Kitchen today) are drawn in the camera's view and aim, the same one Live and Playback
   use, and each card takes that view's shape at about the usual card size (Quad 560×315,
