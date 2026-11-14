@@ -1,5 +1,6 @@
 #include "ui/PlaybackGroup.h"
 
+#include <QCoreApplication>
 #include <QSet>
 
 #include <algorithm>
@@ -86,6 +87,7 @@ void PlaybackGroup::setDirectKeys(const QStringList &keys)
     if (keys == m_direct)
         return;
     m_direct = keys;
+    emit directKeysChanged();
     updateLocked();
 }
 
@@ -110,11 +112,11 @@ void PlaybackGroup::updateLocked()
 
 QString PlaybackGroup::speedLabel(int direction, double speed, bool paused)
 {
+    const QString paused0 = QCoreApplication::translate("PlaybackGroup", "Paused");
     const QString x = speed == 0.25 ? QStringLiteral("¼") : speed == 0.5 ? QStringLiteral("½")
                                                                        : QString::number(speed);
     if (paused)
-        return direction == 1 && speed == 1.0 ? QStringLiteral("Paused")
-                                              : QStringLiteral("Paused · %1×").arg(x);
+        return direction == 1 && speed == 1.0 ? paused0 : paused0 + QStringLiteral(" · %1×").arg(x);
     return (direction == 1 ? QStringLiteral("▶ ") : QStringLiteral("◀ ")) + x + QStringLiteral("×");
 }
 

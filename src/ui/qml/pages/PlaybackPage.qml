@@ -375,7 +375,7 @@ Item {
                 return;
             }
             if (page.playheadSecs < 86399)
-                page.playheadSecs = Math.min(86399, page.playheadSecs + dt * group.speed);
+                page.playheadSecs = Math.max(0, Math.min(86399, page.playheadSecs + dt * group.speed * group.direction));
         }
     }
     function frameDriverSecs() {
@@ -452,7 +452,8 @@ Item {
     property real markStart: -1
     property real markEnd: -1
     property bool rangeArmed: false
-    onDayStartEpochChanged: { markStart = -1; markEnd = -1; rangeArmed = false; }
+    // A new day (calendar or an event's jump) also goes back to ▶ 1×.
+    onDayStartEpochChanged: { markStart = -1; markEnd = -1; rangeArmed = false; group.newDay(); }
     function toggleRange() {
         var now = Math.floor(playheadSecs);
         if (!rangeArmed) {
@@ -1113,7 +1114,6 @@ Item {
                 onDateSelected: (y, m, d) => {
                     page.stopAllPanes();
                     page.selYear = y; page.selMonth = m; page.selDay = d;
-                    group.newDay();
                     page.refresh();
                 }
             }

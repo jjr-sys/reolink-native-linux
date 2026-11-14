@@ -55,7 +55,8 @@ class StreamPlayer : public QObject
     Q_PROPERTY(QString errorString READ errorString NOTIFY errorStringChanged)
     Q_PROPERTY(qint64 framesDecoded READ framesDecoded NOTIFY framesDecodedChanged)
     // Recording time of the frame on screen, ms since the epoch, from the recorder client's
-    // frame-time SEI (media/FrameTimeSei.h); 0 until a tagged frame shows. Notified ≥ 4×/s.
+    // frame-time SEI (media/FrameTimeSei.h); 0 until a tagged frame shows. Notified at most
+    // 4 times a second, and at once on a jump back.
     Q_PROPERTY(qint64 frameEpochMs READ frameEpochMs NOTIFY frameEpochMsChanged)
     Q_PROPERTY(bool loop READ loop WRITE setLoop NOTIFY loopChanged)
     Q_PROPERTY(bool retryOnError READ retryOnError WRITE setRetryOnError NOTIFY retryOnErrorChanged)

@@ -35,7 +35,7 @@ class PlaybackGroup : public QObject
     Q_PROPERTY(int direction READ direction NOTIFY speedChanged)          // 1 forward, -1 backward
     Q_PROPERTY(bool offNormal READ offNormal NOTIFY speedChanged)         // anything but 1× forward
     Q_PROPERTY(bool reverseAvailable READ reverseAvailable WRITE setReverseAvailable NOTIFY reverseAvailableChanged)
-    Q_PROPERTY(QStringList directKeys READ directKeys WRITE setDirectKeys NOTIFY speedLockedChanged)
+    Q_PROPERTY(QStringList directKeys READ directKeys WRITE setDirectKeys NOTIFY directKeysChanged)
     Q_PROPERTY(bool speedLocked READ speedLocked NOTIFY speedLockedChanged)
 
 public:
@@ -74,6 +74,7 @@ signals:
     void speedChanged();
     void reverseAvailableChanged();
     void speedLockedChanged();
+    void directKeysChanged();
 
 private:
     void onSelectionChanged();
