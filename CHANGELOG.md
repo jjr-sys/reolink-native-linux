@@ -170,6 +170,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Fixed
 
+- **HD comes back after fast Playback.** After 16× (or any speed above 1×) an HD pane
+  stayed on SD when the speed returned to 1× or slower, and switching HD/SD while playing
+  could keep the old stream. The pane now reopens on the stream it should be playing.
 - **Frigate Playback plays busy stretches again.** Playback asked Frigate for three hours of
   footage at a time, which Frigate refuses when the camera recorded all of it (over about
   1,000 pieces), so the camera showed an error. It now asks for an hour at a time and carries
