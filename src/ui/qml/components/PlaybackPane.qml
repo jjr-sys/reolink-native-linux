@@ -167,6 +167,7 @@ Rectangle {
     signal clicked()
     // Reverse play reached the start of this camera's recording (ticket 12).
     signal reverseEnded()
+    property real _reverseRestartWall: 0   // the page's last restart of this pane backwards
     // Double-click toggles maximize (the page owns which pane is maximized).
     signal doubleClicked()
     // A pane was dropped onto this one (to swap places).

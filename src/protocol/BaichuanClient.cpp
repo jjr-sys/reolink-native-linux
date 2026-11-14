@@ -10,6 +10,8 @@
 #include "protocol/BcReplay.h"
 
 #include <QDateTime>
+
+#include <algorithm>
 #include <QElapsedTimer>
 #include <QTcpSocket>
 #include <QThread>
@@ -149,7 +151,7 @@ int BaichuanClient::read(unsigned char *buf, int size)
     if (m_abort.load() && m_ring.isEmpty())
         return AVERROR_EOF;
     if (m_ring.isEmpty())
-        return m_finished ? AVERROR_EOF : 0;
+        return !m_finished ? 0 : m_failed ? AVERROR(EIO) : AVERROR_EOF;
     const int n = qMin(size, static_cast<int>(m_ring.size()));
     memcpy(buf, m_ring.constData(), n);
     m_ring.remove(0, n);
@@ -336,8 +338,14 @@ void BaichuanClient::sendDownloadByTime(QTcpSocket &sock, const QByteArray &aesK
 void BaichuanClient::runReverse()
 {
     BaichuanControl ctl({m_p.host, m_p.port, m_p.username, m_p.password});
+    // A failure is an error for the player, not an end: an end means the recording's start.
+    auto fail = [this] {
+        QMutexLocker lock(&m_mutex);
+        m_failed = true;
+    };
     if (!ctl.open() || m_abort.load()) {
         qCWarning(lcCore).noquote() << "reverse playback: login failed on" << m_p.host;
+        fail();
         return;
     }
     auto port = bcDownloadPort(ctl);
@@ -345,8 +353,9 @@ void BaichuanClient::runReverse()
     // Backwards stops at the start of the day being played (the page pauses there).
     const qint64 dayStartMs =
         QDateTime(QDateTime::fromSecsSinceEpoch(m_p.startEpoch).date(), QTime(0, 0)).toMSecsSinceEpoch();
+    int lengthSecs = 10;
     while (!m_abort.load()) {
-        const reverse::Window w = reverse::windowBefore(cutoff);
+        const reverse::Window w = reverse::windowBefore(cutoff, lengthSecs);
         BcDownloadRequest req;
         req.channel = m_p.channel;
         req.uid = m_p.uid;
@@ -378,11 +387,23 @@ void BaichuanClient::runReverse()
             qCWarning(lcCore).noquote() << "reverse playback: window ending"
                                         << req.end.toString(Qt::ISODate) << "failed, outcome"
                                         << int(r.outcome) << "status" << r.status;
+            fail();
             return;
         }
         const reverse::Gops g = reverse::reverseGops(frames, cutoff, dayStartMs);
-        if (g.nextCutoffMs < 0)
-            return; // nothing earlier in this window: the start of the recording
+        if (g.nextCutoffMs < 0) {
+            // Frames but no keyframe before the cutoff: a group longer than the window.
+            // Fetch further back; nothing at all is the start of the recording (or the day).
+            const bool someBefore = std::any_of(frames.begin(), frames.end(), [&](const reverse::Frame &f) {
+                return f.epochMs >= dayStartMs && f.epochMs < cutoff;
+            });
+            if (someBefore && lengthSecs < 60 && w.startSecs * 1000 > dayStartMs) {
+                lengthSecs = qMin(60, lengthSecs * 3);
+                continue;
+            }
+            return;
+        }
+        lengthSecs = 10;
         for (const QList<reverse::Frame> &gop : g.newestFirst)
             for (const reverse::Frame &f : gop)
                 pushAnnexB(frametime::tag(f.annexB, f.codec, f.epochMs));

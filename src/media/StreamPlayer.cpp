@@ -459,8 +459,6 @@ bool publishVideoFrame(const std::shared_ptr<Session> &s, QVideoFrame videoFrame
     return true;
 }
 
-// Convert one software AVFrame to a QVideoFrame and hand it to the sink. Returns
-// false on an unrecoverable mapping failure (frame dropped).
 // A software AVFrame copied into a QVideoFrame (invalid on a mapping failure).
 QVideoFrame copyToVideoFrame(AVFrame *out, QVideoFrameFormat::PixelFormat outFormat)
 {
@@ -485,6 +483,8 @@ QVideoFrame copyToVideoFrame(AVFrame *out, QVideoFrameFormat::PixelFormat outFor
     return videoFrame;
 }
 
+// Convert one software AVFrame to a QVideoFrame and hand it to the sink. Returns
+// false on an unrecoverable mapping failure (frame dropped).
 bool emitFrame(const std::shared_ptr<Session> &s, AVFrame *out,
                QVideoFrameFormat::PixelFormat outFormat, QtVideo::Rotation rotation,
                qint64 ptsUs, qint64 delayUs)
@@ -936,7 +936,13 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             const bool vaapiOutput = vaapiVideoFrame.isValid();
             if (s->reverse) {
                 // Reverse play: hold the group, show it backwards when the next one starts.
+                // AV_FRAME_FLAG_KEY is FFmpeg 6.1+ (libavutil 58.29); the Flatpak runtime's
+                // older FFmpeg has key_frame.
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(58, 29, 100)
                 const bool key = (frame->flags & AV_FRAME_FLAG_KEY) != 0;
+#else
+                const bool key = frame->key_frame != 0;
+#endif
                 QVideoFrame copy = copyToVideoFrame(out, outFormat);
                 if (copy.isValid())
                     for (auto &item : reverser.push(std::move(copy), key, frameEpoch))

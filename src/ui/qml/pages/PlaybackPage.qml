@@ -386,6 +386,8 @@ Item {
             var dt = (now - page._tickWall) / 1000;
             page._tickWall = now;
             var f = group.offNormal ? page.frameDriverSecs() : -1;
+            if (group.direction < 0)
+                page.keepReverseInStep();
             if (f >= 0) {
                 page.playheadSecs = Math.max(0, Math.min(86399, f));
                 return;
@@ -437,6 +439,23 @@ Item {
             if (p) p.freeze();
         }
         playAt(prev);
+    }
+    // Backwards, panes that aren't leading play at their own pace: one that stopped at the
+    // start of its recording starts again when the playhead reaches earlier footage of it,
+    // and one more than 5 s from the playhead starts again at the playhead.
+    function keepReverseInStep() {
+        var lead = paneOf(reverseLeadKey());
+        for (var i = 0; i < paneRepeater.count; i++) {
+            var p = paneRepeater.itemAt(i);
+            if (!p || p === lead || !p.visible || p.frozen || p.stillMode
+                || !p.covered(playheadSecs) || Date.now() - p._reverseRestartWall < 3000)
+                continue;
+            var off = p.frameSecs >= 0 && Math.abs(p.frameSecs - playheadSecs) > 5;
+            if (!p.busy || off) {
+                p._reverseRestartWall = Date.now();
+                p.playAtSecs(playheadSecs, epochAt(playheadSecs));
+            }
+        }
     }
     function frameDriverSecs() {
         var sel = paneOf(selectedKey);

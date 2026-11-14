@@ -104,6 +104,7 @@ private:
     QWaitCondition m_cond;
     QByteArray m_ring;        // decoded Annex-B awaiting the reader
     bool m_finished = false;  // worker done producing
+    bool m_failed = false;    // ...because of an error (reverse play): read() reports it
     qint64 m_seekEpoch = 0;   // pending in-place seek target (0 = none)
     // The running replay (network thread only): the day it was started on and its speed.
     QDate m_replayDay;

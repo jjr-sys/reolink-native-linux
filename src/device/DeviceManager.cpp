@@ -1661,6 +1661,8 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     p.mainStream = mainStream;
     p.startEpoch = startEpoch; // <= 0 = live (cmd 3 Preview), else by-time playback
     p.reverse = reverse && startEpoch > 0;
+    if (p.reverse)
+        p.mainStream = mainStream = false; // a held group of main-stream frames is far too big
     const bool smoothLive = startEpoch <= 0 && player->smoothing();
     p.smoothLive = smoothLive;
 
