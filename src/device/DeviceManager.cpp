@@ -1668,9 +1668,12 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     client->setAudioHandler(player->audioFeed()); // before start(): read by the worker
     client->setSpeedCell(player->speedCell());
     if (p.reverse) {
+        // Tagged with the session it belongs to: a late report from an older one is ignored.
         QPointer<StreamPlayer> to(player);
-        client->setLinkSlowHandler([to] {
-            QMetaObject::invokeMethod(to, [to] { if (to) to->setLinkTooSlow(true); }, Qt::QueuedConnection);
+        const quint64 sessionId = player->nextSessionId();
+        client->setLinkSlowHandler([to, sessionId] {
+            QMetaObject::invokeMethod(to, [to, sessionId] { if (to) to->reportLinkTooSlow(sessionId); },
+                                      Qt::QueuedConnection);
         });
     }
     client->start();

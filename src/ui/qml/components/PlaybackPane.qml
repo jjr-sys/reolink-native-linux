@@ -167,9 +167,11 @@ Rectangle {
     signal clicked()
     // Reverse play reached the start of this camera's recording (ticket 12).
     signal reverseEnded()
-    property bool _reopening: false
-    // The link can't feed HD backwards: this pane plays SD until the next open (ticket 06).
-    readonly property bool linkSlow: session.linkSlow
+    // HD can't keep up backwards (the link or the decoding): this pane plays SD until the user's
+    // next play, jump or change of direction (live-replay ticket 06).
+    readonly property bool linkSlow: session.linkSlow && direction < 0
+    // The page calls this for the opens the user makes (not for the app's own restarts).
+    function clearLinkSlow() { session.clearLinkSlow(); }
     property real _reverseRestartWall: 0   // the page's last restart of this pane backwards
     // Double-click toggles maximize (the page owns which pane is maximized).
     signal doubleClicked()
@@ -260,11 +262,7 @@ Rectangle {
         hd: root.hdActive && !root.stillMode
         speed: root.speed
         direction: root.stillMode ? 1 : root.direction
-        onReopenNeeded: {
-            root._reopening = true;
-            root.playAtSecs(root.playheadSecs, root.epochOf(root.playheadSecs));
-            root._reopening = false;
-        }
+        onReopenNeeded: root.playAtSecs(root.playheadSecs, root.epochOf(root.playheadSecs))
     }
 
     function covered(sec) {
@@ -318,8 +316,6 @@ Rectangle {
     function _open(sec, epoch) {
         if (!hasSource)
             return -1;
-        if (!_reopening)
-            session.clearLinkSlow();   // an open the user made: try HD backwards again
         _suppressResume = false;
         _openSec = sec;
         _openWall = Date.now();

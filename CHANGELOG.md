@@ -14,9 +14,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
   the link keeps up. Each decoded keyframe group is held at the pane's size on screen
   (a fisheye camera's up to 1920×1920, so its views stay sharp), and the next group is
   decoded while the current one is shown, so there is no pause between groups (Lascelles
-  Kitchen: 24 of 25 frames a second at 1×). When the recorder's link can't keep up with HD
-  backwards, the pane drops to standard quality by itself and the HD button says "SD · link
-  slow"; HD is tried again on the next play or jump.
+  Kitchen: 24 of 25 frames a second at 1×). When the recorder's link, or decoding on this
+  computer, can't keep up with HD backwards, the pane drops to standard quality by itself and
+  the HD button says "SD · too slow"; HD is tried again on your next play, jump or change of
+  direction (not on the app's own restarts).
 
 - **Reverse play on Reolink recorders.** ◀ plays backwards at 1×, « steps 2× → 4× → back
   to 1× backwards, slow back ½× → ¼× → 1× backwards. The recorder can't play backwards, so

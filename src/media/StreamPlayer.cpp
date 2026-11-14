@@ -215,6 +215,18 @@ void postFrameEpoch(const std::shared_ptr<Session> &s)
     }, Qt::QueuedConnection);
 }
 
+// Reverse play: decoding can't keep up with the speed (HD drops to SD, as for a slow link).
+void postTooSlow(const std::shared_ptr<Session> &s)
+{
+    QMutexLocker lock(&s->backMutex);
+    if (!s->player)
+        return;
+    StreamPlayer *p = s->player;
+    QMetaObject::invokeMethod(p, [p, s] {
+        p->applyTooSlowFromWorker(s);
+    }, Qt::QueuedConnection);
+}
+
 // The recording time a frame was tagged with (media/FrameTimeSei.h), or -1.
 qint64 frameEpochOf(const AVFrame *frame)
 {
@@ -847,10 +859,21 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     qint64 reverseShownWallUs = 0;
     qint64 decodeUsPerFrame = 0;   // decode + scale + copy, averaged
     int lastGroupFrames = 0;
+    // Groups that take longer to decode than to show (8K at 4×): too slow, like a slow link.
+    rl::reverse::LinkPace decodePace;
+    bool decodeSlowSaid = false;
     auto queueReversed = [&](QList<rl::reverse::GopReverser<QVideoFrame>::Item> items) {
         if (items.isEmpty())
             return;
         lastGroupFrames = int(items.size());
+        const double speed = qMax(0.25, s->speed->load(std::memory_order_relaxed));
+        decodePace.window(double(decodeUsPerFrame) * lastGroupFrames / 1e6,
+                          double(items.first().epochMs - items.last().epochMs) / 1000.0 / speed);
+        if (decodePace.tooSlow() && !decodeSlowSaid) {
+            decodeSlowSaid = true;
+            qCInfo(lcMedia) << redacted(source) << "reverse: decoding can't keep up at this speed";
+            postTooSlow(s);
+        }
         showQueue.append(std::move(items));
     };
     auto queuedUs = [&]() -> qint64 {
@@ -1008,7 +1031,12 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                     if (reverseSws && av_frame_get_buffer(reverseScaled, 0) >= 0) {
                         sws_scale(reverseSws, out->data, out->linesize, 0, out->height,
                                   reverseScaled->data, reverseScaled->linesize);
-                        reverseScaled->color_range = out->color_range;
+                        // swscale turns full-range (J) input into limited range; keep the rest.
+                        reverseScaled->color_range = out->format == AV_PIX_FMT_YUVJ420P
+                                                         ? AVCOL_RANGE_MPEG : out->color_range;
+                        reverseScaled->colorspace = out->colorspace;
+                        reverseScaled->color_primaries = out->color_primaries;
+                        reverseScaled->color_trc = out->color_trc;
                         held = reverseScaled;
                         heldFormat = QVideoFrameFormat::Format_YUV420P;
                     }
@@ -1508,6 +1536,12 @@ void StreamPlayer::applyFrameEpochFromWorker(const std::shared_ptr<Session> &s)
         emit frameEpochMsChanged();
 }
 
+void StreamPlayer::applyTooSlowFromWorker(const std::shared_ptr<Session> &s)
+{
+    if (s == m_session)
+        setLinkTooSlow(true);
+}
+
 void StreamPlayer::applyRecordingState(const std::shared_ptr<Session> &s, bool recording,
                                       const QString &path, const QString &error)
 {
@@ -1722,6 +1756,7 @@ void StreamPlayer::start()
     s->audioWanted.store(!m_muted && speed() == 1.0);
     s->smoothing.store(m_smoothing);
     s->reverse = m_reverse;
+    ++m_sessionId;
     s->holdW.store(m_holdPane.width());
     s->holdH.store(m_holdPane.height());
     s->holdFisheye.store(m_holdFisheye);

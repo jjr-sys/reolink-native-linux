@@ -348,7 +348,14 @@ Item {
     }
     // Move the playhead and play every pane from that moment; each answers from its own
     // footage (play, or "no footage").
-    function playAt(sec) {
+    // `auto`: the app's own move (the jump at a recording's start), not the user's: a pane
+    // dropped to SD backwards for a slow link stays SD (live-replay ticket 06).
+    function playAt(sec, auto) {
+        if (!auto)
+            for (var i = 0; i < paneRepeater.count; i++) {
+                var lp = paneRepeater.itemAt(i);
+                if (lp) lp.clearLinkSlow();
+            }
         // Backwards from where the camera that leads has nothing: from the end of its
         // previous recording, or paused when there is none that day (ticket 12).
         if (group.direction < 0) {
@@ -438,7 +445,7 @@ Item {
             var p = paneRepeater.itemAt(i);
             if (p) p.freeze();
         }
-        playAt(prev);
+        playAt(prev, true);
     }
     // Backwards, panes that aren't leading play at their own pace: one that stopped at the
     // start of its recording starts again when the playhead reaches earlier footage of it,
@@ -1145,12 +1152,13 @@ Item {
                         color: on && !sdNow ? Theme.accent : (hdHover.hovered ? Theme.surfaceAlt : Theme.surface)
                         border.color: on ? Theme.accent : Theme.border
                         // HD plays the sub stream above 1× (PlaybackSession::chooseRoute): "SD at speed".
-                        // Backwards stays HD while the link keeps up (live-replay ticket 06).
-                    readonly property bool atSpeed: on && group.direction > 0 && group.speed > 1
-                    readonly property bool linkSlow: { paneRepeater.count;
-                        var p = page.selectedRow >= 0 ? paneRepeater.itemAt(page.selectedRow) : null;
-                        return on && !!p && p.linkSlow; }
-                    readonly property bool sdNow: atSpeed || linkSlow
+                        // Backwards stays HD while the link and decoding keep up (live-replay ticket 06).
+                        readonly property bool atSpeed: on && group.direction > 0 && group.speed > 1
+                        // paneRepeater.count: re-read when panes are created (itemAt isn't notifying).
+                        readonly property bool linkSlow: { paneRepeater.count;
+                            var p = page.selectedRow >= 0 ? paneRepeater.itemAt(page.selectedRow) : null;
+                            return on && !!p && p.linkSlow; }
+                        readonly property bool sdNow: atSpeed || linkSlow
                         Column {
                             anchors.centerIn: parent
                             Text {
@@ -1162,7 +1170,7 @@ Item {
                             Text {
                                 visible: hdBtn.sdNow
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                text: hdBtn.linkSlow ? qsTr("link slow") : qsTr("at speed")
+                                text: hdBtn.linkSlow ? qsTr("too slow") : qsTr("at speed")
                                 color: Theme.accent; font.pixelSize: 8
                             }
                         }
@@ -1173,7 +1181,7 @@ Item {
                             x: (parent.width - width) / 2
                             y: -height - 8
                             contentItem: Text {
-                                text: hdBtn.linkSlow ? qsTr("SD: the link is too slow for HD backwards; HD is tried again on the next play or jump")
+                                text: hdBtn.linkSlow ? qsTr("SD: the link or this computer is too slow for HD backwards here; HD is tried again on the next play, jump or change of direction")
                                 : hdBtn.atSpeed ? qsTr("HD comes back at 1× forward")
                                     : hdBtn.on ? qsTr("Switch the selected pane to SD")
                                                        : qsTr("Switch the selected pane to HD (full resolution)")

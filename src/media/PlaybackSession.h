@@ -60,11 +60,12 @@ public:
     void setSpeed(double speed);
     int direction() const { return m_direction; }
     void setDirection(int direction);
-    // The link can't feed HD backwards (StreamPlayer::linkTooSlow): play SD until the next open
-    // the user makes, which calls clearLinkSlow() (silently: that open is the reopen).
+    // HD can't keep up backwards (the link or the decoding, StreamPlayer::linkTooSlow): play SD
+    // until the next open the user makes — a play, jump or seek calls clearLinkSlow() (no reopen
+    // of its own: that open is the reopen), and a change of direction clears it too.
     bool linkSlow() const { return m_linkSlow; }
     void setLinkSlow(bool slow);
-    Q_INVOKABLE void clearLinkSlow() { m_linkSlow = false; }
+    Q_INVOKABLE void clearLinkSlow();
 
     // Play the wall-clock moment `epoch`. `covered` is the caller's timeline verdict
     // (a gap is normal: stop, no error). A native session is moved in place when one

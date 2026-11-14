@@ -47,9 +47,7 @@ QSize holdSize(QSize decoded, QSize pane, bool fisheye)
 {
     if (decoded.isEmpty())
         return decoded;
-    QSize box = pane;
-    if (fisheye)
-        box = QSize(qMax(pane.width(), 1920), qMax(pane.height(), 1920));
+    const QSize box = fisheye ? QSize(1920, 1920) : pane;
     if (box.isEmpty())
         return decoded;
     const double k = qMin(1.0, qMin(double(box.width()) / decoded.width(),

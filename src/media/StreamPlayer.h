@@ -203,6 +203,9 @@ public:
     void setHoldFisheye(bool on);
     bool linkTooSlow() const { return m_linkTooSlow; }
     void setLinkTooSlow(bool slow);
+    // The session the next start() opens, so a late report from an older one is ignored.
+    quint64 nextSessionId() const { return m_sessionId + 1; }
+    void reportLinkTooSlow(quint64 sessionId) { if (sessionId == m_sessionId) setLinkTooSlow(true); }
 
     bool loop() const { return m_loop; }
     void setLoop(bool loop);
@@ -255,6 +258,7 @@ public:
     void applyStateFromWorker(const std::shared_ptr<Session> &s, State state, const QString &error);
     void applyFramesTickFromWorker(const std::shared_ptr<Session> &s);
     void applyFrameEpochFromWorker(const std::shared_ptr<Session> &s);
+    void applyTooSlowFromWorker(const std::shared_ptr<Session> &s);
     void applyRecordingState(const std::shared_ptr<Session> &s, bool recording,
                              const QString &path, const QString &error);
     void applyAudioFromWorker(const std::shared_ptr<Session> &s, const QByteArray &pcm);
@@ -321,6 +325,7 @@ private:
     QSize m_holdPane;
     bool m_holdFisheye = false;
     bool m_linkTooSlow = false;
+    quint64 m_sessionId = 0;   // counts start()s
     int m_liveDelayMs = 0; // the picture delay in force; 0 = none. Sound follows it.
     QElapsedTimer m_clock;
     QTimer m_playoutTimer;

@@ -154,7 +154,19 @@ void PlaybackSession::setDirection(int direction)
     direction = direction < 0 ? -1 : 1;
     if (m_direction == direction)
         return;
-    changeRouteAware([&] { m_direction = direction; emit directionChanged(); });
+    changeRouteAware([&] {
+        m_direction = direction;
+        emit directionChanged();
+        clearLinkSlow(); // a change of direction is an open the user makes: HD is tried again
+    });
+}
+
+void PlaybackSession::clearLinkSlow()
+{
+    if (!m_linkSlow)
+        return;
+    m_linkSlow = false;
+    emit linkSlowChanged();
 }
 
 void PlaybackSession::setLinkSlow(bool slow)

@@ -134,7 +134,7 @@ private slots:
     void fisheyeHeldUpTo1920()
     {
         QCOMPARE(holdSize(QSize(2560, 2560), QSize(800, 800), true), QSize(1920, 1920));
-        QCOMPARE(holdSize(QSize(2560, 2560), QSize(2400, 2400), true), QSize(2400, 2400));
+        QCOMPARE(holdSize(QSize(2560, 2560), QSize(2400, 2400), true), QSize(1920, 1920)); // a cap
         QCOMPARE(holdSize(QSize(1024, 1024), QSize(800, 800), true), QSize(1024, 1024));
     }
 

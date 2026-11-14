@@ -105,7 +105,7 @@ While Playback is stopped, the one picture a pane shows from the playhead's mome
 _Avoid_: thumbnail, preview, snapshot (a snapshot is a saved JPEG)
 
 **Playback route**:
-The transport chosen for recorded footage: the NVR's HTTP-FLV sub stream, the native (Baichuan) main stream for HD, or the native sub stream for faster than real time. Direct (Frigate) footage always uses HTTP.
+The transport chosen for recorded footage: the native (Baichuan) main stream for HD at 1× and slower, the native sub stream otherwise and for faster than real time, or, backwards, windows of the main stream (HD, while the link and decoding keep up) or the sub stream. Direct (Frigate) footage always uses HTTP.
 _Avoid_: playback mode, quality
 
 **Seek in place**:

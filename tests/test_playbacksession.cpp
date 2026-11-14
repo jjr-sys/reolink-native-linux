@@ -324,10 +324,25 @@ private slots:
         QCOMPARE(spy.count(), 1);
         QCOMPARE(f.s.route(), Route::BaichuanReverse);
         QCOMPARE(f.s.playAt(5990), Outcome::Opened);
-        f.s.clearLinkSlow();               // the user's next open: silent
+        QSignalSpy changed(&f.s, &PlaybackSession::linkSlowChanged);
+        f.s.clearLinkSlow();               // the user's next open: no reopen of its own
         QCOMPARE(spy.count(), 1);
+        QCOMPARE(changed.count(), 1);      // ...but the HD chip hears of it
+        QVERIFY(!f.s.linkSlow());
         QCOMPARE(f.s.playAt(5000), Outcome::OpenedHd);
         QCOMPARE(f.t->opens.last().route, Route::BaichuanReverseMain);
+    }
+    // Changing direction is an open the user makes: HD is tried again.
+    void directionChangeClearsTheSlowLink()
+    {
+        Fixture f;
+        f.s.setHd(true);
+        f.s.setDirection(-1);
+        f.s.setLinkSlow(true);
+        f.s.setDirection(1);
+        QVERIFY(!f.s.linkSlow());
+        f.s.setDirection(-1);
+        QCOMPARE(f.s.route(), Route::BaichuanReverseMain);
     }
     void hdOnDirectRowDoesNotReopen()
     {

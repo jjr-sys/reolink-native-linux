@@ -91,8 +91,8 @@ private:
 
 // HD reverse (wayfinder/live-replay ticket 06): a decoded group is held scaled to fit the
 // pane's size on screen in device pixels (never larger than the picture; the whole picture if
-// the pane is unknown); a fisheye camera's to fit at least 1920×1920, so its dewarped views and
-// zoom stay sharp. Even sizes, aspect kept.
+// the pane is unknown); a fisheye camera's to fit 1920×1920 whatever the pane, so its dewarped
+// views and zoom stay sharp and its memory is capped. Even sizes, aspect kept.
 QSize holdSize(QSize decoded, QSize pane, bool fisheye);
 
 // Whether the link keeps up with HD backwards: each window's download time against the time
