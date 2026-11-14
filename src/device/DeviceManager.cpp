@@ -933,6 +933,8 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
         e.chanName = chosenNames.contains(ch.channel) ? chosenNames.value(ch.channel)
                      : ch.name.isEmpty()              ? rec.name
                                                       : ch.name;
+        if (!ch.name.isEmpty())
+            e.sourceName = ch.name;
         e.online = ch.online;
         e.status = v.degraded ? v.status : (ch.online ? tr("online") : tr("offline"));
         e.validated = !v.degraded;
@@ -1238,7 +1240,7 @@ QHash<QString, int> DeviceManager::frigateChannels(qint64 hostId) const
     QHash<QString, int> channelOf;
     for (const Entry &c : m_entries)
         if (c.rec.id == hostId)
-            channelOf.insert(c.chanName, c.channel);
+            channelOf.insert(c.serverName(), c.channel);
     return channelOf;
 }
 
@@ -1423,7 +1425,7 @@ void DeviceManager::captureEventThumbnail(qint64 hostId, int channel, qint64 eve
     };
     const Entry &e = m_entries.at(row);
     if (e.kindCaps().frigateApi) {
-        const QString url = frigate::latestFrameUrl(e.rec.addr, e.rec.port, e.chanName);
+        const QString url = frigate::latestFrameUrl(e.rec.addr, e.rec.port, e.serverName());
         m_pending.addFuture(QtConcurrent::run([finish, url] { finish(frigate::httpGet(url, 8000)); }));
         return;
     }
@@ -1449,7 +1451,7 @@ void DeviceManager::searchFrigateRecordings(int row, int year, int month, int da
     const Entry &e = m_entries.at(row);
     const QString host = e.rec.addr;
     const int port = e.rec.port;
-    const QString camera = e.chanName;
+    const QString camera = e.serverName();
     const QDateTime dayStart = date.startOfDay();
     const qint64 after = dayStart.toSecsSinceEpoch();
     const qint64 before = date.addDays(1).startOfDay().toSecsSinceEpoch();
@@ -1587,7 +1589,7 @@ QString DeviceManager::playbackUrl(int row, qint64 startEpoch, bool mainStream)
     const Entry &e = m_entries.at(row);
     if (e.kindCaps().frigateApi) {
         // Plays from `startEpoch` for an hour; Playback reopens past the end, a seek opens a new list.
-        return frigate::playbackVodUrl(e.rec.addr, e.rec.port, e.chanName, startEpoch);
+        return frigate::playbackVodUrl(e.rec.addr, e.rec.port, e.serverName(), startEpoch);
     }
     if (!e.reolinkReady())
         return {};
@@ -2132,6 +2134,12 @@ QVariantList DeviceManager::hostIds() const
     return ids;
 }
 
+bool DeviceManager::isBoschFeedRow(int row) const
+{
+    return row >= 0 && row < m_entries.size()
+           && device::looksLikeBoschFeed(m_entries.at(row).serverName());
+}
+
 QVariantMap DeviceManager::listedCameras() const
 {
     QVariantMap out;
@@ -2184,7 +2192,7 @@ QVariantList DeviceManager::channelsForHost(qint64 hostId) const
             continue;
         QVariantMap m;
         m["channel"] = e.channel;
-        m["camera"] = e.chanName;
+        m["camera"] = e.serverName();   // matched against the server's camera keys
         out.append(m);
     }
     return out;
@@ -2459,7 +2467,7 @@ QString DeviceManager::eventClipUrl(qint64 hostId, int channel, qint64 timestamp
 {
     for (const Entry &e : m_entries)
         if (e.rec.id == hostId && e.channel == channel && e.kindCaps().frigateApi)
-            return frigate::clipUrl(e.rec.addr, e.rec.port, e.chanName, timestamp, preSecs, postSecs);
+            return frigate::clipUrl(e.rec.addr, e.rec.port, e.serverName(), timestamp, preSecs, postSecs);
     return {};
 }
 
@@ -2476,7 +2484,7 @@ QString DeviceManager::liveUrl(int row, bool mainStream)
     src.password = e.password;
     src.restreamUser = e.restreamUser;
     src.restreamPassword = e.restreamPassword;
-    src.chanName = e.chanName;
+    src.chanName = e.serverName();
     src.channel = e.channel;
     src.mainCodec = e.mainCodec;
     src.mainRestream = e.mainRestream;

@@ -110,6 +110,11 @@ QString directLiveUrl(const QString &savedUrl, bool mainStream)
     return url;
 }
 
+QString serverCameraName(const QString &sourceName, const QString &shownName)
+{
+    return sourceName.isEmpty() ? shownName : sourceName;
+}
+
 QString liveUrl(const LiveSource &s, bool mainStream)
 {
     switch (s.kind) {

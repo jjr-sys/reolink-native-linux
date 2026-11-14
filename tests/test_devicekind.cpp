@@ -180,6 +180,22 @@ private slots:
         QCOMPARE(liveUrl(s, true),
                  QStringLiteral("rtsp://u:p%40ss@10.0.0.9:554/Streaming/Channels/101"));
     }
+
+    // A camera renamed in the app is still named to its server by the server's own name
+    // (wayfinder ticket 25); the live URL is built from it.
+    void serverCameraNameSurvivesARename()
+    {
+        QCOMPARE(serverCameraName(QStringLiteral("bosch_camera"), QStringLiteral("Driveway")),
+                 QStringLiteral("bosch_camera"));
+        // Before the server has been read, only the shown name is known.
+        QCOMPARE(serverCameraName(QString(), QStringLiteral("Lascelles")), QStringLiteral("Lascelles"));
+        LiveSource s;
+        s.kind = Kind::Frigate;
+        s.addr = QStringLiteral("h");
+        s.port = 8971;
+        s.chanName = serverCameraName(QStringLiteral("bosch_camera"), QStringLiteral("Driveway"));
+        QVERIFY(liveUrl(s, false).contains(QStringLiteral("bosch_camera")));
+    }
 };
 
 QTEST_APPLESS_MAIN(TestDeviceKind)

@@ -187,6 +187,9 @@ public:
     }
     // The Bosch camera's feed (recognised by its name); its controls come from Home Assistant.
     Q_INVOKABLE bool isBoschFeed(const QString &label) const { return device::looksLikeBoschFeed(label); }
+    // The same for a row, by the camera's name on its server, so a rename in the app keeps
+    // the Bosch controls (wayfinder ticket 25).
+    Q_INVOKABLE bool isBoschFeedRow(int row) const;
     Q_INVOKABLE bool isAdminAt(int row) const
     {
         return row >= 0 && row < m_entries.size() && m_entries.at(row).isAdmin;
@@ -386,6 +389,8 @@ private:
         bool reolinkReady() const { return kindCaps().reolinkProtocol && primed; }
         int channel = 0;   // channel index on the host
         QString chanName;  // camera name for this channel
+        QString sourceName; // the camera's own name on its server (Frigate key), kept through a rename
+        QString serverName() const { return device::serverCameraName(sourceName, chanName); }
         bool online = false;
         QString status;
         Problem problem = Problem::Connecting; // until first validation lands

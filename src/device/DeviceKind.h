@@ -90,6 +90,10 @@ struct LiveSource
 // Playable URL at the asked quality; empty while a Reolink host is not yet primed.
 QString liveUrl(const LiveSource &source, bool mainStream);
 
+// The name to send a server for a camera (wayfinder ticket 25): the server's own name for it
+// when known, even after the person renames the camera in the app; else the shown name.
+QString serverCameraName(const QString &sourceName, const QString &shownName);
+
 }
 
 namespace rl {

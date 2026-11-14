@@ -619,7 +619,7 @@ Rectangle {
     property bool boschPtzOpen: false
     property bool boschTourOwnedHere: false
     readonly property bool isBoschFeed: root.hasSource
-        && Devices.isBoschFeed(root.label)
+        && (root.deviceRow >= 0 ? Devices.isBoschFeedRow(root.deviceRow) : Devices.isBoschFeed(root.label))
 
     function positionSequenceIndex(token) {
         var sequence = BoschTour.selectionTourRoute;
