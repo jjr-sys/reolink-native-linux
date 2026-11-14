@@ -28,9 +28,10 @@ struct BcDownloadRequest {
     QString uid;          // camera UID; omitted from the request when empty
     QDateTime start;      // the recorder's local time, as the rest of the app assumes
     QDateTime end;
+    bool subStream = false; // export is full quality; reverse play fetches the sub stream
 };
 
-// The cmd 143 request body (main stream: export is always full quality).
+// The cmd 143 request body.
 QByteArray bcDownloadXml(const BcDownloadRequest &req);
 
 // One logged-in Baichuan session, as the download needs it. The real one wraps

@@ -269,6 +269,13 @@ int main(int argc, char *argv[])
     // RL_PLAYBACK_STOP_MS=<ms>: with RL_PLAYBACK_AUTOPLAY, press Stop that long after it starts.
     engine.rootContext()->setContextProperty(
         QStringLiteral("playbackStopMs"), qEnvironmentVariableIntValue("RL_PLAYBACK_STOP_MS"));
+    // RL_PLAYBACK_AT=<secs into the day>: with RL_PLAYBACK_AUTOPLAY, play from there instead.
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("playbackAtSecs"),
+        qEnvironmentVariableIsSet("RL_PLAYBACK_AT") ? qEnvironmentVariableIntValue("RL_PLAYBACK_AT") : -1);
+    // RL_PLAYBACK_BACK=<n>: with RL_PLAYBACK_AUTOPLAY, play backwards: 1 = ◀ 1×, n > 1 = « n-1 times.
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("playbackBackSteps"), qEnvironmentVariableIntValue("RL_PLAYBACK_BACK"));
     // RL_PLAYBACK_FAST=<n>: with RL_PLAYBACK_AUTOPLAY, press » (fast forward) n times once it plays.
     engine.rootContext()->setContextProperty(
         QStringLiteral("playbackFastSteps"), qEnvironmentVariableIntValue("RL_PLAYBACK_FAST"));

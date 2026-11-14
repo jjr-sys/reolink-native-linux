@@ -32,16 +32,17 @@ public:
         if (!devices || !player)
             return;
         player->setLoop(false);
+        player->setReversePlayback(false);
         player->setExpectedSize(devices->declaredSize(row, false));
         player->setSource(url);
         player->start();
     }
-    void openBaichuan(int row, qint64 epoch, bool main) override
+    void openBaichuan(int row, qint64 epoch, bool main, bool reverse) override
     {
         if (!devices || !player)
             return;
         player->setLoop(false);
-        devices->startBaichuanPlayback(row, epoch, player, main);
+        devices->startBaichuanPlayback(row, epoch, player, main, reverse);
     }
     void stop() override
     {
@@ -61,7 +62,7 @@ public:
     QString httpUrl(int, qint64) override { return {}; }
     bool seekInPlace(int, qint64) override { return false; }
     void openHttp(int, qint64, const QString &) override {}
-    void openBaichuan(int, qint64, bool) override {}
+    void openBaichuan(int, qint64, bool, bool) override {}
     void stop() override {}
 };
 } // namespace
@@ -82,10 +83,12 @@ PlaybackSession::PlaybackSession(std::unique_ptr<PlaybackTransport> transport, Q
 
 PlaybackSession::~PlaybackSession() = default;
 
-PlaybackSession::Route PlaybackSession::chooseRoute(bool hd, double speed, bool direct)
+PlaybackSession::Route PlaybackSession::chooseRoute(bool hd, double speed, bool direct, int direction)
 {
     if (direct)
         return Route::Http;
+    if (direction < 0)
+        return Route::BaichuanReverse;
     // Above 1x the recorder sends the main stream as keyframes only (wayfinder/playback-controls
     // ticket 10), so HD plays the sub stream at speed and comes back at 1x.
     return hd && speed <= 1.0 ? Route::BaichuanMain : Route::BaichuanSub;
@@ -93,7 +96,7 @@ PlaybackSession::Route PlaybackSession::chooseRoute(bool hd, double speed, bool 
 
 PlaybackSession::Route PlaybackSession::route() const
 {
-    return chooseRoute(m_hd, m_speed, direct());
+    return chooseRoute(m_hd, m_speed, direct(), m_direction);
 }
 
 void PlaybackSession::setDevices(DeviceManager *devices)
@@ -146,6 +149,14 @@ void PlaybackSession::setHd(bool hd)
     changeRouteAware([&] { m_hd = hd; emit hdChanged(); });
 }
 
+void PlaybackSession::setDirection(int direction)
+{
+    direction = direction < 0 ? -1 : 1;
+    if (m_direction == direction)
+        return;
+    changeRouteAware([&] { m_direction = direction; emit directionChanged(); });
+}
+
 void PlaybackSession::setSpeed(double speed)
 {
     if (qFuzzyCompare(m_speed, speed))
@@ -195,20 +206,23 @@ PlaybackSession::Outcome PlaybackSession::playAtImpl(double epochSecs, bool cove
     if (m_row < 0)
         return Outcome::NoSource;
     const bool main = r == Route::BaichuanMain;
-    return openOrSeekNative(epoch, main) ? Outcome::SeekedInPlace
-                                         : main ? Outcome::OpenedHd : Outcome::Opened;
+    return openOrSeekNative(epoch, main, r == Route::BaichuanReverse)
+        ? Outcome::SeekedInPlace
+        : main ? Outcome::OpenedHd : Outcome::Opened;
 }
 
 // Move the running native session in place (no reconnect) when it is the stream wanted;
 // otherwise open that stream. True when it seeked.
-bool PlaybackSession::openOrSeekNative(qint64 epoch, bool main)
+bool PlaybackSession::openOrSeekNative(qint64 epoch, bool main, bool reverse)
 {
-    if (m_nativeOpen && m_openMain == main && m_transport->streaming()
-        && m_transport->seekInPlace(m_row, epoch))
+    // A reverse run has windows already fetched behind the old moment: always reopened.
+    if (!reverse && m_nativeOpen && m_openMain == main && !m_openReverse
+        && m_transport->streaming() && m_transport->seekInPlace(m_row, epoch))
         return true;
-    m_transport->openBaichuan(m_row, epoch, main);
+    m_transport->openBaichuan(m_row, epoch, main, reverse);
     m_nativeOpen = true;
     m_openMain = main;
+    m_openReverse = reverse;
     return false;
 }
 

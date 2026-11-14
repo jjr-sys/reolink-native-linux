@@ -20,7 +20,8 @@ public:
     // Move the running native session to `epoch` without reconnecting; false if none.
     virtual bool seekInPlace(int row, qint64 epoch) = 0;
     virtual void openHttp(int row, qint64 epoch, const QString &url) = 0;
-    virtual void openBaichuan(int row, qint64 epoch, bool main) = 0;
+    // `reverse`: play backwards from `epoch` (wayfinder/playback-controls ticket 12).
+    virtual void openBaichuan(int row, qint64 epoch, bool main, bool reverse) = 0;
     virtual void stop() = 0;
 };
 

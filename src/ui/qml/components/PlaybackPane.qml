@@ -165,6 +165,8 @@ Rectangle {
     property real playheadSecs: 0
 
     signal clicked()
+    // Reverse play reached the start of this camera's recording (ticket 12).
+    signal reverseEnded()
     // Double-click toggles maximize (the page owns which pane is maximized).
     signal doubleClicked()
     // A pane was dropped onto this one (to swap places).
@@ -253,6 +255,7 @@ Rectangle {
         deviceRow: root.deviceRow
         hd: root.hdActive && !root.stillMode
         speed: root.speed
+        direction: root.stillMode ? 1 : root.direction
         onReopenNeeded: root.playAtSecs(root.playheadSecs, root.epochOf(root.playheadSecs))
     }
 
@@ -280,6 +283,11 @@ Rectangle {
                 if (player.state !== StreamPlayer.Stopped || !root.visible
                     || !root.hasSource || root._suppressResume)
                     return;
+                // Backwards, the stream ends at the start of a recording: the page decides.
+                if (root.direction < 0 && !root.stillMode) {
+                    root.reverseEnded();
+                    return;
+                }
                 if (!root.covered(root.playheadSecs + 1))
                     return;
                 if (root.playheadSecs <= root._lastAutoResume + 2)
@@ -330,8 +338,8 @@ Rectangle {
     property int _syncTries: 0
     Timer { id: catchUpTimer; onTriggered: root.catchUp = 1.0 }
     function _align() {
-        if (!streaming || !covered(playheadSecs))
-            return;
+        if (!streaming || !covered(playheadSecs) || direction < 0)
+            return;   // backwards, each pane starts at the playhead and is shown at its own pace
         var drift = _openSec - playheadSecs;       // + ahead of the playhead, - behind
         if (Math.abs(drift) <= syncTolerance)
             return;

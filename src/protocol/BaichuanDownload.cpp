@@ -89,7 +89,9 @@ QByteArray bcDownloadXml(const BcDownloadRequest &req)
     return "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n<body>\n<FileInfoList version=\"1.1\">\n"
            "<FileInfo>\n" + uidEl
            + "<logicChnBitmap>255</logicChnBitmap>\n<channelId>" + QByteArray::number(req.channel)
-           + "</channelId>\n<supportSub>0</supportSub>\n<streamType>mainStream</streamType>\n"
+           + "</channelId>\n<supportSub>" + (req.subStream ? "1" : "0")
+           + "</supportSub>\n<streamType>" + (req.subStream ? "subStream" : "mainStream")
+           + "</streamType>\n"
            + timeXml("startTime", req.start) + "\n" + timeXml("endTime", req.end)
            + "\n</FileInfo>\n</FileInfoList>\n</body>\n";
 }

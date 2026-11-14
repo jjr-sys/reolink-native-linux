@@ -94,6 +94,15 @@ private slots:
         QVERIFY(x.contains("<endTime><year>2026</year><month>11</month><day>8</day>"
                            "<hour>14</hour><minute>7</minute><second>9</second></endTime>"));
     }
+    // Reverse play fetches windows of the sub stream (wayfinder/playback-controls ticket 12).
+    void requestXml_subStream()
+    {
+        BcDownloadRequest r = request();
+        r.subStream = true;
+        const QByteArray x = bcDownloadXml(r);
+        QVERIFY(x.contains("<supportSub>1</supportSub>"));
+        QVERIFY(x.contains("<streamType>subStream</streamType>"));
+    }
     void requestXml_leavesOutAnEmptyUid()
     {
         BcDownloadRequest r = request();

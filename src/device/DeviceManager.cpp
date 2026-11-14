@@ -1634,7 +1634,7 @@ DownloadSource DeviceManager::downloadSource(int row)
 }
 
 void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *player,
-                                  bool mainStream)
+                                  bool mainStream, bool reverse)
 {
     if (row < 0 || row >= m_entries.size() || !player)
         return;
@@ -1648,7 +1648,7 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     if (startEpoch > 0)
         qCInfo(lcCore).noquote()
             << "native playback" << e.rec.name << "/" << e.chanName << "ch" << e.channel
-            << (mainStream ? "main" : "sub") << "from"
+            << (mainStream ? "main" : "sub") << (reverse ? "backwards from" : "from")
             << QDateTime::fromSecsSinceEpoch(startEpoch).toString(Qt::ISODate);
 
     BaichuanClient::Params p;
@@ -1660,6 +1660,7 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
     p.uid = e.uid;
     p.mainStream = mainStream;
     p.startEpoch = startEpoch; // <= 0 = live (cmd 3 Preview), else by-time playback
+    p.reverse = reverse && startEpoch > 0;
     const bool smoothLive = startEpoch <= 0 && player->smoothing();
     p.smoothLive = smoothLive;
 
@@ -1682,6 +1683,7 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
                      : (e.mainCodec == QLatin1String("h265") ? QStringLiteral("hevc")
                                                              : QStringLiteral("h264"));
     player->setExpectedSize(mainStream ? e.mainSize : e.subSize);
+    player->setReversePlayback(p.reverse);
     player->setPacketSource(
         [client](unsigned char *buf, int size) { return client->read(buf, size); },
         format,
@@ -1708,11 +1710,11 @@ void DeviceManager::startTalk(int row, TalkSession *session)
 }
 
 void DeviceManager::startBaichuanPlayback(int row, qint64 startEpoch, StreamPlayer *player,
-                                          bool mainStream)
+                                          bool mainStream, bool reverse)
 {
     if (startEpoch <= 0)
         return;
-    startBaichuan(row, startEpoch, player, mainStream);
+    startBaichuan(row, startEpoch, player, mainStream, reverse);
 }
 
 void DeviceManager::startBaichuanLive(int row, StreamPlayer *player, bool mainStream)

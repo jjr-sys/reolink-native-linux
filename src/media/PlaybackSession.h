@@ -23,10 +23,11 @@ class PlaybackSession : public QObject
     Q_PROPERTY(int deviceRow READ deviceRow WRITE setDeviceRow NOTIFY deviceRowChanged)
     Q_PROPERTY(bool hd READ hd WRITE setHd NOTIFY hdChanged)
     Q_PROPERTY(double speed READ speed WRITE setSpeed NOTIFY speedChanged)
+    Q_PROPERTY(int direction READ direction WRITE setDirection NOTIFY directionChanged)
     Q_PROPERTY(rl::PlaybackSession::Route route READ route NOTIFY routeChanged)
 
 public:
-    enum class Route { Http, BaichuanMain, BaichuanSub };
+    enum class Route { Http, BaichuanMain, BaichuanSub, BaichuanReverse };
     Q_ENUM(Route)
     enum class Outcome { Gap, NoSource, Opened, OpenedHd, SeekedInPlace };
     Q_ENUM(Outcome)
@@ -41,7 +42,8 @@ public:
     // do not apply. A Reolink NVR always plays over native Baichuan: HD = main stream,
     // else sub, at any speed. (Its HTTP-FLV playback endpoint is not used: NVRs drop
     // every playback.bcs request (live FLV works), and it needs RTMP enabled anyway.)
-    static Route chooseRoute(bool hd, double speed, bool direct);
+    // Backwards (direction -1) plays windows of the sub stream (ticket 12).
+    static Route chooseRoute(bool hd, double speed, bool direct, int direction = 1);
     Route route() const;
 
     DeviceManager *devices() const { return m_devices; }
@@ -54,6 +56,8 @@ public:
     void setHd(bool hd);
     double speed() const { return m_speed; }
     void setSpeed(double speed);
+    int direction() const { return m_direction; }
+    void setDirection(int direction);
 
     // Play the wall-clock moment `epoch`. `covered` is the caller's timeline verdict
     // (a gap is normal: stop, no error). A native session is moved in place when one
@@ -70,6 +74,7 @@ signals:
     void deviceRowChanged();
     void hdChanged();
     void speedChanged();
+    void directionChanged();
     void routeChanged();
     // The transport for the current moment changed while playing: replay it.
     void reopenNeeded();
@@ -78,7 +83,7 @@ private:
     template <typename Change> void changeRouteAware(Change change);
     bool direct() const { return m_transport->direct(m_row); }
     Outcome openHttp(qint64 epoch);
-    bool openOrSeekNative(qint64 epoch, bool main);
+    bool openOrSeekNative(qint64 epoch, bool main, bool reverse = false);
 
     Outcome playAtImpl(double epochSecs, bool covered);
     std::unique_ptr<PlaybackTransport> m_transport;
@@ -92,6 +97,8 @@ private:
     // change opens the other stream instead of seeking the running one in place.
     bool m_nativeOpen = false;
     bool m_openMain = false;
+    bool m_openReverse = false;
+    int m_direction = 1;
 };
 
 } // namespace rl

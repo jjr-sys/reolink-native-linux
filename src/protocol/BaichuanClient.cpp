@@ -1,5 +1,9 @@
 #include "BaichuanClient.h"
 #include "media/FrameTimeSei.h"
+#include "media/ReversePlay.h"
+#include "protocol/BaichuanControl.h"
+#include "protocol/BaichuanDownload.h"
+#include "core/Log.h"
 
 #include "protocol/BcCrypto.h"
 #include "protocol/BcLiveFramePacer.h"
@@ -167,11 +171,15 @@ void BaichuanClient::pushAnnexB(const QByteArray &bytes)
 
 void BaichuanClient::run()
 {
-    QTcpSocket sock;
-    QByteArray aesKey;
-    if (connectAndLogin(sock, aesKey) && !m_abort.load()) {
-        if (startStream(sock, aesKey))
-            pumpMedia(sock, aesKey, /*streamMsgNum=*/20);
+    if (m_p.reverse && m_p.startEpoch > 0) {
+        runReverse();
+    } else {
+        QTcpSocket sock;
+        QByteArray aesKey;
+        if (connectAndLogin(sock, aesKey) && !m_abort.load()) {
+            if (startStream(sock, aesKey))
+                pumpMedia(sock, aesKey, /*streamMsgNum=*/20);
+        }
     }
     QMutexLocker lock(&m_mutex);
     m_finished = true;
@@ -319,10 +327,73 @@ void BaichuanClient::sendDownloadByTime(QTcpSocket &sock, const QByteArray &aesK
     sock.flush();
 }
 
+// Reverse play: fetch ~10 s windows of the stream behind the playhead (cmd 143, served in
+// well under a second, several at once per recorder: ticket 12's probe), cut each at the
+// playhead and send its keyframe groups newest first, every frame tagged with its recording
+// time. The ring's backpressure holds the next window until the player needs it. Ends (the
+// player sees the end of the stream) when a window has nothing before the playhead: the
+// start of the recording; the page then jumps to the previous one or pauses.
+void BaichuanClient::runReverse()
+{
+    BaichuanControl ctl({m_p.host, m_p.port, m_p.username, m_p.password});
+    if (!ctl.open() || m_abort.load()) {
+        qCWarning(lcCore).noquote() << "reverse playback: login failed on" << m_p.host;
+        return;
+    }
+    auto port = bcDownloadPort(ctl);
+    qint64 cutoff = m_p.startEpoch * 1000;
+    // Backwards stops at the start of the day being played (the page pauses there).
+    const qint64 dayStartMs =
+        QDateTime(QDateTime::fromSecsSinceEpoch(m_p.startEpoch).date(), QTime(0, 0)).toMSecsSinceEpoch();
+    while (!m_abort.load()) {
+        const reverse::Window w = reverse::windowBefore(cutoff);
+        BcDownloadRequest req;
+        req.channel = m_p.channel;
+        req.uid = m_p.uid;
+        req.subStream = !m_p.mainStream;
+        req.start = QDateTime::fromSecsSinceEpoch(qMax(w.startSecs, dayStartMs / 1000));
+        req.end = QDateTime::fromSecsSinceEpoch(w.endSecs);
+
+        BcMediaParser parser;
+        reverse::FrameClock clock;
+        QList<reverse::Frame> frames;
+        parser.onVideo = [&](const BcMediaParser::VideoFrame &f) {
+            if (f.codec != BcMediaParser::Codec::Unknown) {
+                QMutexLocker lock(&m_mutex);
+                if (m_format.isEmpty())
+                    m_format = f.codec == BcMediaParser::Codec::H265 ? QStringLiteral("hevc")
+                                                                     : QStringLiteral("h264");
+            }
+            frames.append({f.keyFrame, clock.epochMs(f.keyFrame, f.time, f.microseconds), f.codec,
+                           f.annexB});
+        };
+        BcDownloadOptions o;
+        o.cancel = &m_abort;
+        o.stallMs = 15000;
+        const BcDownloadResult r =
+            runBcDownload(*port, req, [&](const QByteArray &b) { parser.append(b); }, o);
+        if (m_abort.load())
+            return;
+        if (!r.ok() && r.outcome != BcDownloadResult::Outcome::NoData) {
+            qCWarning(lcCore).noquote() << "reverse playback: window ending"
+                                        << req.end.toString(Qt::ISODate) << "failed, outcome"
+                                        << int(r.outcome) << "status" << r.status;
+            return;
+        }
+        const reverse::Gops g = reverse::reverseGops(frames, cutoff, dayStartMs);
+        if (g.nextCutoffMs < 0)
+            return; // nothing earlier in this window: the start of the recording
+        for (const QList<reverse::Frame> &gop : g.newestFirst)
+            for (const reverse::Frame &f : gop)
+                pushAnnexB(frametime::tag(f.annexB, f.codec, f.epochMs));
+        cutoff = g.nextCutoffMs;
+    }
+}
+
 bool BaichuanClient::seek(qint64 startEpoch)
 {
-    if (startEpoch <= 0)
-        return false;
+    if (startEpoch <= 0 || m_p.reverse)
+        return false; // a reverse run reopens at the new moment
     QMutexLocker lock(&m_mutex);
     if (m_finished || m_abort.load())
         return false;

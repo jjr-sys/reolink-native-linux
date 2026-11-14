@@ -1,6 +1,7 @@
 #include "StreamPlayer.h"
 #include "core/Backoff.h"
 #include "media/FrameTimeSei.h"
+#include "media/ReversePlay.h"
 #include "media/HttpAuth.h"
 #include "media/LiveUrl.h"
 
@@ -460,9 +461,8 @@ bool publishVideoFrame(const std::shared_ptr<Session> &s, QVideoFrame videoFrame
 
 // Convert one software AVFrame to a QVideoFrame and hand it to the sink. Returns
 // false on an unrecoverable mapping failure (frame dropped).
-bool emitFrame(const std::shared_ptr<Session> &s, AVFrame *out,
-               QVideoFrameFormat::PixelFormat outFormat, QtVideo::Rotation rotation,
-               qint64 ptsUs, qint64 delayUs)
+// A software AVFrame copied into a QVideoFrame (invalid on a mapping failure).
+QVideoFrame copyToVideoFrame(AVFrame *out, QVideoFrameFormat::PixelFormat outFormat)
 {
     QVideoFrameFormat format(QSize(out->width, out->height), outFormat);
     // Full-range (JPEG) YUV must be tagged or the sink renders it as limited range.
@@ -471,7 +471,7 @@ bool emitFrame(const std::shared_ptr<Session> &s, AVFrame *out,
 
     QVideoFrame videoFrame(format);
     if (!videoFrame.map(QVideoFrame::WriteOnly))
-        return false;
+        return {};
     for (int plane = 0; plane < videoFrame.planeCount(); ++plane) {
         const int planeHeight = plane == 0 ? out->height : (out->height + 1) / 2;
         // linesize may be negative for bottom-up frames; qAbs stops the memcpy
@@ -482,10 +482,17 @@ bool emitFrame(const std::shared_ptr<Session> &s, AVFrame *out,
                    out->data[plane] + y * out->linesize[plane], static_cast<size_t>(rowBytes));
     }
     videoFrame.unmap();
+    return videoFrame;
+}
+
+bool emitFrame(const std::shared_ptr<Session> &s, AVFrame *out,
+               QVideoFrameFormat::PixelFormat outFormat, QtVideo::Rotation rotation,
+               qint64 ptsUs, qint64 delayUs)
+{
     // Rotation is honored at the frame level by the sink/renderer, including
     // imported textures, so portrait camera streams remain upright.
     // 4:2:0 is 1.5 bytes per pixel, which also budgets retained VAAPI surfaces.
-    return publishVideoFrame(s, std::move(videoFrame), rotation, ptsUs, delayUs,
+    return publishVideoFrame(s, copyToVideoFrame(out, outFormat), rotation, ptsUs, delayUs,
                              qint64(out->width) * out->height * 3 / 2);
 }
 
@@ -786,6 +793,54 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     qint64 perfSoftwareFrames = 0;
 
     qint64 frameEpochPostedWall = 0; // when the frame time was last posted to the GUI
+    // Bookkeeping for a frame handed to the screen: counts, its recording time, Streaming.
+    auto delivered = [&](qint64 frameEpoch, bool vaapiOutput, bool transferred) {
+        if (perfDiagnosticsEnabled) {
+            ++perfFrames;
+            if (vaapiOutput)
+                ++perfVaapiFrames;
+            else if (transferred)
+                ++perfHwTransferFrames;
+            else
+                ++perfSoftwareFrames;
+        }
+        const qint64 n = s->framesDecoded.fetch_add(1) + 1;
+        if (frameEpoch >= 0) {
+            const qint64 was = s->frameEpochMs.exchange(frameEpoch);
+            // At most 4 a second, and at once on a jump (a seek).
+            if (qAbs(frameEpoch - was) > 2000 || av_gettime_relative() - frameEpochPostedWall >= 250000) {
+                frameEpochPostedWall = av_gettime_relative();
+                postFrameEpoch(s);
+            }
+        }
+        if (!streaming) {
+            streaming = true;
+            *streamingOut = true;
+            postState(s, State::Streaming, QString());
+            qCInfo(lcMedia) << redacted(source) << "first frame delivered";
+        }
+        if (n % 100 == 0)
+            postFramesTick(s);
+    };
+    // Reverse play: decoded groups come back reversed, shown at their recording-time gaps.
+    rl::reverse::GopReverser<QVideoFrame> reverser;
+    qint64 reverseShownMs = -1;
+    qint64 reverseShownWallUs = 0;
+    auto showReversed = [&](rl::reverse::GopReverser<QVideoFrame>::Item &item) {
+        // The time spent since the last frame (decoding the next group) counts towards the wait.
+        const qint64 waitUs = rl::reverse::waitUs(reverseShownMs, item.epochMs,
+                                                  s->speed->load(std::memory_order_relaxed))
+                            - (av_gettime_relative() - reverseShownWallUs);
+        if (waitUs > 0)
+            abortableSleepUs(s.get(), waitUs);
+        if (s->abort.load())
+            return;
+        reverseShownMs = item.epochMs;
+        reverseShownWallUs = av_gettime_relative();
+        const qint64 bytes = qint64(item.frame.width()) * item.frame.height() * 3 / 2;
+        if (publishVideoFrame(s, std::move(item.frame), rotation, AV_NOPTS_VALUE, 0, bytes))
+            delivered(item.epochMs, false, false);
+    };
     // Drain one decoded frame at a time; shared by the normal and flush paths.
     auto receiveFrames = [&]() {
         while (avcodec_receive_frame(dec, frame) == 0 && !s->abort.load()) {
@@ -802,7 +857,8 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             QVideoFrame vaapiVideoFrame;
             AVFrame *decoded = frame;
             if (hwPixFmt != AV_PIX_FMT_NONE && frame->format == hwPixFmt) {
-                if (hwPixFmt == AV_PIX_FMT_VAAPI
+                // Reverse play holds a whole group of frames: copies, not decoder surfaces.
+                if (hwPixFmt == AV_PIX_FMT_VAAPI && !s->reverse
                     && !s->vaapiInterop->unavailable.load(std::memory_order_relaxed)) {
                     vaapiVideoFrame = makeVaapiVideoFrame(frame, s->vaapiInterop);
                 }
@@ -878,37 +934,20 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                 frameDelayUs = smoothDelayUs;
             }
             const bool vaapiOutput = vaapiVideoFrame.isValid();
-            const bool emitted = vaapiOutput
-                ? publishVideoFrame(s, std::move(vaapiVideoFrame), rotation, framePtsUs,
-                                    frameDelayUs, qint64(decoded->width) * decoded->height * 3 / 2)
-                : emitFrame(s, out, outFormat, rotation, framePtsUs, frameDelayUs);
-            if (emitted) {
-                if (perfDiagnosticsEnabled) {
-                    ++perfFrames;
-                    if (vaapiOutput)
-                        ++perfVaapiFrames;
-                    else if (decoded == hwTransfer)
-                        ++perfHwTransferFrames;
-                    else
-                        ++perfSoftwareFrames;
-                }
-                const qint64 n = s->framesDecoded.fetch_add(1) + 1;
-                if (frameEpoch >= 0) {
-                    const qint64 was = s->frameEpochMs.exchange(frameEpoch);
-                    // At most 4 a second, and at once on a jump back (a seek).
-                    if (frameEpoch < was || av_gettime_relative() - frameEpochPostedWall >= 250000) {
-                        frameEpochPostedWall = av_gettime_relative();
-                        postFrameEpoch(s);
-                    }
-                }
-                if (!streaming) {
-                    streaming = true;
-                    *streamingOut = true;
-                    postState(s, State::Streaming, QString());
-                    qCInfo(lcMedia) << redacted(source) << "first frame delivered";
-                }
-                if (n % 100 == 0)
-                    postFramesTick(s);
+            if (s->reverse) {
+                // Reverse play: hold the group, show it backwards when the next one starts.
+                const bool key = (frame->flags & AV_FRAME_FLAG_KEY) != 0;
+                QVideoFrame copy = copyToVideoFrame(out, outFormat);
+                if (copy.isValid())
+                    for (auto &item : reverser.push(std::move(copy), key, frameEpoch))
+                        showReversed(item);
+            } else {
+                const bool emitted = vaapiOutput
+                    ? publishVideoFrame(s, std::move(vaapiVideoFrame), rotation, framePtsUs,
+                                        frameDelayUs, qint64(decoded->width) * decoded->height * 3 / 2)
+                    : emitFrame(s, out, outFormat, rotation, framePtsUs, frameDelayUs);
+                if (emitted)
+                    delivered(frameEpoch, vaapiOutput, decoded == hwTransfer);
             }
             if (out == converted)
                 av_frame_unref(converted);
@@ -962,6 +1001,8 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
         if (rc == AVERROR_EOF) {
             avcodec_send_packet(dec, nullptr); // flush: drain buffered frames
             receiveFrames();
+            for (auto &item : reverser.flush()) // reverse play: the last group
+                showReversed(item);
             if (!live && s->loop.load()) {
                 if (av_seek_frame(fmt, videoIndex, 0, AVSEEK_FLAG_BACKWARD) >= 0) {
                     avcodec_flush_buffers(dec);
@@ -1559,6 +1600,7 @@ void StreamPlayer::start()
     s->speed = m_speed;
     s->audioWanted.store(!m_muted && speed() == 1.0);
     s->smoothing.store(m_smoothing);
+    s->reverse = m_reverse;
     if (m_tap)
         m_tap->bind(s);
     applyHasAudio(false); // the new session reports its own track

@@ -255,8 +255,9 @@ public:
 
     // Native (Baichuan/TCP 9000) recorded playback: stream the recording from
     // startEpoch straight into `player` — realtime, frame-accurate, full HEVC main.
+    // `reverse`: backwards from startEpoch, in windows (wayfinder/playback-controls ticket 12).
     Q_INVOKABLE void startBaichuanPlayback(int row, qint64 startEpoch, rl::StreamPlayer *player,
-                                           bool mainStream = true);
+                                           bool mainStream = true, bool reverse = false);
     // Native LIVE view over Baichuan (cmd 3 Preview), for the maximized pane's HD
     // stream. The NVR's RTSP output for 8K duo main streams is itself corrupt
     // (verified: raw ffmpeg -c copy captures carry invalid NALUs), so HD live must
@@ -442,7 +443,8 @@ private:
     void warmPushCache();   // fetch each camera's push state once, staggered
     void applyConnectivity(qint64 hostId, bool transportOk, const QHash<int, bool> &chanOnline);
     // Shared body of startBaichuanPlayback/startBaichuanLive (startEpoch<=0 = live).
-    void startBaichuan(int row, qint64 startEpoch, rl::StreamPlayer *player, bool mainStream);
+    void startBaichuan(int row, qint64 startEpoch, rl::StreamPlayer *player, bool mainStream,
+                       bool reverse = false);
     void applyValidation(qint64 hostId, const Validation &v);
     void postValidation(qint64 hostId, const Validation &v); // marshals to GUI thread
     std::shared_ptr<ReolinkHttpClient> clientFor(int row);

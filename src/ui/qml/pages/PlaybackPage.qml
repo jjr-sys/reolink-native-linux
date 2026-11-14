@@ -82,6 +82,7 @@ Item {
     PlaybackGroup {
         id: group
         selection: selection
+        reverseAvailable: true   // ticket 12
         // Frigate panes play at 1× forward only (wayfinder/playback-controls ticket 11).
         directKeys: { Devices.count; selection.count;
                       return selection.keys.filter(k => page.isDirectKey(k)); }
@@ -348,6 +349,21 @@ Item {
     // Move the playhead and play every pane from that moment; each answers from its own
     // footage (play, or "no footage").
     function playAt(sec) {
+        // Backwards from where the camera that leads has nothing: from the end of its
+        // previous recording, or paused when there is none that day (ticket 12).
+        if (group.direction < 0) {
+            var lead = reverseLeadKey();
+            if (lead !== "" && !coveredAt(lead, sec)) {
+                var prev = previousEnd(lead, sec);
+                if (prev < 0) {
+                    playheadSecs = sec;
+                    stopAllPanes();
+                    statusText.text = qsTr("Nothing earlier that day");
+                    return;
+                }
+                sec = prev;
+            }
+        }
         stills.cancelAll();
         stillRest.stop();
         playheadSecs = sec;
@@ -377,6 +393,50 @@ Item {
             if (page.playheadSecs < 86399)
                 page.playheadSecs = Math.max(0, Math.min(86399, page.playheadSecs + dt * group.speed * group.direction));
         }
+    }
+    // Backwards, the selected camera's recordings decide where to jump (the first Reolink
+    // pane's when the selected one is Frigate): ticket 12.
+    function reverseLeadKey() {
+        if (selectedKey !== "" && !isDirectKey(selectedKey))
+            return selectedKey;
+        var order = selection.paneOrder;
+        for (var i = 0; i < order.length; i++)
+            if (!isDirectKey(order[i]))
+                return order[i];
+        return "";
+    }
+    function coveredAt(key, sec) {
+        var segs = segsByKey[key] || [];
+        for (var i = 0; i < segs.length; i++)
+            if (sec >= segs[i].start && sec <= segs[i].end)
+                return true;
+        return false;
+    }
+    // The end of the last recording finishing before `sec` (-1: none that day).
+    function previousEnd(key, sec) {
+        var segs = segsByKey[key] || [];
+        var best = -1;
+        for (var i = 0; i < segs.length; i++)
+            if (segs[i].end < sec - 0.5 && segs[i].end > best)
+                best = segs[i].end;
+        return best;
+    }
+    // A pane's reverse run reached the start of its recording. The leading camera's takes
+    // every pane to the end of its previous recording, or pauses when there is none.
+    function onReverseEnded(key) {
+        if (group.direction >= 0 || key !== reverseLeadKey())
+            return;
+        var prev = previousEnd(key, playheadSecs);
+        if (prev < 0) {
+            stopAllPanes();
+            statusText.text = qsTr("Nothing earlier that day");
+            return;
+        }
+        for (var i = 0; i < paneRepeater.count; i++) {
+            var p = paneRepeater.itemAt(i);
+            if (p) p.freeze();
+        }
+        playAt(prev);
     }
     function frameDriverSecs() {
         var sel = paneOf(selectedKey);
@@ -572,7 +632,13 @@ Item {
         // Test hook: play the first recording once to check the video path.
         if (typeof playbackAutoplay !== "undefined" && playbackAutoplay && segments.length > 0 && !_autoplayed) {
             _autoplayed = true;
-            playAt(segments[0].start);
+            if (typeof playbackBackSteps !== "undefined" && playbackBackSteps > 0) {
+                group.playBackward();
+                for (var b = 1; b < playbackBackSteps; b++)
+                    group.stepFast(-1);
+            }
+            playAt(typeof playbackAtSecs !== "undefined" && playbackAtSecs >= 0 ? playbackAtSecs
+                                                                              : segments[0].start);
             if (typeof playbackFastSteps !== "undefined")
                 for (var n = 0; n < playbackFastSteps; n++)
                     group.stepFast(1);
@@ -779,6 +845,7 @@ Item {
                         onStreamingChanged: page.countStreaming()
                         onVisibleChanged: page.countStreaming()
                         onClicked: group.select(cameraKey)
+                        onReverseEnded: page.onReverseEnded(cameraKey)
                         onDoubleClicked: {
                             page.maximizedKey = isMax ? "" : cameraKey;
                             group.select(cameraKey);

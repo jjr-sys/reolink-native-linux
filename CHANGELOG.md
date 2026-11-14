@@ -10,11 +10,19 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **Reverse play on Reolink recorders.** ◀ plays backwards at 1×, « steps 2× → 4× → back
+  to 1× backwards, slow back ½× → ¼× → 1× backwards. The recorder can't play backwards, so
+  the app fetches about 10 s of the standard-quality stream behind the playhead at a time
+  (well under a second each), decodes it and shows it backwards, fetching the next piece
+  ahead of need. At the start of a recording it jumps to the end of the selected camera's
+  previous recording that day, and pauses ("Nothing earlier that day") when there is none.
+  Frigate panes stop on their last picture with "1× only", as at other speeds.
+
 - **New Playback speed controls.** The speed menu is replaced by a centred group:
   « · slow back · ◀ · ⏸ · ▶ · slow forward · », with the speed written above it ("▶ 4×",
   "Paused"). » steps 2× → 4× → 8× → 16× → back to 1×; slow forward steps ½× → ¼× → 1×;
-  ▶ plays at 1×. Keys: **L** = », **K** = pause / play on, **←/→** = 10 s back / forward
-  (J and the backward buttons arrive with reverse play). ↺10 s / ↻10 s move left with the
+  ▶ plays at 1×. Keys: **J** = «, **L** = », **K** = pause / play on, **←/→** = 10 s back /
+  forward. ↺10 s / ↻10 s move left with the
   tools. Jumps and timeline clicks keep the speed; a new day or a change of cameras goes
   back to ▶ 1×. Off 1× the sound is muted, each playing pane shows its speed, an HD pane
   shows "SD at speed" above 1×, and Frigate panes stop on their last picture with

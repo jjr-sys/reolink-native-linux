@@ -103,6 +103,9 @@ public:
         std::atomic<bool> loop{false};
         std::atomic<qint64> framesDecoded{0};
         std::atomic<qint64> frameEpochMs{0};
+        // Reverse play: keyframe groups arrive newest first; each is shown backwards
+        // (media/ReversePlay.h). Fixed for the session.
+        bool reverse = false;
         std::atomic<int> playoutFrames{0};
         std::atomic<int> playoutPeakFrames{0};
         std::atomic<qint64> playoutBytes{0};
@@ -183,6 +186,8 @@ public:
     QString errorString() const { return m_errorString; }
     qint64 framesDecoded() const;
     qint64 frameEpochMs() const;
+    // The next start() plays a reverse-play source (wayfinder/playback-controls ticket 12).
+    void setReversePlayback(bool on) { m_reverse = on; }
 
     bool loop() const { return m_loop; }
     void setLoop(bool loop);
@@ -295,6 +300,7 @@ private:
     bool m_playback = false;
     qreal m_volume = 1.0;
     std::shared_ptr<std::atomic<double>> m_speed = std::make_shared<std::atomic<double>>(1.0);
+    bool m_reverse = false;
     int m_liveDelayMs = 0; // the picture delay in force; 0 = none. Sound follows it.
     QElapsedTimer m_clock;
     QTimer m_playoutTimer;

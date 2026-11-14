@@ -30,9 +30,10 @@ public:
     {
         opens.append({Route::Http, row, epoch, u});
     }
-    void openBaichuan(int row, qint64 epoch, bool main) override
+    void openBaichuan(int row, qint64 epoch, bool main, bool reverse) override
     {
-        opens.append({main ? Route::BaichuanMain : Route::BaichuanSub, row, epoch, {}});
+        opens.append({reverse ? Route::BaichuanReverse : main ? Route::BaichuanMain : Route::BaichuanSub,
+                      row, epoch, {}});
     }
     void stop() override { ++stops; isStreaming = false; }
 };
@@ -86,6 +87,10 @@ private slots:
         QCOMPARE(PlaybackSession::chooseRoute(true, 16.0, false), Route::BaichuanSub);
         // Direct (Frigate) footage has one HTTP stream at 1x: HD and speed are ignored.
         QCOMPARE(PlaybackSession::chooseRoute(true, 4.0, true), Route::Http);
+        // Backwards: the sub stream in windows (ticket 12), whatever HD says; Frigate stays HTTP.
+        QCOMPARE(PlaybackSession::chooseRoute(true, 1.0, false, -1), Route::BaichuanReverse);
+        QCOMPARE(PlaybackSession::chooseRoute(false, 0.25, false, -1), Route::BaichuanReverse);
+        QCOMPARE(PlaybackSession::chooseRoute(false, 1.0, true, -1), Route::Http);
     }
     void sdAtNormalSpeedOpensBaichuanSub()
     {
@@ -279,6 +284,27 @@ private slots:
         f.s.setHd(false);
         QCOMPARE(f.s.playAt(6000), Outcome::Opened);
         QCOMPARE(f.t->seeks, 0);
+    }
+    // Reverse play (ticket 12): a change of direction reopens; speed within reverse doesn't;
+    // a reverse run never seeks in place.
+    void directionChangeReopensReverse()
+    {
+        Fixture f;
+        QCOMPARE(f.s.playAt(6000), Outcome::Opened);
+        f.t->isStreaming = true;
+        QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
+        f.s.setDirection(-1);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(f.s.playAt(6000), Outcome::Opened);
+        QCOMPARE(f.t->opens.last().route, Route::BaichuanReverse);
+        f.s.setSpeed(4.0);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(f.s.playAt(5000), Outcome::Opened); // a jump backwards reopens
+        QCOMPARE(f.t->seeks, 0);
+        f.s.setDirection(1);
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(f.s.playAt(5000), Outcome::Opened);
+        QCOMPARE(f.t->opens.last().route, Route::BaichuanSub);
     }
     void hdOnDirectRowDoesNotReopen()
     {

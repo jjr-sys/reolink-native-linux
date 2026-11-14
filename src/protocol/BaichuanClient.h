@@ -43,6 +43,9 @@ public:
         bool mainStream = true;
         bool smoothLive = false;        // pace live access units on their camera timestamps
         qint64 startEpoch = 0;          // 0 => live preview; else recorded playback from here
+        // Recorded playback backwards from startEpoch (wayfinder/playback-controls ticket 12):
+        // windows fetched with cmd 143, keyframe groups sent newest first (media/ReversePlay.h).
+        bool reverse = false;
     };
 
     explicit BaichuanClient(Params params);
@@ -75,6 +78,7 @@ public:
 
 private:
     void run();                                    // worker entry
+    void runReverse();                             // reverse play: windows behind the playhead
     bool connectAndLogin(QTcpSocket &sock, QByteArray &aesKey);
     bool startStream(QTcpSocket &sock, const QByteArray &aesKey);
     // Recorder-paced replay (cmd 381/382/383, wayfinder/playback-controls ticket 10).
