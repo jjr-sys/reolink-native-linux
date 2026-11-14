@@ -77,8 +77,10 @@ QtObject {
     // ---- Playback ----------------------------------------------------------------------
     // A bare stream has no recordings of its own. Where a recorder records the same camera,
     // Playback offers that camera instead: "hostId:channel" of the stream -> of the recorder.
-    // The Farm Hikvision stream (host 4) is Farm NVR channel 8.
-    readonly property var playbackInstead: ({ "4:0": "2:8" })
+    // None today: Farm NVR channel 8 is the Driveway Hikvision (.195), not the workshop one
+    // that the Farm Hikvision stream (host 4, .196) shows, so mapping 4:0 there played the
+    // wrong camera. Map "4:0" once the NVR records .196 (wayfinder tickets 20, 21).
+    readonly property var playbackInstead: ({})
     // The camera to play for `key`: itself, or the recorder's copy of a bare stream ("" for
     // a bare stream with none).
     function playbackKey(key) {

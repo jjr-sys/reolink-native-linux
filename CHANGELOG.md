@@ -155,6 +155,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
 - **Cameras added to or removed from Frigate show up without restarting the app.** The app
   re-reads Frigate's camera list every five minutes and updates the Site when it changed,
   so a removed camera no longer lingers greyed out or keeps retrying.
+- **Playback no longer shows the wrong camera for the Farm Hikvision.** It offered the Farm
+  NVR's channel 8, which is the Driveway camera, not the workshop one. Its Playback card now
+  says it has no recordings of its own until the NVR records the workshop camera.
 - **A Frigate camera renamed in the app keeps working.** Renaming one in the app made the app
   ask Frigate for a camera under the new name, which Frigate doesn't know: live video,
   Playback, clips and its events stopped. Requests now use Frigate's own name for it.
