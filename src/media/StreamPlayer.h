@@ -58,6 +58,13 @@ class StreamPlayer : public QObject
     // frame-time SEI (media/FrameTimeSei.h); 0 until a tagged frame shows. Notified at most
     // 4 times a second, and at once on a jump back.
     Q_PROPERTY(qint64 frameEpochMs READ frameEpochMs NOTIFY frameEpochMsChanged)
+    // Reverse play holds a decoded group scaled to the pane's size on screen (device pixels),
+    // a fisheye camera's up to 1920×1920 (wayfinder/live-replay ticket 06). Live: applies from
+    // the next group.
+    Q_PROPERTY(QSize holdPaneSize READ holdPaneSize WRITE setHoldPaneSize NOTIFY holdChanged)
+    Q_PROPERTY(bool holdFisheye READ holdFisheye WRITE setHoldFisheye NOTIFY holdChanged)
+    // The link can't feed HD backwards (set by the recorder client; cleared by start()).
+    Q_PROPERTY(bool linkTooSlow READ linkTooSlow NOTIFY linkTooSlowChanged)
     Q_PROPERTY(bool loop READ loop WRITE setLoop NOTIFY loopChanged)
     Q_PROPERTY(bool retryOnError READ retryOnError WRITE setRetryOnError NOTIFY retryOnErrorChanged)
     Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
@@ -106,6 +113,8 @@ public:
         // Reverse play: keyframe groups arrive newest first; each is shown backwards
         // (media/ReversePlay.h). Fixed for the session.
         bool reverse = false;
+        std::atomic<int> holdW{0}, holdH{0};
+        std::atomic<bool> holdFisheye{false};
         std::atomic<int> playoutFrames{0};
         std::atomic<int> playoutPeakFrames{0};
         std::atomic<qint64> playoutBytes{0};
@@ -188,6 +197,12 @@ public:
     qint64 frameEpochMs() const;
     // The next start() plays a reverse-play source (wayfinder/playback-controls ticket 12).
     void setReversePlayback(bool on) { m_reverse = on; }
+    QSize holdPaneSize() const { return m_holdPane; }
+    void setHoldPaneSize(const QSize &size);
+    bool holdFisheye() const { return m_holdFisheye; }
+    void setHoldFisheye(bool on);
+    bool linkTooSlow() const { return m_linkTooSlow; }
+    void setLinkTooSlow(bool slow);
 
     bool loop() const { return m_loop; }
     void setLoop(bool loop);
@@ -260,6 +275,8 @@ signals:
     void errorStringChanged();
     void framesDecodedChanged();
     void frameEpochMsChanged();
+    void holdChanged();
+    void linkTooSlowChanged();
     void loopChanged();
     void retryOnErrorChanged();
     void recordingChanged();
@@ -301,6 +318,9 @@ private:
     qreal m_volume = 1.0;
     std::shared_ptr<std::atomic<double>> m_speed = std::make_shared<std::atomic<double>>(1.0);
     bool m_reverse = false;
+    QSize m_holdPane;
+    bool m_holdFisheye = false;
+    bool m_linkTooSlow = false;
     int m_liveDelayMs = 0; // the picture delay in force; 0 = none. Sound follows it.
     QElapsedTimer m_clock;
     QTimer m_playoutTimer;

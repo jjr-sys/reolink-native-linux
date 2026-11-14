@@ -68,6 +68,9 @@ public:
     void setAudioHandler(std::function<void(const QByteArray &)> handler);
     // Playback speed shared with the player (1 = real time). Read as frames are paced.
     void setSpeedCell(std::shared_ptr<std::atomic<double>> cell) { m_speed = std::move(cell); }
+    // Reverse play on the main stream: called once (network thread) when the link can't feed
+    // it (media/ReversePlay.h LinkPace). Set before start().
+    void setLinkSlowHandler(std::function<void()> handler) { m_linkSlow = std::move(handler); }
 
     // Blocking read of decoded Annex-B bytes (for an AVIOContext read callback).
     // Returns the number of bytes written, 0 on clean end, or <0 on abort/error.
@@ -99,6 +102,7 @@ private:
 
     std::function<void(const QByteArray &)> m_audioHandler; // set before start()
     std::shared_ptr<std::atomic<double>> m_speed;           // set before start(); may be empty
+    std::function<void()> m_linkSlow;                       // set before start(); may be empty
 
     QMutex m_mutex;
     QWaitCondition m_cond;

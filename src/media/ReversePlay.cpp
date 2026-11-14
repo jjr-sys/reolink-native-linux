@@ -43,6 +43,31 @@ qint64 FrameClock::epochMs(bool key, quint32 timeSecs, quint32 micros)
     return m_keyMs + qMax<qint64>(0, qint64(micros) - qint64(m_keyMicros)) / 1000;
 }
 
+QSize holdSize(QSize decoded, QSize pane, bool fisheye)
+{
+    if (decoded.isEmpty())
+        return decoded;
+    QSize box = pane;
+    if (fisheye)
+        box = QSize(qMax(pane.width(), 1920), qMax(pane.height(), 1920));
+    if (box.isEmpty())
+        return decoded;
+    const double k = qMin(1.0, qMin(double(box.width()) / decoded.width(),
+                                    double(box.height()) / decoded.height()));
+    if (k >= 1.0)
+        return decoded;
+    return QSize(int(decoded.width() * k) & ~1, int(decoded.height() * k) & ~1);
+}
+
+void LinkPace::window(double fetchSecs, double playSecs)
+{
+    if (playSecs <= 0)
+        return;
+    m_slowInARow = fetchSecs > 0.8 * playSecs ? m_slowInARow + 1 : 0;
+    if (m_slowInARow >= 2)
+        m_tooSlow = true;
+}
+
 qint64 waitUs(qint64 prevMs, qint64 epochMs, double speed)
 {
     if (prevMs < 0 || epochMs < 0 || epochMs >= prevMs || speed <= 0)

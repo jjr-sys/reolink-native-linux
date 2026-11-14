@@ -10,6 +10,14 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **Reverse play in HD.** An HD pane now plays backwards in HD, at every reverse speed while
+  the link keeps up. Each decoded keyframe group is held at the pane's size on screen
+  (a fisheye camera's up to 1920×1920, so its views stay sharp), and the next group is
+  decoded while the current one is shown, so there is no pause between groups (Lascelles
+  Kitchen: 24 of 25 frames a second at 1×). When the recorder's link can't keep up with HD
+  backwards, the pane drops to standard quality by itself and the HD button says "SD · link
+  slow"; HD is tried again on the next play or jump.
+
 - **Reverse play on Reolink recorders.** ◀ plays backwards at 1×, « steps 2× → 4× → back
   to 1× backwards, slow back ½× → ¼× → 1× backwards. The recorder can't play backwards, so
   the app fetches about 10 s of the standard-quality stream behind the playhead at a time

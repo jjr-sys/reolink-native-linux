@@ -88,7 +88,7 @@ PlaybackSession::Route PlaybackSession::chooseRoute(bool hd, double speed, bool 
     if (direct)
         return Route::Http;
     if (direction < 0)
-        return Route::BaichuanReverse;
+        return hd ? Route::BaichuanReverseMain : Route::BaichuanReverse;
     // Above 1x the recorder sends the main stream as keyframes only (wayfinder/playback-controls
     // ticket 10), so HD plays the sub stream at speed and comes back at 1x.
     return hd && speed <= 1.0 ? Route::BaichuanMain : Route::BaichuanSub;
@@ -96,7 +96,7 @@ PlaybackSession::Route PlaybackSession::chooseRoute(bool hd, double speed, bool 
 
 PlaybackSession::Route PlaybackSession::route() const
 {
-    return chooseRoute(m_hd, m_speed, direct(), m_direction);
+    return chooseRoute(m_hd && !(m_linkSlow && m_direction < 0), m_speed, direct(), m_direction);
 }
 
 void PlaybackSession::setDevices(DeviceManager *devices)
@@ -157,6 +157,13 @@ void PlaybackSession::setDirection(int direction)
     changeRouteAware([&] { m_direction = direction; emit directionChanged(); });
 }
 
+void PlaybackSession::setLinkSlow(bool slow)
+{
+    if (m_linkSlow == slow)
+        return;
+    changeRouteAware([&] { m_linkSlow = slow; emit linkSlowChanged(); });
+}
+
 void PlaybackSession::setSpeed(double speed)
 {
     if (qFuzzyCompare(m_speed, speed))
@@ -205,8 +212,8 @@ PlaybackSession::Outcome PlaybackSession::playAtImpl(double epochSecs, bool cove
     }
     if (m_row < 0)
         return Outcome::NoSource;
-    const bool main = r == Route::BaichuanMain;
-    return openOrSeekNative(epoch, main, r == Route::BaichuanReverse)
+    const bool main = r == Route::BaichuanMain || r == Route::BaichuanReverseMain;
+    return openOrSeekNative(epoch, main, r == Route::BaichuanReverse || r == Route::BaichuanReverseMain)
         ? Outcome::SeekedInPlace
         : main ? Outcome::OpenedHd : Outcome::Opened;
 }

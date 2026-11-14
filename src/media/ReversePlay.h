@@ -4,6 +4,7 @@
 
 #include <QByteArray>
 #include <QList>
+#include <QSize>
 #include <QtGlobal>
 
 #include <utility>
@@ -86,6 +87,26 @@ public:
 
 private:
     QList<Item> m_group;
+};
+
+// HD reverse (wayfinder/live-replay ticket 06): a decoded group is held scaled to fit the
+// pane's size on screen in device pixels (never larger than the picture; the whole picture if
+// the pane is unknown); a fisheye camera's to fit at least 1920×1920, so its dewarped views and
+// zoom stay sharp. Even sizes, aspect kept.
+QSize holdSize(QSize decoded, QSize pane, bool fisheye);
+
+// Whether the link keeps up with HD backwards: each window's download time against the time
+// its footage plays for (recording seconds ÷ speed). Two windows in a row above 80% mean it
+// can't; that stays for the run (HD comes back on the next open).
+class LinkPace
+{
+public:
+    void window(double fetchSecs, double playSecs);
+    bool tooSlow() const { return m_tooSlow; }
+
+private:
+    int m_slowInARow = 0;
+    bool m_tooSlow = false;
 };
 
 // How long to wait before showing a frame of `epochMs` after one of `prevMs` (backwards):

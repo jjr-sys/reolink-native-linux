@@ -24,10 +24,11 @@ class PlaybackSession : public QObject
     Q_PROPERTY(bool hd READ hd WRITE setHd NOTIFY hdChanged)
     Q_PROPERTY(double speed READ speed WRITE setSpeed NOTIFY speedChanged)
     Q_PROPERTY(int direction READ direction WRITE setDirection NOTIFY directionChanged)
+    Q_PROPERTY(bool linkSlow READ linkSlow WRITE setLinkSlow NOTIFY linkSlowChanged)
     Q_PROPERTY(rl::PlaybackSession::Route route READ route NOTIFY routeChanged)
 
 public:
-    enum class Route { Http, BaichuanMain, BaichuanSub, BaichuanReverse };
+    enum class Route { Http, BaichuanMain, BaichuanSub, BaichuanReverse, BaichuanReverseMain };
     Q_ENUM(Route)
     enum class Outcome { Gap, NoSource, Opened, OpenedHd, SeekedInPlace };
     Q_ENUM(Outcome)
@@ -42,7 +43,8 @@ public:
     // do not apply. A Reolink NVR always plays over native Baichuan: HD = main stream,
     // else sub, at any speed. (Its HTTP-FLV playback endpoint is not used: NVRs drop
     // every playback.bcs request (live FLV works), and it needs RTMP enabled anyway.)
-    // Backwards (direction -1) plays windows of the sub stream (ticket 12).
+    // Backwards (direction -1) plays windows of the stream (ticket 12): the main stream when HD
+    // (live-replay ticket 06), else the sub stream.
     static Route chooseRoute(bool hd, double speed, bool direct, int direction = 1);
     Route route() const;
 
@@ -58,6 +60,11 @@ public:
     void setSpeed(double speed);
     int direction() const { return m_direction; }
     void setDirection(int direction);
+    // The link can't feed HD backwards (StreamPlayer::linkTooSlow): play SD until the next open
+    // the user makes, which calls clearLinkSlow() (silently: that open is the reopen).
+    bool linkSlow() const { return m_linkSlow; }
+    void setLinkSlow(bool slow);
+    Q_INVOKABLE void clearLinkSlow() { m_linkSlow = false; }
 
     // Play the wall-clock moment `epoch`. `covered` is the caller's timeline verdict
     // (a gap is normal: stop, no error). A native session is moved in place when one
@@ -75,6 +82,7 @@ signals:
     void hdChanged();
     void speedChanged();
     void directionChanged();
+    void linkSlowChanged();
     void routeChanged();
     // The transport for the current moment changed while playing: replay it.
     void reopenNeeded();
@@ -99,6 +107,7 @@ private:
     bool m_openMain = false;
     bool m_openReverse = false;
     int m_direction = 1;
+    bool m_linkSlow = false;
 };
 
 } // namespace rl

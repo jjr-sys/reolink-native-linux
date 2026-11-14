@@ -651,6 +651,8 @@ Item {
         // Test hook: play the first recording once to check the video path.
         if (typeof playbackAutoplay !== "undefined" && playbackAutoplay && segments.length > 0 && !_autoplayed) {
             _autoplayed = true;
+            if (typeof playbackHd !== "undefined" && playbackHd)
+                toggleHd(selectedKey);
             if (typeof playbackBackSteps !== "undefined" && playbackBackSteps > 0) {
                 group.playBackward();
                 for (var b = 1; b < playbackBackSteps; b++)
@@ -1140,22 +1142,28 @@ Item {
                         readonly property bool on: page.hdKeys.indexOf(page.selectedKey) >= 0
                         visible: page.selectedRow >= 0 && !page.selectedDirect
                         width: 52; height: 30; radius: Theme.radius
-                        color: on && !atSpeed ? Theme.accent : (hdHover.hovered ? Theme.surfaceAlt : Theme.surface)
+                        color: on && !sdNow ? Theme.accent : (hdHover.hovered ? Theme.surfaceAlt : Theme.surface)
                         border.color: on ? Theme.accent : Theme.border
                         // HD plays the sub stream above 1× (PlaybackSession::chooseRoute): "SD at speed".
-                        readonly property bool atSpeed: on && (group.speed > 1 || group.direction !== 1)
+                        // Backwards stays HD while the link keeps up (live-replay ticket 06).
+                    readonly property bool atSpeed: on && group.direction > 0 && group.speed > 1
+                    readonly property bool linkSlow: { paneRepeater.count;
+                        var p = page.selectedRow >= 0 ? paneRepeater.itemAt(page.selectedRow) : null;
+                        return on && !!p && p.linkSlow; }
+                    readonly property bool sdNow: atSpeed || linkSlow
                         Column {
                             anchors.centerIn: parent
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                text: hdBtn.on && !hdBtn.atSpeed ? qsTr("HD") : qsTr("SD")
-                                color: hdBtn.on && !hdBtn.atSpeed ? Theme.window : hdBtn.atSpeed ? Theme.accent : Theme.text
+                                text: hdBtn.on && !hdBtn.sdNow ? qsTr("HD") : qsTr("SD")
+                                color: hdBtn.on && !hdBtn.sdNow ? Theme.window : hdBtn.sdNow ? Theme.accent : Theme.text
                                 font.pixelSize: 12; font.bold: true
                             }
                             Text {
-                                visible: hdBtn.atSpeed
+                                visible: hdBtn.sdNow
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                text: qsTr("at speed"); color: Theme.accent; font.pixelSize: 8
+                                text: hdBtn.linkSlow ? qsTr("link slow") : qsTr("at speed")
+                                color: Theme.accent; font.pixelSize: 8
                             }
                         }
                         HoverHandler { id: hdHover }
@@ -1165,7 +1173,8 @@ Item {
                             x: (parent.width - width) / 2
                             y: -height - 8
                             contentItem: Text {
-                                text: hdBtn.atSpeed ? qsTr("HD comes back at 1× forward")
+                                text: hdBtn.linkSlow ? qsTr("SD: the link is too slow for HD backwards; HD is tried again on the next play or jump")
+                                : hdBtn.atSpeed ? qsTr("HD comes back at 1× forward")
                                     : hdBtn.on ? qsTr("Switch the selected pane to SD")
                                                        : qsTr("Switch the selected pane to HD (full resolution)")
                                 color: Theme.text; font.pixelSize: 11

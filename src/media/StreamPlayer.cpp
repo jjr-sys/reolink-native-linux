@@ -726,7 +726,9 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
 
     AVBufferRef *hwCtx = nullptr;
     AVPixelFormat hwPixFmt = AV_PIX_FMT_NONE;
-    if (hwDecodeEnabled())
+    // Reverse play decodes in software: it holds CPU copies anyway, and pulling 4K–8K frames
+    // back from the GPU is slower than decoding them (wayfinder/live-replay ticket 06).
+    if (hwDecodeEnabled() && !s->reverse)
         hwPixFmt = setupHwDecode(dec, codec, &hwCtx);
     if (hwPixFmt != AV_PIX_FMT_NONE)
         dec->thread_count = 1;
@@ -824,22 +826,62 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     };
     // Reverse play: decoded groups come back reversed, shown at their recording-time gaps.
     rl::reverse::GopReverser<QVideoFrame> reverser;
+    QSize reverseHold;                       // the size this group is held at
+    SwsContext *reverseSws = nullptr;
+    AVFrame *reverseScaled = av_frame_alloc();
+    struct ReverseGuard {
+        AVFrame *f;
+        SwsContext **s;
+        ~ReverseGuard()
+        {
+            av_frame_free(&f);
+            sws_freeContext(*s);
+        }
+    } reverseGuard{reverseScaled, &reverseSws};
+    // Reversed frames wait in a show queue, shown at their recording-time gaps ÷ speed. The
+    // loop below decodes the next group only once what is left to show is about as long as a
+    // group takes to decode, so decoding overlaps showing (no pause between groups) while
+    // holding about one group and a bit (wayfinder/live-replay ticket 06).
+    QList<rl::reverse::GopReverser<QVideoFrame>::Item> showQueue;
     qint64 reverseShownMs = -1;
     qint64 reverseShownWallUs = 0;
-    auto showReversed = [&](rl::reverse::GopReverser<QVideoFrame>::Item &item) {
-        // The time spent since the last frame (decoding the next group) counts towards the wait.
+    qint64 decodeUsPerFrame = 0;   // decode + scale + copy, averaged
+    int lastGroupFrames = 0;
+    auto queueReversed = [&](QList<rl::reverse::GopReverser<QVideoFrame>::Item> items) {
+        if (items.isEmpty())
+            return;
+        lastGroupFrames = int(items.size());
+        showQueue.append(std::move(items));
+    };
+    auto queuedUs = [&]() -> qint64 {
+        if (showQueue.isEmpty())
+            return 0;
+        const double speed = qMax(0.25, s->speed->load(std::memory_order_relaxed));
+        return qint64(double(showQueue.first().epochMs - showQueue.last().epochMs) * 1000.0 / speed);
+    };
+    // Show the next queued frame if it is due; with `wait`, sleep until it is. True if shown.
+    auto showNext = [&](bool wait) -> bool {
+        if (showQueue.isEmpty() || s->abort.load())
+            return false;
+        auto &item = showQueue.first();
+        // The time spent since the last frame (decoding) counts towards the wait.
         const qint64 waitUs = rl::reverse::waitUs(reverseShownMs, item.epochMs,
                                                   s->speed->load(std::memory_order_relaxed))
                             - (av_gettime_relative() - reverseShownWallUs);
-        if (waitUs > 0)
+        if (waitUs > 0) {
+            if (!wait)
+                return false;
             abortableSleepUs(s.get(), waitUs);
+        }
         if (s->abort.load())
-            return;
-        reverseShownMs = item.epochMs;
+            return false;
+        auto shown = showQueue.takeFirst();
+        reverseShownMs = shown.epochMs;
         reverseShownWallUs = av_gettime_relative();
-        const qint64 bytes = qint64(item.frame.width()) * item.frame.height() * 3 / 2;
-        if (publishVideoFrame(s, std::move(item.frame), rotation, AV_NOPTS_VALUE, 0, bytes))
-            delivered(item.epochMs, false, false);
+        const qint64 bytes = qint64(shown.frame.width()) * shown.frame.height() * 3 / 2;
+        if (publishVideoFrame(s, std::move(shown.frame), rotation, AV_NOPTS_VALUE, 0, bytes))
+            delivered(shown.epochMs, false, false);
+        return true;
     };
     // Drain one decoded frame at a time; shared by the normal and flush paths.
     auto receiveFrames = [&]() {
@@ -943,10 +985,39 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
 #else
                 const bool key = frame->key_frame != 0;
 #endif
-                QVideoFrame copy = copyToVideoFrame(out, outFormat);
+                // Held at the pane's size (a fisheye's up to 1920²), chosen at each group's start.
+                if (key || reverseHold.isEmpty()) {
+                    const QSize was = reverseHold;
+                    reverseHold = rl::reverse::holdSize(
+                        QSize(out->width, out->height),
+                        QSize(s->holdW.load(), s->holdH.load()), s->holdFisheye.load());
+                    if (reverseHold != was)
+                        qCInfo(lcMedia) << redacted(source) << "reverse: holding" << out->width << "x"
+                                        << out->height << "groups at" << reverseHold;
+                }
+                AVFrame *held = out;
+                QVideoFrameFormat::PixelFormat heldFormat = outFormat;
+                if (reverseHold != QSize(out->width, out->height)) {
+                    reverseSws = sws_getCachedContext(
+                        reverseSws, out->width, out->height, static_cast<AVPixelFormat>(out->format),
+                        reverseHold.width(), reverseHold.height(), AV_PIX_FMT_YUV420P,
+                        SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
+                    reverseScaled->width = reverseHold.width();
+                    reverseScaled->height = reverseHold.height();
+                    reverseScaled->format = AV_PIX_FMT_YUV420P;
+                    if (reverseSws && av_frame_get_buffer(reverseScaled, 0) >= 0) {
+                        sws_scale(reverseSws, out->data, out->linesize, 0, out->height,
+                                  reverseScaled->data, reverseScaled->linesize);
+                        reverseScaled->color_range = out->color_range;
+                        held = reverseScaled;
+                        heldFormat = QVideoFrameFormat::Format_YUV420P;
+                    }
+                }
+                QVideoFrame copy = copyToVideoFrame(held, heldFormat);
+                if (held == reverseScaled)
+                    av_frame_unref(reverseScaled);
                 if (copy.isValid())
-                    for (auto &item : reverser.push(std::move(copy), key, frameEpoch))
-                        showReversed(item);
+                    queueReversed(reverser.push(std::move(copy), key, frameEpoch));
             } else {
                 const bool emitted = vaapiOutput
                     ? publishVideoFrame(s, std::move(vaapiVideoFrame), rotation, framePtsUs,
@@ -1002,13 +1073,22 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
     };
 
     while (!s->abort.load()) {
+        if (s->reverse) {
+            while (showNext(false)) {}
+            // Decode ahead only when the queue is about to run out (1.5× a group's decode time).
+            const qint64 aheadUs = qMax<qint64>(150000, decodeUsPerFrame * qMax(lastGroupFrames, 10) * 3 / 2);
+            if (queuedUs() > aheadUs) {
+                showNext(true);
+                continue;
+            }
+        }
         interrupt.deadline = QDeadlineTimer(kReadStallTimeoutMs);
         rc = av_read_frame(fmt, packet);
         if (rc == AVERROR_EOF) {
             avcodec_send_packet(dec, nullptr); // flush: drain buffered frames
             receiveFrames();
-            for (auto &item : reverser.flush()) // reverse play: the last group
-                showReversed(item);
+            queueReversed(reverser.flush()); // reverse play: the last group
+            while (showNext(true)) {}
             if (!live && s->loop.load()) {
                 if (av_seek_frame(fmt, videoIndex, 0, AVSEEK_FLAG_BACKWARD) >= 0) {
                     avcodec_flush_buffers(dec);
@@ -1052,11 +1132,16 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             recorder.write(packet); // stream-copy before the packet is consumed
         const auto pipelineStart = perfDiagnosticsEnabled
             ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        const qint64 decodeStartUs = av_gettime_relative();
         rc = avcodec_send_packet(dec, packet);
         av_packet_unref(packet);
         if (rc < 0 && rc != AVERROR(EAGAIN))
             continue; // tolerate bitstream hiccups on live sources
         receiveFrames();
+        if (s->reverse) {   // one frame a packet: the average cost of a frame
+            const qint64 tookUs = av_gettime_relative() - decodeStartUs;
+            decodeUsPerFrame = decodeUsPerFrame == 0 ? tookUs : (decodeUsPerFrame * 7 + tookUs) / 8;
+        }
         if (perfDiagnosticsEnabled) {
             perfPipelineUs += std::chrono::duration_cast<std::chrono::microseconds>(
                                   std::chrono::steady_clock::now() - pipelineStart)
@@ -1556,6 +1641,36 @@ void StreamPlayer::setVideoSink(QVideoSink *sink)
     emit videoSinkChanged();
 }
 
+void StreamPlayer::setHoldPaneSize(const QSize &size)
+{
+    if (size == m_holdPane)
+        return;
+    m_holdPane = size;
+    if (m_session) {
+        m_session->holdW.store(size.width());
+        m_session->holdH.store(size.height());
+    }
+    emit holdChanged();
+}
+
+void StreamPlayer::setHoldFisheye(bool on)
+{
+    if (on == m_holdFisheye)
+        return;
+    m_holdFisheye = on;
+    if (m_session)
+        m_session->holdFisheye.store(on);
+    emit holdChanged();
+}
+
+void StreamPlayer::setLinkTooSlow(bool slow)
+{
+    if (slow == m_linkTooSlow)
+        return;
+    m_linkTooSlow = slow;
+    emit linkTooSlowChanged();
+}
+
 qint64 StreamPlayer::frameEpochMs() const
 {
     return m_session ? m_session->frameEpochMs.load() : 0;
@@ -1607,6 +1722,10 @@ void StreamPlayer::start()
     s->audioWanted.store(!m_muted && speed() == 1.0);
     s->smoothing.store(m_smoothing);
     s->reverse = m_reverse;
+    s->holdW.store(m_holdPane.width());
+    s->holdH.store(m_holdPane.height());
+    s->holdFisheye.store(m_holdFisheye);
+    setLinkTooSlow(false);
     if (m_tap)
         m_tap->bind(s);
     applyHasAudio(false); // the new session reports its own track

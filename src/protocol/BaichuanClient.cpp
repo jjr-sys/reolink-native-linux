@@ -354,6 +354,8 @@ void BaichuanClient::runReverse()
     const qint64 dayStartMs =
         QDateTime(QDateTime::fromSecsSinceEpoch(m_p.startEpoch).date(), QTime(0, 0)).toMSecsSinceEpoch();
     int lengthSecs = 10;
+    reverse::LinkPace pace;    // can the link feed this stream backwards? (live-replay ticket 06)
+    bool slowSaid = false;
     while (!m_abort.load()) {
         const reverse::Window w = reverse::windowBefore(cutoff, lengthSecs);
         BcDownloadRequest req;
@@ -379,6 +381,8 @@ void BaichuanClient::runReverse()
         BcDownloadOptions o;
         o.cancel = &m_abort;
         o.stallMs = 15000;
+        QElapsedTimer fetch;
+        fetch.start();
         const BcDownloadResult r =
             runBcDownload(*port, req, [&](const QByteArray &b) { parser.append(b); }, o);
         if (m_abort.load())
@@ -404,6 +408,14 @@ void BaichuanClient::runReverse()
             return;
         }
         lengthSecs = 10;
+        const double speed = qMax(0.25, m_speed ? m_speed->load(std::memory_order_relaxed) : 1.0);
+        pace.window(fetch.elapsed() / 1000.0, double(cutoff - g.nextCutoffMs) / 1000.0 / speed);
+        if (pace.tooSlow() && m_p.mainStream && !slowSaid && m_linkSlow) {
+            slowSaid = true;
+            qCInfo(lcCore).noquote() << "reverse playback: the link can't feed HD backwards on"
+                                     << m_p.host << "ch" << m_p.channel;
+            m_linkSlow();
+        }
         for (const QList<reverse::Frame> &gop : g.newestFirst)
             for (const reverse::Frame &f : gop)
                 pushAnnexB(frametime::tag(f.annexB, f.codec, f.epochMs));

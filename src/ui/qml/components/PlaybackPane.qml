@@ -167,6 +167,9 @@ Rectangle {
     signal clicked()
     // Reverse play reached the start of this camera's recording (ticket 12).
     signal reverseEnded()
+    property bool _reopening: false
+    // The link can't feed HD backwards: this pane plays SD until the next open (ticket 06).
+    readonly property bool linkSlow: session.linkSlow
     property real _reverseRestartWall: 0   // the page's last restart of this pane backwards
     // Double-click toggles maximize (the page owns which pane is maximized).
     signal doubleClicked()
@@ -257,7 +260,11 @@ Rectangle {
         hd: root.hdActive && !root.stillMode
         speed: root.speed
         direction: root.stillMode ? 1 : root.direction
-        onReopenNeeded: root.playAtSecs(root.playheadSecs, root.epochOf(root.playheadSecs))
+        onReopenNeeded: {
+            root._reopening = true;
+            root.playAtSecs(root.playheadSecs, root.epochOf(root.playheadSecs));
+            root._reopening = false;
+        }
     }
 
     function covered(sec) {
@@ -311,6 +318,8 @@ Rectangle {
     function _open(sec, epoch) {
         if (!hasSource)
             return -1;
+        if (!_reopening)
+            session.clearLinkSlow();   // an open the user made: try HD backwards again
         _suppressResume = false;
         _openSec = sec;
         _openWall = Date.now();
@@ -380,6 +389,11 @@ Rectangle {
         retryOnError: true
         playback: true
         speed: root.speed * root.catchUp
+        // HD reverse holds groups at the pane's size on screen (live-replay ticket 06).
+        holdPaneSize: Qt.size(Math.round(root.width * Screen.devicePixelRatio),
+                              Math.round(root.height * Screen.devicePixelRatio))
+        holdFisheye: root.fisheyeLens
+        onLinkTooSlowChanged: if (linkTooSlow) session.linkSlow = true
         // Off screen or not the chosen pane: no decode, no device held open.
         muted: root.audioMuted || !root.audioActive || !root.visible || root.stillMode
     }

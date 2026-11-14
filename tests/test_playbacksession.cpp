@@ -32,7 +32,8 @@ public:
     }
     void openBaichuan(int row, qint64 epoch, bool main, bool reverse) override
     {
-        opens.append({reverse ? Route::BaichuanReverse : main ? Route::BaichuanMain : Route::BaichuanSub,
+        opens.append({reverse ? (main ? Route::BaichuanReverseMain : Route::BaichuanReverse)
+                              : main ? Route::BaichuanMain : Route::BaichuanSub,
                       row, epoch, {}});
     }
     void stop() override { ++stops; isStreaming = false; }
@@ -87,8 +88,10 @@ private slots:
         QCOMPARE(PlaybackSession::chooseRoute(true, 16.0, false), Route::BaichuanSub);
         // Direct (Frigate) footage has one HTTP stream at 1x: HD and speed are ignored.
         QCOMPARE(PlaybackSession::chooseRoute(true, 4.0, true), Route::Http);
-        // Backwards: the sub stream in windows (ticket 12), whatever HD says; Frigate stays HTTP.
-        QCOMPARE(PlaybackSession::chooseRoute(true, 1.0, false, -1), Route::BaichuanReverse);
+        // Backwards: windows of the stream (ticket 12); HD plays the main stream backwards at
+        // any speed while the link keeps up (live-replay ticket 06); Frigate stays HTTP.
+        QCOMPARE(PlaybackSession::chooseRoute(true, 1.0, false, -1), Route::BaichuanReverseMain);
+        QCOMPARE(PlaybackSession::chooseRoute(true, 4.0, false, -1), Route::BaichuanReverseMain);
         QCOMPARE(PlaybackSession::chooseRoute(false, 0.25, false, -1), Route::BaichuanReverse);
         QCOMPARE(PlaybackSession::chooseRoute(false, 1.0, true, -1), Route::Http);
     }
@@ -305,6 +308,26 @@ private slots:
         QCOMPARE(spy.count(), 2);
         QCOMPARE(f.s.playAt(5000), Outcome::Opened);
         QCOMPARE(f.t->opens.last().route, Route::BaichuanSub);
+    }
+    // A link too slow for HD backwards drops the pane to SD (a reopen); the next open the
+    // user makes tries HD again without a second reopen.
+    void slowLinkDropsHdReverseToSdUntilTheNextOpen()
+    {
+        Fixture f;
+        f.s.setHd(true);
+        f.s.setDirection(-1);
+        QCOMPARE(f.s.playAt(6000), Outcome::OpenedHd);
+        QCOMPARE(f.t->opens.last().route, Route::BaichuanReverseMain);
+        f.t->isStreaming = true;
+        QSignalSpy spy(&f.s, &PlaybackSession::reopenNeeded);
+        f.s.setLinkSlow(true);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(f.s.route(), Route::BaichuanReverse);
+        QCOMPARE(f.s.playAt(5990), Outcome::Opened);
+        f.s.clearLinkSlow();               // the user's next open: silent
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(f.s.playAt(5000), Outcome::OpenedHd);
+        QCOMPARE(f.t->opens.last().route, Route::BaichuanReverseMain);
     }
     void hdOnDirectRowDoesNotReopen()
     {

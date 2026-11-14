@@ -121,6 +121,54 @@ private slots:
         QCOMPARE(reverseGops(window(t0, 3, 1), t0 + 3'000, t0 + 5'000).nextCutoffMs, qint64(-1));
     }
 
+    // ---- HD reverse (wayfinder/live-replay ticket 06) ----
+    // A decoded group is held at the pane's size on screen (never larger than the picture);
+    // fisheye cameras at up to 1920×1920 so dewarped views stay sharp. Even sizes.
+    void heldAtThePaneSize()
+    {
+        QCOMPARE(holdSize(QSize(7680, 2160), QSize(1920, 1080), false), QSize(1920, 540));
+        QCOMPARE(holdSize(QSize(2560, 1920), QSize(1001, 1001), false), QSize(1000, 750));
+        QCOMPARE(holdSize(QSize(1024, 1024), QSize(1920, 1080), false), QSize(1024, 1024)); // no upscale
+        QCOMPARE(holdSize(QSize(2560, 1920), QSize(), false), QSize(2560, 1920)); // pane unknown
+    }
+    void fisheyeHeldUpTo1920()
+    {
+        QCOMPARE(holdSize(QSize(2560, 2560), QSize(800, 800), true), QSize(1920, 1920));
+        QCOMPARE(holdSize(QSize(2560, 2560), QSize(2400, 2400), true), QSize(2400, 2400));
+        QCOMPARE(holdSize(QSize(1024, 1024), QSize(800, 800), true), QSize(1024, 1024));
+    }
+
+    // The link can't feed HD backwards when two windows in a row take more than 80% of the
+    // time they play for; it stays so for the run (HD comes back on the next open).
+    void linkTooSlowAfterTwoSlowWindowsInARow()
+    {
+        LinkPace p;
+        p.window(9.2, 10.0);           // 92%: slow
+        QVERIFY(!p.tooSlow());
+        p.window(3.0, 10.0);           // fine: the run of slow windows restarts
+        p.window(8.5, 10.0);
+        QVERIFY(!p.tooSlow());
+        p.window(8.5, 10.0);
+        QVERIFY(p.tooSlow());
+        p.window(0.5, 10.0);           // stays slow for the run
+        QVERIFY(p.tooSlow());
+    }
+    void linkPaceCountsTheSpeed()
+    {
+        LinkPace p;                    // 10 s of footage at 4× plays in 2.5 s
+        p.window(2.4, 10.0 / 4);
+        p.window(2.4, 10.0 / 4);
+        QVERIFY(p.tooSlow());
+        LinkPace q;
+        q.window(0.6, 10.0 / 4);       // Lascelles: 0.6 s per window
+        q.window(0.6, 10.0 / 4);
+        QVERIFY(!q.tooSlow());
+        LinkPace r;
+        r.window(5.0, 0);              // nothing played (an empty window): not counted
+        r.window(5.0, 0);
+        QVERIFY(!r.tooSlow());
+    }
+
     // ---- frame times from the recorder's clocks ----
     // Only keyframes carry a usable wall-clock time; the others take the frame clock since.
     void frameClockTimesFramesFromTheLastKeyframe()

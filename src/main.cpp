@@ -273,6 +273,9 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(
         QStringLiteral("playbackAtSecs"),
         qEnvironmentVariableIsSet("RL_PLAYBACK_AT") ? qEnvironmentVariableIntValue("RL_PLAYBACK_AT") : -1);
+    // RL_PLAYBACK_HD=1: with RL_PLAYBACK_AUTOPLAY, switch the selected pane to HD first.
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("playbackHd"), qEnvironmentVariableIsSet("RL_PLAYBACK_HD"));
     // RL_PLAYBACK_BACK=<n>: with RL_PLAYBACK_AUTOPLAY, play backwards: 1 = ◀ 1×, n > 1 = « n-1 times.
     engine.rootContext()->setContextProperty(
         QStringLiteral("playbackBackSteps"), qEnvironmentVariableIntValue("RL_PLAYBACK_BACK"));
