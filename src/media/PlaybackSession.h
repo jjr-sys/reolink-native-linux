@@ -78,6 +78,7 @@ private:
     template <typename Change> void changeRouteAware(Change change);
     bool direct() const { return m_transport->direct(m_row); }
     Outcome openHttp(qint64 epoch);
+    bool openOrSeekNative(qint64 epoch, bool main);
 
     Outcome playAtImpl(double epochSecs, bool covered);
     std::unique_ptr<PlaybackTransport> m_transport;
@@ -87,6 +88,10 @@ private:
     int m_row = -1;
     bool m_hd = false;
     double m_speed = 1.0;
+    // The native stream this session last opened (main = HD), so a reopen after an HD/speed
+    // change opens the other stream instead of seeking the running one in place.
+    bool m_nativeOpen = false;
+    bool m_openMain = false;
 };
 
 } // namespace rl

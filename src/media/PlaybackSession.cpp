@@ -121,6 +121,7 @@ void PlaybackSession::setDeviceRow(int row)
     if (m_row == row)
         return;
     m_row = row;
+    m_nativeOpen = false; // another camera: nothing of this row is open
     emit deviceRowChanged();
     emit routeChanged(); // direct-ness is per row
 }
@@ -182,38 +183,50 @@ PlaybackSession::Outcome PlaybackSession::playAt(double epochSecs, bool covered)
 PlaybackSession::Outcome PlaybackSession::playAtImpl(double epochSecs, bool covered)
 {
     if (!covered) {
-        m_transport->stop();
+        stop();
         return Outcome::Gap;
     }
     const qint64 epoch = static_cast<qint64>(epochSecs);
     const Route r = route();
-    if (r == Route::Http)
+    if (r == Route::Http) {
+        m_nativeOpen = false;
         return openHttp(epoch);
+    }
     if (m_row < 0)
         return Outcome::NoSource;
-    // Move the running native session in place (no reconnect) when possible.
-    if (m_transport->streaming() && m_transport->seekInPlace(m_row, epoch))
-        return Outcome::SeekedInPlace;
     const bool main = r == Route::BaichuanMain;
+    return openOrSeekNative(epoch, main) ? Outcome::SeekedInPlace
+                                         : main ? Outcome::OpenedHd : Outcome::Opened;
+}
+
+// Move the running native session in place (no reconnect) when it is the stream wanted;
+// otherwise open that stream. True when it seeked.
+bool PlaybackSession::openOrSeekNative(qint64 epoch, bool main)
+{
+    if (m_nativeOpen && m_openMain == main && m_transport->streaming()
+        && m_transport->seekInPlace(m_row, epoch))
+        return true;
     m_transport->openBaichuan(m_row, epoch, main);
-    return main ? Outcome::OpenedHd : Outcome::Opened;
+    m_nativeOpen = true;
+    m_openMain = main;
+    return false;
 }
 
 PlaybackSession::Outcome PlaybackSession::playSubAt(double epochSecs)
 {
     const qint64 epoch = static_cast<qint64>(epochSecs);
-    if (direct())
+    if (direct()) {
+        m_nativeOpen = false;
         return openHttp(epoch);
+    }
     if (m_row < 0)
         return Outcome::NoSource;
-    if (m_transport->streaming() && m_transport->seekInPlace(m_row, epoch))
-        return Outcome::SeekedInPlace;
-    m_transport->openBaichuan(m_row, epoch, /*main=*/false);
-    return Outcome::Opened;
+    return openOrSeekNative(epoch, /*main=*/false) ? Outcome::SeekedInPlace : Outcome::Opened;
 }
 
 void PlaybackSession::stop()
 {
+    m_nativeOpen = false;
     m_transport->stop();
 }
 

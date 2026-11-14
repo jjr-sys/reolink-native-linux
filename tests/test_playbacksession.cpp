@@ -141,19 +141,21 @@ private slots:
     {
         Fixture f;
         f.s.setHd(true);
+        QCOMPARE(f.s.playAt(5000), Outcome::OpenedHd);
         f.t->isStreaming = true;
         QCOMPARE(f.s.playAt(6000), Outcome::SeekedInPlace);
-        QVERIFY(f.t->opens.isEmpty());
+        QCOMPARE(f.t->opens.size(), 1);
         QCOMPARE(f.t->seeks, 1);
     }
     void failedInPlaceSeekReopens()
     {
         Fixture f;
         f.s.setHd(true);
+        QCOMPARE(f.s.playAt(5000), Outcome::OpenedHd);
         f.t->isStreaming = true;
         f.t->seekWorks = false;
         QCOMPARE(f.s.playAt(6000), Outcome::OpenedHd);
-        QCOMPARE(f.t->opens.size(), 1);
+        QCOMPARE(f.t->opens.size(), 2);
     }
     void notStreamingNeverTriesInPlaceSeek()
     {
@@ -248,6 +250,35 @@ private slots:
         f.s.setSpeed(2.0);
         QCOMPARE(spy.count(), 1);
         QCOMPARE(f.s.route(), Route::BaichuanSub);
+    }
+    // The reopen after a route change really opens the other stream: an in-place seek
+    // would keep the running one (the user saw SD stay after 16x from HD, ticket 11).
+    void backTo1xFromSpeedReopensHdNotSeek()
+    {
+        Fixture f;
+        f.s.setHd(true);
+        QCOMPARE(f.s.playAt(6000), Outcome::OpenedHd);
+        f.t->isStreaming = true;
+        f.s.setSpeed(16.0);
+        QCOMPARE(f.s.playAt(6100), Outcome::Opened);       // sub, not a seek of main
+        f.s.setSpeed(1.0);
+        QCOMPARE(f.s.playAt(6200), Outcome::OpenedHd);     // main again, not a seek of sub
+        QCOMPARE(f.t->seeks, 0);
+        QCOMPARE(f.t->opens.size(), 3);
+        QCOMPARE(f.t->opens.at(2).route, Route::BaichuanMain);
+        // Same route again: a seek in place.
+        QCOMPARE(f.s.playAt(6300), Outcome::SeekedInPlace);
+    }
+    void hdToggleWhilePlayingOpensTheOtherStream()
+    {
+        Fixture f;
+        QCOMPARE(f.s.playAt(6000), Outcome::Opened);
+        f.t->isStreaming = true;
+        f.s.setHd(true);
+        QCOMPARE(f.s.playAt(6000), Outcome::OpenedHd);
+        f.s.setHd(false);
+        QCOMPARE(f.s.playAt(6000), Outcome::Opened);
+        QCOMPARE(f.t->seeks, 0);
     }
     void hdOnDirectRowDoesNotReopen()
     {
