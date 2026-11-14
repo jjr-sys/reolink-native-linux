@@ -14,9 +14,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
   forwards too, as it does backwards. Above 1× the recorder sends its HD stream as keyframes
   only, so the app fetches about 10 s of it ahead of the playhead at a time and plays it at
   the speed itself (Lascelles Kitchen: all 100 frames a second at 4×). Where the link or this
-  computer can't keep up (Woorabinda at 2×), or at the newest footage the recorder won't hand
-  out yet, the pane carries on in standard quality from the same moment and the HD button
-  says "SD · too slow", exactly as backwards. Above 4× both ways play standard quality
+  computer can't keep up (Woorabinda at 2×), the pane carries on in standard quality from the
+  same moment and the HD button says "SD · too slow", exactly as backwards. At a gap it goes
+  on to the next recording ("Nothing later that day" when there is none); at the newest
+  footage, which the recorder won't hand out yet, it stops. Above 4× both ways play standard quality
   ("SD · at speed"). « now steps 2× → 4× → 8× → 16× → 1× like »; backwards 16× shows
   keyframes only, as forwards does.
 
