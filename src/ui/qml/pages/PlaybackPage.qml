@@ -211,6 +211,7 @@ Item {
         recomputeTimeline();
     }
     function searchMissing() { selection.keys.forEach(k => search(k, false)); }
+    Timer { id: searchRetry; interval: 10000; onTriggered: page.searchMissing() }
     // The timeline: one lane per pane (who has footage where), and their union to scrub.
     function recomputeTimeline() {
         var lanes = [], union = [];
@@ -618,6 +619,9 @@ Item {
             // An empty lane is the honest render of a failed search; the status says why.
             page.gotSegments(row, []);
             statusText.text = error;
+            // A recorder not ready yet (just started) may never change the device list:
+            // ask again in 10 s (search() keeps it to 3 tries a day).
+            searchRetry.restart();
         }
         function onRecordingDaysFound(row, year, month, days) {
             var key = page.cameraKey(row);

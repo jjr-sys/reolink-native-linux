@@ -187,6 +187,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Fixed
 
+- Playback opened straight after start-up no longer shows an empty timeline when a recorder
+  wasn't ready for the first recording search: a failed search is asked again after 10 s.
+
 - **HD comes back after fast Playback.** After 16× (or any speed above 1×) an HD pane
   stayed on SD when the speed returned to 1× or slower, and switching HD/SD while playing
   could keep the old stream. The pane now reopens on the stream it should be playing.
