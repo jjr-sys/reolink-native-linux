@@ -17,9 +17,9 @@ int monthId(const QDate &d) { return d.year() * 100 + d.month(); }
 QList<double> marksTo(double oldestBehind)
 {
     QList<double> marks;
-    for (double m : {0.0, 60.0, 600.0, 3600.0, 86400.0, 604800.0})
-        if (m < oldestBehind)
-            marks << m;
+    for (const QVariant &m : LiveReplay::sliderMarks())
+        if (m.toDouble() < oldestBehind)
+            marks << m.toDouble();
     marks << oldestBehind;
     return marks;
 }
@@ -147,6 +147,7 @@ void LiveReplay::reset()
     m_oldestDay = QDate();
     m_scanMonth = 0;
     m_pending = Pending::None;
+    m_todayAnswered = -1;
     m_lastCarry = -1;
     m_lastFrame = -1;
     m_lastMoveWall = -1;
@@ -224,14 +225,22 @@ void LiveReplay::dayFound(int year, int month, int day, const QVariantList &segm
             start = qMin(start, m.value("startEpoch").toDouble());
         spans.append({start, base + m.value("end").toDouble()});
     }
-    std::sort(spans.begin(), spans.end(), [](const Span &a, const Span &b) { return a.start < b.start; });
-    m_days.insert(d, spans);
     QList<int> ds;
     for (const QVariant &v : monthDays)
         ds << v.toInt();
     m_months.insert(monthId(d), ds);
+    storeDay(d, spans);
+}
+
+void LiveReplay::storeDay(const QDate &d, const QList<Span> &spans)
+{
+    QList<Span> sorted = spans;
+    std::sort(sorted.begin(), sorted.end(), [](const Span &a, const Span &b) { return a.start < b.start; });
+    m_days.insert(d, sorted);
+    if (d == dayOf(m_now))
+        m_todayAnswered = m_now;
     advanceScan();
-    if (d == m_day)
+    if (d == m_day || d == m_day.addDays(1))
         emit dayChanged();
     emit recordingsChanged();
     retryPending();
@@ -245,13 +254,16 @@ void LiveReplay::dayFailed(int year, int month, int day)
         return;
     if (d == m_inFlight)
         m_inFlight = QDate();
-    // Asked once more; a second failure counts as no recordings that day, so replay moves on.
+    // Asked once more; a second failure counts as no recordings that day, so replay moves on
+    // (what its month is known to have stays).
     if (++m_failures[d] < 2) {
         m_queue.append(d);
         pump();
         return;
     }
-    dayFound(year, month, day, {}, {});
+    qCWarning(lcUi).noquote() << "live replay: the search for" << d.toString(Qt::ISODate)
+                              << "failed twice; taken as no recordings";
+    storeDay(d, {});
 }
 
 // The oldest recording: month by month backwards from today's (each day's search answers its
@@ -311,7 +323,7 @@ double LiveReplay::previousEnd(double epoch, QDate *day)
                 if (s.end < epoch - 0.5 && s.end > best)
                     best = s.end;
             if (best >= 0) {
-                *day = d;
+                *day = dayOf(best - 0.001);   // an end at midnight is its own day's
                 return best;
             }
         } else if (mayHave(d)) {
@@ -332,7 +344,7 @@ double LiveReplay::nextStart(double epoch, QDate *day)
                 if (s.start > epoch + 0.5 && s.start < m_now && (best < 0 || s.start < best))
                     best = s.start;
             if (best >= 0) {
-                *day = d;
+                *day = dayOf(best);           // a file over midnight starts the day before
                 return best;
             }
         } else if (mayHave(d)) {
@@ -355,13 +367,27 @@ void LiveReplay::playFrom(double epoch, int direction)
 {
     if (!replaying())
         return;
-    m_pending = Pending::None;
     m_lastCarry = -1;
+    resolve(epoch, direction, Ahead::NewestFootage);
+}
+
+void LiveReplay::skipBy(double secs)
+{
+    if (!replaying() || secs == 0)
+        return;
+    m_lastCarry = -1;
+    resolve(qMin(m_now, m_playhead + secs), secs > 0 ? 1 : -1, Ahead::Live);
+}
+
+void LiveReplay::resolve(double epoch, int direction, Ahead ahead)
+{
+    m_pending = Pending::None;
     const QDate d = dayOf(epoch);
     auto wait = [&] {
         m_pending = Pending::Play;
         m_pendingEpoch = epoch;
         m_pendingDirection = direction;
+        m_pendingAhead = ahead;
     };
     if (!known(d) && mayHave(d)) {
         want(d, true);
@@ -379,13 +405,18 @@ void LiveReplay::playFrom(double epoch, int direction)
         return;
     }
     if (r < 0 && direction > 0) {
+        if (ahead == Ahead::Live) {
+            if (!liveOrRefresh(Pending::Play))
+                wait();
+            return;
+        }
         // Nothing ahead before now: the newest footage's last 10 s.
         r = previousEnd(epoch, &at);
         if (r == kPending) {
             wait();
             return;
         }
-        for (const Span &s : m_days.value(at))
+        for (const Span &s : spansOn(at))
             if (r >= 0 && s.end == r)
                 r = qMax(s.start, r - 10);
     }
@@ -394,6 +425,20 @@ void LiveReplay::playFrom(double epoch, int direction)
         return;
     }
     land(r, at);
+}
+
+bool LiveReplay::liveOrRefresh(Pending retry)
+{
+    const QDate today = dayOf(m_now);
+    if (m_todayAnswered >= 0 && m_now - m_todayAnswered > 20) {
+        m_days.remove(today);
+        m_todayAnswered = -1;
+        m_pending = retry;
+        want(today, true);
+        return false;
+    }
+    stop();                     // the newest footage: back to live
+    return true;
 }
 
 void LiveReplay::carryOn(int direction)
@@ -426,10 +471,12 @@ void LiveReplay::carryOn(int direction)
         m_lastCarryDirection = direction;
         return;
     }
-    if (direction > 0)
-        stop();                 // the newest footage: back to live
-    else
+    if (direction > 0) {
+        m_pendingDirection = direction;
+        liveOrRefresh(Pending::CarryOn);
+    } else {
         emit nothingEarlier();
+    }
 }
 
 void LiveReplay::retryPending()
@@ -437,7 +484,7 @@ void LiveReplay::retryPending()
     const Pending p = m_pending;
     m_pending = Pending::None;
     if (p == Pending::Play)
-        playFrom(m_pendingEpoch, m_pendingDirection);
+        resolve(m_pendingEpoch, m_pendingDirection, m_pendingAhead);
     else if (p == Pending::CarryOn)
         carryOn(m_pendingDirection);
 }
@@ -491,7 +538,7 @@ void LiveReplay::opened()
 bool LiveReplay::stalledAtEdge(double wallMs) const
 {
     return replaying() && !m_paused && m_group->direction() > 0 && m_lastMoveWall >= 0
-        && wallMs - m_lastMoveWall >= 4000 && m_now - m_playhead < 300;
+        && wallMs - m_lastMoveWall >= 8000 && m_now - m_playhead < 300;
 }
 
 double LiveReplay::posForBehind(double behindSecs, double oldestBehindSecs)
@@ -516,6 +563,23 @@ double LiveReplay::behindForPos(double pos, double oldestBehindSecs)
     const double x = qBound(0.0, pos, 1.0) * n;
     const int i = qMin(int(std::floor(x)), n - 1);
     return marks[i] + (x - i) * (marks[i + 1] - marks[i]);
+}
+
+QVariantList LiveReplay::sliderMarks()
+{
+    return {0.0, 60.0, 600.0, 3600.0, 86400.0, 604800.0};
+}
+
+QString LiveReplay::behindText(double secs)
+{
+    const qint64 s = qMax<qint64>(0, qRound64(secs));
+    if (s < 60)
+        return tr("%1 s").arg(s);
+    if (s < 3600)
+        return tr("%1 min %2 s").arg(s / 60).arg(s % 60);
+    if (s < 86400)
+        return tr("%1 h %2 min").arg(s / 3600).arg(s % 3600 / 60);
+    return tr("%1 d %2 h").arg(s / 86400).arg(s % 86400 / 3600);
 }
 
 double LiveReplay::posFor(double epoch) const

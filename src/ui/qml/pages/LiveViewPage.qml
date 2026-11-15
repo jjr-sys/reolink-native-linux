@@ -248,16 +248,17 @@ Item {
         triggeredOnStart: true
         onTriggered: {
             liveReplay.now = Date.now() / 1000;
-            // Recorder-paced forwards stalls at the newest footage: back to live.
-            if (liveReplay.stalledAtEdge(Date.now())) liveReplay.stop();
+            // Recorder-paced forwards stalls at the newest footage: on, or back to live.
+            if (liveReplay.stalledAtEdge(Date.now())) liveReplay.carryOn(1);
         }
     }
     // Leaving Live View returns every pane to live (nothing is kept).
     onActiveChanged: if (!active) liveReplay.stop()
     onVisibleChanged: if (!visible) liveReplay.stop()
-    // The pane the keys act on: the maximised one, else the selected one.
+    // The pane the keys act on: the replaying one, else the maximised one, else the selected one.
     function replayPane() {
-        var k = maximizedKey !== "" ? maximizedKey : selectedKey;
+        var k = liveReplay.replaying ? liveReplay.cameraKey
+              : maximizedKey !== "" ? maximizedKey : selectedKey;
         var row = rowsByKey()[k];
         return row === undefined ? null : paneRepeater.itemAt(row);
     }
@@ -292,7 +293,7 @@ Item {
     // neighbour, and ← on a selected grid pane starts replay 10 s back.
     Shortcut {
         sequence: "Left"
-        enabled: page.active
+        enabled: page.replayKeysOn
         onActivated: {
             if (!liveReplay.replaying && page.canStep) page.step(-1);
             else page.replayKey("Left");
@@ -300,7 +301,7 @@ Item {
     }
     Shortcut {
         sequence: "Right"
-        enabled: page.active && (page.canStep || liveReplay.replaying)
+        enabled: page.replayKeysOn && (page.canStep || liveReplay.replaying)
         onActivated: {
             if (!liveReplay.replaying && page.canStep) page.step(1);
             else page.replayKey("Right");
@@ -605,7 +606,7 @@ Item {
                 hdRefusal: () => page.hdRefusal(cameraKey)
                 watchPicture: true
                 replay: liveReplay
-                replayable: !Devices.isDirectAt(index)
+                replayable: { Devices.count; return !Devices.isDirectAt(index); }
                 maximized: isMaximized
                 onQualityChosen: (main) => {
                     if (!isMaximized)

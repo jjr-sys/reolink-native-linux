@@ -373,7 +373,7 @@ private slots:
     }
 
     // ---- back to live at the recorder's edge (recorder-paced forwards stalls there) ----
-    // Forwards, the picture's time stops moving for 4 s within 5 min of now: back to live. Not
+    // Forwards, the picture's time stops moving for 8 s within 5 min of now: back to live. Not
     // before a first picture, not paused, not backwards, not far from now.
     void aForwardStallNearNowReturnsToLive()
     {
@@ -385,15 +385,116 @@ private slots:
         r.frameAt(kNow - 120, 10'000);
         r.frameAt(kNow - 119, 11'000);
         QVERIFY(!r.stalledAtEdge(14'000));
-        QVERIFY(r.stalledAtEdge(15'500));
+        QVERIFY(!r.stalledAtEdge(18'000));            // a hiccup (or a window refill)
+        QVERIFY(r.stalledAtEdge(19'500));
         r.setPaused(true);
-        QVERIFY(!r.stalledAtEdge(15'500));
+        QVERIFY(!r.stalledAtEdge(19'500));
         r.setPaused(false);
         r.group()->playBackward();
-        QVERIFY(!r.stalledAtEdge(15'500));
+        QVERIFY(!r.stalledAtEdge(19'500));
         r.group()->playForward();
         r.frameAt(kNow - 3600, 20'000);                // an hour back: a gap, not the edge
         QVERIFY(!r.stalledAtEdge(30'000));
+    }
+    // A failed search (twice) counts as a day with no recordings, but leaves what its month
+    // is known to have alone: replay still reaches earlier days.
+    void aFailedSearchDoesNotHideItsMonth()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.months[202611] = days({14, 15});
+        rec.months[202610] = days({});
+        rec.book[QDate(2026, 11, 14)] = segs({{3600, 7200}});
+        r.start(QStringLiteral("5:0"));
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        QSignalSpy none(&r, &LiveReplay::nothingEarlier);
+        r.playFrom(kNow, -1);
+        QCOMPARE(rec.asked.takeFirst(), kToday);      // today's search fails twice
+        r.dayFailed(2026, 11, 15);
+        QCOMPARE(rec.asked.takeFirst(), kToday);
+        r.dayFailed(2026, 11, 15);
+        rec.answerAll();
+        QCOMPARE(none.count(), 0);
+        QCOMPARE(play.count(), 1);
+        QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 14, 2, 0));
+        QVERIFY(r.oldestFound());
+        QCOMPARE(r.oldest(), at(2026, 11, 14, 1, 0));
+    }
+    // A recording that starts the evening before (a file over midnight, listed on its last
+    // day) lands on its own day when played forwards to it.
+    void forwardsToAFileStartingTheDayBeforeLandsOnThatDay()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.months[202611] = days({14, 15});
+        rec.book[QDate(2026, 11, 14)] = segs({{0, 3600}});
+        QVariantList overMidnight = segs({{0, 3600}});
+        QVariantMap m = overMidnight.first().toMap();
+        m["startEpoch"] = at(2026, 11, 14, 23, 0);
+        overMidnight[0] = m;
+        rec.book[kToday] = overMidnight;
+        r.start(QStringLiteral("5:0"));
+        rec.answerAll();
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.playFrom(at(2026, 11, 14, 12, 0), 1);
+        QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 14, 23, 0));
+        QCOMPARE(r.dayEpoch(), at(2026, 11, 14, 0));
+    }
+    // Before going back to live, today's recordings are asked for again when the last answer
+    // is old: a long replay may have more footage ahead than at the start.
+    void forwardsRefreshesTodayBeforeGoingLive()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{28800, 35900}});
+        r.start(QStringLiteral("5:0"));
+        rec.answerAll(1);
+        r.playFrom(at(2026, 11, 15, 9, 50), 1);
+        r.setNow(kNow + 600);                         // ten minutes later
+        rec.book[kToday] = segs({{28800, 36400}});    // the recording went on to 10:06:40
+        r.frameAt(at(2026, 11, 15, 9, 58, 20), 0);
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.carryOn(1);
+        QVERIFY(r.replaying());                       // asked again first
+        rec.answerAll(1);
+        QCOMPARE(play.count(), 1);
+        QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 15, 9, 58, 21));
+        r.frameAt(at(2026, 11, 15, 10, 6, 40), 0);
+        r.carryOn(1);                                 // just asked: back to live
+        QVERIFY(!r.replaying());
+    }
+    // 10 s on: within footage, there; past the newest footage, back to live (not its last 10 s
+    // again); 10 s back across a gap: the previous recording's end.
+    void skipMovesTenSecondsOrGoesLive()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 7200}, {28800, 35900}});
+        r.start(QStringLiteral("5:0"));
+        rec.answerAll(1);
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.playFrom(at(2026, 11, 15, 9, 0), 1);
+        r.skipBy(10);
+        QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 15, 9, 0, 10));
+        r.playFrom(at(2026, 11, 15, 8, 0, 5), 1);
+        r.skipBy(-10);
+        QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 15, 2, 0));
+        r.playFrom(at(2026, 11, 15, 9, 58, 15), 1);
+        r.skipBy(10);
+        QVERIFY(!r.replaying());
+    }
+    // "N behind live" as the pane shows it.
+    void behindTextReads()
+    {
+        QCOMPARE(LiveReplay::behindText(42), QStringLiteral("42 s"));
+        QCOMPARE(LiveReplay::behindText(100), QStringLiteral("1 min 40 s"));
+        QCOMPARE(LiveReplay::behindText(7260), QStringLiteral("2 h 1 min"));
+        QCOMPARE(LiveReplay::behindText(90000), QStringLiteral("1 d 1 h"));
+        QCOMPARE(LiveReplay::sliderMarks(), (QVariantList{0.0, 60.0, 600.0, 3600.0, 86400.0, 604800.0}));
     }
     void behindFollowsThePlayheadAndTheClock()
     {

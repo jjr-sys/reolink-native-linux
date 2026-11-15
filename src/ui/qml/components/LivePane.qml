@@ -159,7 +159,6 @@ Rectangle {
     // is swapped, the pane is hidden by a layout change, or the page is left —
     // the camera's speaker must never be left open behind the user's back.
     onDeviceRowChanged: {
-        if (replaying) replay.stop();   // another camera: back to live
         talk.stop(); ptzOpen = false; boschPtzOpen = false;
         if (boschTourOwnedHere && BoschTour.selectionTourMode)
             BoschTour.endSelectionTour();
@@ -180,6 +179,9 @@ Rectangle {
         else if (!isBoschFeed)
             boschPicker.close();
     }
+    // Another camera on this pane: its replay ends (a model row shift keeps the camera).
+    onCameraKeyChanged: if (replay && replay.replaying && replay.cameraKey !== cameraKey
+                            && replayControls.wasReplaying) replay.stop()
     onVisibleChanged: {
         if (!visible) talk.stop();
         if (!visible && replaying) replay.stop();
@@ -717,7 +719,7 @@ Rectangle {
         hovered: paneHover.hovered
         maximized: root.maximized
         selected: root.selected
-        audioAllowed: root.audioAllowed
+        audioAllowed: root.audioAllowed && !talk.active
         hd: root.effectiveMain
         viewRotation: root.viewRotation
         fisheyeLens: root.fisheyeLens

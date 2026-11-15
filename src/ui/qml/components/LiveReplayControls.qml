@@ -30,6 +30,9 @@ Item {
     signal doubleClicked()
 
     readonly property bool replaying: !!replay && replay.cameraKey === cameraKey && cameraKey !== ""
+    // This pane's camera was replaying (read when the pane's camera changes).
+    property bool wasReplaying: false
+    onReplayingChanged: Qt.callLater(function () { root.wasReplaying = root.replaying; })
     readonly property PlaybackGroup group: replay ? replay.group : null
     readonly property bool shown: replayable && (replaying || maximized || hovered || slider.dragging)
     readonly property bool playing: replaying && !replay.paused
@@ -88,7 +91,7 @@ Item {
         if (pane.item) pane.item.freeze();
         replay.paused = false;
         user();
-        replay.playFrom(Math.min(replay.now, replay.playhead + secs), secs > 0 ? 1 : group.direction);
+        replay.skipBy(secs);
     }
     function seekToPos(pos) {
         begin();
@@ -142,7 +145,9 @@ Item {
             fisheyeMode: root.fisheyeMode
             hdActive: root.hd
             selected: root.selected
-            audioMuted: !root.selected || !root.audioAllowed
+            // As Playback: muted off 1× forward or when Playback's sound is off (live-replay 07).
+            audioMuted: AudioPrefs.playbackMuted || root.group.offNormal || !root.selected
+                        || !root.audioAllowed
             audioActive: true
             segments: root.replay.daySegments
             dayEpoch: root.replay.dayEpoch
@@ -207,7 +212,7 @@ Item {
             id: liveText
             anchors.centerIn: parent
             text: qsTr("● Live")
-            color: "#ff5c5c"
+            color: Theme.danger
             font.pixelSize: 12; font.bold: true
         }
         HoverHandler { id: liveHover }
@@ -234,17 +239,10 @@ Item {
                 if (!root.replay) return "";
                 var t = new Date(root.replay.playhead * 1000);
                 return Qt.formatDateTime(t, "ddd d MMM  hh:mm:ss") + "  ·  "
-                    + root.behindText(root.replay.behind) + " " + qsTr("behind live")
+                    + root.replay.behindText(root.replay.behind) + " " + qsTr("behind live")
                     + (root.replay.paused ? "  ·  " + qsTr("paused") : "");
             }
         }
-    }
-    function behindText(s) {
-        s = Math.max(0, Math.round(s));
-        if (s < 60) return qsTr("%1 s").arg(s);
-        if (s < 3600) return qsTr("%1 min %2 s").arg(Math.floor(s / 60)).arg(s % 60);
-        if (s < 86400) return qsTr("%1 h %2 min").arg(Math.floor(s / 3600)).arg(Math.floor(s % 3600 / 60));
-        return qsTr("%1 d %2 h").arg(Math.floor(s / 86400)).arg(Math.floor(s % 86400 / 3600));
     }
 
     // A short message on the pane.
@@ -305,24 +303,24 @@ Item {
         radius: Theme.radius
         color: "#cc0d141b"
         border.color: Theme.border
-        readonly property bool g: !!root.group
+        readonly property bool ready: !!root.group
         Column {
             id: railCol
             anchors.centerIn: parent
             spacing: 4
             RailButton {
                 glyph: "◀"; tip: root.replaying ? qsTr("Backwards at 1× (J)") : qsTr("Replay backwards from now (J)")
-                lit: root.playing && rail.g && root.group.direction === -1 && root.group.speed === 1
+                lit: root.playing && rail.ready && root.group.direction === -1 && root.group.speed === 1
                 onActivated: root.back(() => root.group.playBackward())
             }
             RailButton {
                 glyph: "«"; tip: qsTr("Fast backwards: 2× → 4× → 8× → 16× → 1×")
-                lit: root.playing && rail.g && root.group.direction === -1 && root.group.speed >= 2
+                lit: root.playing && rail.ready && root.group.direction === -1 && root.group.speed >= 2
                 onActivated: root.back(() => root.group.stepFast(-1))
             }
             RailButton {
                 glyph: "◀½"; tip: qsTr("Slow backwards: ½× → ¼× → 1×")
-                lit: root.playing && rail.g && root.group.direction === -1 && root.group.speed < 1
+                lit: root.playing && rail.ready && root.group.direction === -1 && root.group.speed < 1
                 onActivated: root.back(() => root.group.stepSlow(-1))
             }
             RailButton {
@@ -332,17 +330,17 @@ Item {
             }
             RailButton {
                 glyph: "▶½"; tip: qsTr("Slow forwards: ½× → ¼× → 1×"); dim: !root.replaying
-                lit: root.playing && rail.g && root.group.direction === 1 && root.group.speed < 1
+                lit: root.playing && rail.ready && root.group.direction === 1 && root.group.speed < 1
                 onActivated: root.speed(() => root.group.stepSlow(1))
             }
             RailButton {
                 glyph: "»"; tip: qsTr("Fast forwards: 2× → 4× → 8× → 16× → 1× (L)"); dim: !root.replaying
-                lit: root.playing && rail.g && root.group.direction === 1 && root.group.speed >= 2
+                lit: root.playing && rail.ready && root.group.direction === 1 && root.group.speed >= 2
                 onActivated: root.speed(() => root.group.stepFast(1))
             }
             RailButton {
                 glyph: "▶"; tip: qsTr("Forwards at 1×"); dim: !root.replaying
-                lit: root.playing && rail.g && root.group.direction === 1 && root.group.speed === 1
+                lit: root.playing && rail.ready && root.group.direction === 1 && root.group.speed === 1
                 onActivated: root.speed(() => root.group.playForward())
             }
             RailButton {
@@ -369,11 +367,13 @@ Item {
         anchors.bottomMargin: root.replaying ? 8 : 56   // above the live toolbar when live
         height: 34
         property bool dragging: false
+        property bool fromLive: false     // the press started replay: a cancelled drag goes back
         property real dragPos: 0
         readonly property real oldestBehind: root.replay && root.replay.oldest > 0
                                              ? root.replay.now - root.replay.oldest : 0
+        // posFor reads now and the oldest too: re-read when either moves.
         readonly property real headPos: dragging ? dragPos
-            : root.replaying ? root.replay.posFor(root.replay.playhead) : 0
+            : root.replaying ? (root.replay.now, root.replay.oldest, root.replay.posFor(root.replay.playhead)) : 0
 
         Rectangle {
             anchors.fill: parent
@@ -406,20 +406,22 @@ Item {
                 width: 12; height: 12; radius: 6
                 x: slider.headPos * track.width - width / 2
                 anchors.verticalCenter: parent.verticalCenter
-                color: root.replaying || slider.dragging ? Theme.warning : "#ff5c5c"
+                color: root.replaying || slider.dragging ? Theme.warning : Theme.danger
                 border.color: Theme.window
             }
         }
-        // The marks: now · 1 min · 10 min · 1 h · 1 day · 1 week · oldest.
+        // The marks (LiveReplay::sliderMarks): now · 1 min · 10 min · 1 h · 1 day · 1 week · oldest.
+        readonly property var markNames: [qsTr("now"), qsTr("1 min"), qsTr("10 min"), qsTr("1 h"),
+                                          qsTr("1 day"), qsTr("1 wk")]
         Repeater {
-            model: [{ s: 0, t: qsTr("now") }, { s: 60, t: qsTr("1 min") }, { s: 600, t: qsTr("10 min") },
-                    { s: 3600, t: qsTr("1 h") }, { s: 86400, t: qsTr("1 day") }, { s: 604800, t: qsTr("1 wk") }]
+            model: root.replay ? root.replay.sliderMarks() : []
             Text {
                 required property var modelData
-                visible: !!root.replay && slider.oldestBehind > modelData.s && track.width > 240
-                x: (root.replay ? root.replay.posForBehind(modelData.s, slider.oldestBehind) : 0) * track.width - (modelData.s === 0 ? 0 : width / 2)
+                required property int index
+                visible: !!root.replay && slider.oldestBehind > modelData && track.width > 240
+                x: (root.replay ? root.replay.posForBehind(modelData, slider.oldestBehind) : 0) * track.width - (modelData === 0 ? 0 : width / 2)
                 y: track.y + track.height + 3
-                text: modelData.t
+                text: slider.markNames[index] || ""
                 color: Theme.textMuted
                 font.pixelSize: 9
             }
@@ -451,7 +453,7 @@ Item {
                     if (!root.replay || !slider.dragging) return "";
                     var e = root.replay.epochForPos(slider.dragPos);
                     return Qt.formatDateTime(new Date(e * 1000), "ddd d MMM  hh:mm:ss") + "  ·  "
-                        + root.behindText(root.replay.now - e) + " " + qsTr("behind live");
+                        + root.replay.behindText(root.replay.now - e) + " " + qsTr("behind live");
                 }
             }
         }
@@ -462,7 +464,8 @@ Item {
             function posAt(x) { return Math.max(0, Math.min(1, x / track.width)); }
             onPressed: (m) => {
                 // From live, the first press starts the search for recordings.
-                if (!root.replaying) root.begin();
+                slider.fromLive = !root.replaying;
+                if (slider.fromLive) root.begin();
                 slider.dragPos = posAt(m.x);
                 slider.dragging = true;
             }
@@ -472,7 +475,10 @@ Item {
                 if (slider.dragPos <= 0.0005) root.goLive();
                 else root.seekToPos(slider.dragPos);
             }
-            onCanceled: slider.dragging = false
+            onCanceled: {
+                slider.dragging = false;
+                if (slider.fromLive) root.goLive();
+            }
         }
     }
 }

@@ -78,6 +78,10 @@ public:
     // from the playhead to the previous recording's end or the next one's start; backwards
     // past the oldest, nothingEarlier; forwards with nothing ahead before now, back to live.
     Q_INVOKABLE void carryOn(int direction);
+    // ↺ / ↻: `secs` from the playhead (never past now): there if footage covers it, else back to
+    // the previous recording's end, or forwards to the next one's start — with nothing ahead,
+    // back to live.
+    Q_INVOKABLE void skipBy(double secs);
     Q_INVOKABLE bool covered(double epoch) const;
 
     // A day's search answered: its recordings (seconds into the day) and the days of its month
@@ -89,7 +93,7 @@ public:
     // The pane shows a frame recorded at `epoch` (wallMs: a monotonic clock); a new stream opened.
     Q_INVOKABLE void frameAt(double epoch, double wallMs);
     Q_INVOKABLE void opened();
-    // Forwards, the picture's time hasn't moved for 4 s within 5 min of now: the recorder's
+    // Forwards, the picture's time hasn't moved for 8 s within 5 min of now: the recorder's
     // newest footage (recorder-paced replay stalls there). Not paused, not before a picture.
     Q_INVOKABLE bool stalledAtEdge(double wallMs) const;
 
@@ -97,6 +101,9 @@ public:
     // linear between them; marks at or past the oldest dropped. Positions 0 … 1.
     Q_INVOKABLE static double posForBehind(double behindSecs, double oldestBehindSecs);
     Q_INVOKABLE static double behindForPos(double pos, double oldestBehindSecs);
+    Q_INVOKABLE static QVariantList sliderMarks();   // the marks before the oldest, seconds behind
+    // "42 s", "1 min 40 s", "2 h 1 min", "1 d 1 h".
+    Q_INVOKABLE static QString behindText(double secs);
     Q_INVOKABLE double posFor(double epoch) const;
     Q_INVOKABLE double epochForPos(double pos) const;
 
@@ -121,6 +128,9 @@ private:
         double end = 0;
     };
     enum class Pending { None, Play, CarryOn };
+    // Where a play with nothing ahead before now goes: the newest footage's last 10 s (a play
+    // from live or a drag), or back to live (a skip).
+    enum class Ahead { NewestFootage, Live };
     static constexpr double kPending = -2;
     static constexpr double kNone = -1;
 
@@ -130,6 +140,11 @@ private:
     void advanceScan();
     void retryPending();
     void land(double epoch, const QDate &day);
+    void resolve(double epoch, int direction, Ahead ahead);
+    // Nothing ahead before now: ask for today again first when its answer is old (a long
+    // replay may have more footage ahead now), else back to live. False while asking.
+    bool liveOrRefresh(Pending retry);
+    void storeDay(const QDate &day, const QList<Span> &spans);
     void setPlayhead(double epoch, const QDate &day);
     bool known(const QDate &day) const { return m_days.contains(day); }
     QList<Span> spansOn(const QDate &day) const;
@@ -163,6 +178,8 @@ private:
     Pending m_pending = Pending::None;
     double m_pendingEpoch = 0;
     int m_pendingDirection = 1;
+    Ahead m_pendingAhead = Ahead::NewestFootage;
+    double m_todayAnswered = -1;      // now when today's search was last answered
 
     double m_lastCarry = -1;           // where carryOn last landed, and which way
     int m_lastCarryDirection = 0;
