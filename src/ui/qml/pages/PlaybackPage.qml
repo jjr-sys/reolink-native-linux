@@ -530,6 +530,12 @@ Item {
         }
         playAt(to);
     }
+    // Save a JPEG of one pane (its pane bar's ◉).
+    function snapshotPane(p) {
+        var f = p.snapshot(dayStartEpoch + Math.floor(playheadSecs));
+        statusText.text = f === "" ? qsTr("Nothing to save: no picture yet")
+                                   : qsTr("Snapshot saved: %1").arg(f.split("/").pop());
+    }
     // Save a JPEG of every playing pane.
     function snapshot() {
         var epoch = dayStartEpoch + Math.floor(playheadSecs);
@@ -911,6 +917,83 @@ Item {
                         // Drag a pane onto another of the same Site to swap their places.
                         dropFilter: (src => selection.sameSite(cameraKey, page.cameraKey(src)))
                         onCameraDropped: (target, row) => selection.swap(cameraKey, page.cameraKey(row))
+                        // The pane's bottom bar (live-replay ticket 11): its transport drives the
+                        // shared group (every pane on one playhead), as the page's bar does.
+                        readonly property bool direct: { Devices.count; return Devices.isDirectAt(index); }
+                        bar: Component {
+                            PaneBar {
+                                pageKind: "playback"
+                                camera: pbPane.direct ? "frigate" : "recorder"
+                                speedGroup: group
+                                paused: page.streamingPanes === 0
+                                shown: pbPane.hovered
+                                toolList: {
+                                    var t = [{ id: "snapshot", glyph: "◉", tip: qsTr("Save a snapshot of this pane") },
+                                             { id: "rotate", glyph: "⟳", active: pbPane.viewRotation !== 0, tip: qsTr("Rotate view 90°") },
+                                             { id: "zoom", glyph: "⊕", active: pbPane.zoom > 1.01,
+                                               tip: pbPane.zoom > 1.01 ? qsTr("Reset zoom") : qsTr("Digital zoom (scroll to adjust)") }];
+                                    if (!pbPane.direct)
+                                        t.push({ id: "range", glyph: page.rangeArmed && pbPane.selected ? "■" : "●",
+                                                 text: page.rangeArmed ? qsTr("Mark the end of the range here")
+                                                                       : qsTr("Mark the start of a range here"),
+                                                 tip: qsTr("Download range") });
+                                    t.push({ id: "maximise", glyph: "⛶", tip: pbPane.isMax ? qsTr("Restore grid") : qsTr("Maximize") });
+                                    return t;
+                                }
+                                hdShown: !pbPane.direct
+                                hdOn: pbPane.hdActive
+                                hdText: pbPane.hdActive && !group.sdAtSpeed && !pbPane.linkSlow ? "HD" : "SD"
+                                hdTip: !pbPane.hdActive ? qsTr("Switch to HD")
+                                     : group.sdAtSpeed ? qsTr("HD chosen · SD above 4×: switch to SD")
+                                     : pbPane.linkSlow ? qsTr("HD chosen · SD: the link is too slow · switch to SD")
+                                     : qsTr("Switch to SD")
+                                soundShown: pbPane.hasAudio
+                                soundOn: pbPane.selected && !AudioPrefs.playbackMuted && !group.offNormal
+                                soundTip: group.offNormal ? qsTr("Sound plays at 1× forward only")
+                                        : AudioPrefs.playbackMuted || !pbPane.selected ? qsTr("Hear this pane") : qsTr("Mute")
+                                segments: (pbPane.segments || []).map(g => ({ from: g.start / 86400, to: g.end / 86400 }))
+                                head: page.playheadSecs / 86400
+                                headColour: Theme.accent
+                                marks: [{ pos: 0, text: "00:00" }, { pos: 0.25, text: "06:00" }, { pos: 0.5, text: "12:00" },
+                                        { pos: 0.75, text: "18:00" }, { pos: 1, text: "24:00" }]
+                                labelAt: (pos) => page.clockText(Math.round(pos * 86399))
+                                timeText: Qt.formatDateTime(new Date((page.dayStartEpoch + page.playheadSecs) * 1000),
+                                                            "ddd d MMM") + "  <b>" + page.clockText(page.playheadSecs) + "</b>"
+                                onAction: (id) => {
+                                    group.select(pbPane.cameraKey);
+                                    switch (id) {
+                                    case "hd": page.toggleHd(pbPane.cameraKey); break;
+                                    case "sound":
+                                        if (AudioPrefs.playbackMuted || !pbPane.selected) AudioPrefs.playbackMuted = false;
+                                        else AudioPrefs.playbackMuted = true;
+                                        break;
+                                    case "skipBack": page.skip(-10); break;
+                                    case "skipForward": page.skip(10); break;
+                                    case "pause": page.togglePause(); break;
+                                    case "back": page.speedAction(() => group.playBackward()); break;
+                                    case "fastBack": page.speedAction(() => group.stepFast(-1)); break;
+                                    case "slowBack": page.speedAction(() => group.stepSlow(-1)); break;
+                                    case "forward": page.speedAction(() => group.playForward()); break;
+                                    case "slowForward": page.speedAction(() => group.stepSlow(1)); break;
+                                    case "fastForward": page.speedAction(() => group.stepFast(1)); break;
+                                    }
+                                }
+                                onTool: (id) => {
+                                    group.select(pbPane.cameraKey);
+                                    switch (id) {
+                                    case "snapshot": page.snapshotPane(pbPane); break;
+                                    case "rotate": Devices.setRotationOverride(pbPane.deviceRow, pbPane.viewRotation + 90); break;
+                                    case "zoom":
+                                        if (pbPane.zoom > 1.01) { pbPane.zoom = 1; pbPane.panX = 0; pbPane.panY = 0; }
+                                        else pbPane.zoom = 2;
+                                        break;
+                                    case "range": page.toggleRange(); break;
+                                    case "maximise": page.maximizedKey = pbPane.isMax ? "" : pbPane.cameraKey; break;
+                                    }
+                                }
+                                onSeekReleased: (pos) => page.playAt(Math.max(0, Math.min(86399, pos * 86400)))
+                            }
+                        }
                         readonly property bool slides: !isMax && page.mosaicAnimate
                         Behavior on x { enabled: pbPane.slides; NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
                         Behavior on y { enabled: pbPane.slides; NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }

@@ -14,6 +14,9 @@ import ReolinkApp.Core
 // A fisheye camera's circle (the recording, or the snapshot before it) is shown in the
 // camera's view with a Playback pane's controls: hover icons, right-click View, drag to aim,
 // scroll to zoom, double-click to put a turned view back (fisheye-and-framing step 10).
+// Its controls are the pane bar every video pane has (PaneBar, live-replay ticket 11) over the
+// picture: ❚❚, ↺ / ↻ and the clip's line seek within the window; speeds and reverse are
+// greyed for now (ticket 12); HD, sound, ↑ ↓ and ⋯ Open in Playback.
 Item {
     id: root
 
@@ -157,8 +160,44 @@ Item {
             _open(at);
         }
     }
+    // The pane bar: pause and play on where it stopped (a recorder's stream is closed while
+    // paused, freeing the recorder; the last picture stays); seek to a moment in the window.
+    property real _pausedAt: 0
+    readonly property bool paused: phase === "paused" || phase === "ended"
+    function togglePause() {
+        if (phase === "playing") {
+            _pausedAt = root.position;
+            if (clip.frigate) {
+                media.pause();
+            } else {
+                session.stop();
+                player.stop();
+            }
+            phase = "paused";
+        } else if (phase === "paused") {
+            seekTo(_pausedAt);
+        } else if (phase === "ended") {
+            seekTo(clip.from);   // from the window's start again
+        }
+    }
+    function seekTo(at) {
+        if (!clip.active)
+            return;
+        at = clip.skipFrom(at, 0);
+        if (clip.frigate) {
+            media.position = Math.max(0, (at - clip.from) * 1000);
+            media.play();
+            phase = "playing";
+            return;
+        }
+        session.stop();
+        player.stop();
+        _open(at);
+    }
+    function skip(secs) { seekTo(clip.skipFrom(phase === "paused" ? _pausedAt : root.position, secs)); }
     function _openInPlayback() {
-        const at = Math.floor(phase === "playing" || phase === "ended" ? root.position : clip.timestamp);
+        const at = Math.floor(phase === "paused" ? _pausedAt
+                              : phase === "playing" || phase === "ended" ? root.position : clip.timestamp);
         const h = clip.hostId, c = clip.channel;
         close();
         openInPlayback(h, c, at);
@@ -272,8 +311,8 @@ Item {
             id: picture
             readonly property size box: FrameShape.fitIn(
                 root.width - 2 * column.anchors.margins,
-                root.height - 2 * column.anchors.margins - titleRow.height - progressRow.height
-                    - controlsRow.height - (column.children.length - 1) * column.spacing,
+                root.height - 2 * column.anchors.margins - titleRow.height
+                    - (column.children.length - 1) * column.spacing,
                 root.shownRatio)
             Layout.preferredWidth: box.width
             Layout.preferredHeight: box.height
@@ -287,13 +326,15 @@ Item {
                 // Dewarping samples the whole frame as a texture, so it must fill the item.
                 fillMode: root.dewarp ? VideoOutput.Stretch : VideoOutput.PreserveAspectFit
                 visible: !clip.frigate && (root.phase === "playing" || root.phase === "ended"
+                                           || root.phase === "paused"
                                            || (root.phase === "starting" && root._hadPicture))
             }
             VideoOutput {
                 id: mediaVideo
                 anchors.fill: parent
                 fillMode: VideoOutput.PreserveAspectFit
-                visible: clip.frigate && (root.phase === "playing" || root.phase === "ended")
+                visible: clip.frigate && (root.phase === "playing" || root.phase === "ended"
+                                          || root.phase === "paused")
             }
             // The snapshot until the first picture: no black flash.
             Image {
@@ -369,6 +410,52 @@ Item {
                 onPicked: (view) => root.viewPicked(view)
                 onResetAim: FisheyeAims.reset(root.cameraKey, root.fisheyeMode)
             }
+            PaneBar {
+                id: paneBar
+                anchors.fill: parent
+                z: 5
+                pageKind: "events"
+                camera: clip.frigate ? "frigate" : "recorder"
+                paused: root.paused
+                shown: pictureHover.hovered
+                toolList: [{ id: "newer", glyph: "↑", tip: qsTr("Newer event (↑)") },
+                           { id: "older", glyph: "↓", tip: qsTr("Older event (↓)") },
+                           { id: "open", glyph: "▤", tip: qsTr("Open in Playback") }]
+                hdShown: !clip.frigate
+                hdOn: root.hd
+                hdTip: root.hd ? qsTr("Switch to SD (sub stream)") : qsTr("Full resolution (main stream)")
+                soundShown: true
+                soundOn: root.soundOn
+                soundTip: root.soundOn ? qsTr("Mute") : qsTr("Sound on")
+                segments: clip.openEnded ? [] : [{ from: 0, to: 1 }]
+                head: clip.openEnded ? -1 : clip.progress(root.phase === "paused" ? root._pausedAt : root.position)
+                headColour: Theme.accent
+                ticks: clip.openEnded ? [] : [clip.progress(clip.timestamp)]
+                labelAt: (pos) => root.offsetText(clip.timeAt(pos) - clip.timestamp)
+                seekable: !clip.openEnded && root.phase !== "failed"
+                timeText: {
+                    var at = root.phase === "paused" ? root._pausedAt : root.position;
+                    return Qt.formatTime(new Date(at * 1000), "hh:mm:ss") + "  <b>"
+                        + root.offsetText(at - clip.timestamp) + "</b>"
+                        + (clip.openEnded ? "" : "  /  " + root.offsetText(clip.to - clip.timestamp));
+                }
+                onAction: (id) => {
+                    switch (id) {
+                    case "hd": root.setHd(!root.hd); break;
+                    case "sound": root.soundOn = !root.soundOn; break;
+                    case "pause": root.togglePause(); break;
+                    case "skipBack": root.skip(-10); break;
+                    case "skipForward": root.skip(10); break;
+                    case "forward": if (root.paused) root.togglePause(); break;
+                    }
+                }
+                onTool: (id) => {
+                    if (id === "newer") root.stepRequested(-1);
+                    else if (id === "older") root.stepRequested(1);
+                    else if (id === "open") root._openInPlayback();
+                }
+                onSeekReleased: (pos) => root.seekTo(clip.timeAt(pos))
+            }
             Rectangle {
                 visible: root.phase === "starting"
                 anchors.left: parent.left
@@ -432,121 +519,6 @@ Item {
                         }
                     }
                 }
-            }
-        }
-
-        // Progress over the window (−5 s to +30 s; Frigate −15 s), or a running clock once
-        // Keep playing has made it open-ended.
-        Item {
-            id: progressRow
-            Layout.fillWidth: true
-            Layout.preferredHeight: 26
-            Rectangle {
-                visible: !clip.openEnded
-                y: 4
-                width: parent.width
-                height: 4
-                radius: 2
-                color: Theme.surfaceAlt
-                Rectangle {
-                    width: parent.width * clip.progress(root.position)
-                    height: parent.height
-                    radius: 2
-                    color: Theme.accent
-                }
-                Rectangle {   // the event's own moment
-                    x: parent.width * clip.progress(clip.timestamp) - 1
-                    y: -3
-                    width: 2
-                    height: 10
-                    color: Theme.text
-                }
-            }
-            Text {
-                anchors.left: parent.left
-                anchors.bottom: parent.bottom
-                visible: !clip.openEnded
-                text: root.offsetText(clip.from - clip.timestamp)
-                color: Theme.textMuted
-                font.pixelSize: 10
-            }
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                text: root.offsetText(root.position - clip.timestamp)
-                color: Theme.text
-                font.pixelSize: 11
-                font.bold: true
-            }
-            Text {
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                visible: !clip.openEnded
-                text: root.offsetText(clip.to - clip.timestamp)
-                color: Theme.textMuted
-                font.pixelSize: 10
-            }
-        }
-
-        RowLayout {   // controls
-            id: controlsRow
-            Layout.fillWidth: true
-            spacing: 6
-            Repeater {
-                model: [
-                    { key: "sound", label: root.soundOn ? "🔊" : "🔇", tip: root.soundOn ? qsTr("Mute") : qsTr("Sound on"), show: true },
-                    { key: "hd", label: qsTr("HD"), tip: qsTr("Full resolution (main stream)"), show: !clip.frigate },
-                    { key: "up", label: "↑", tip: qsTr("Newer event (↑)"), show: true },
-                    { key: "down", label: "↓", tip: qsTr("Older event (↓)"), show: true }
-                ]
-                Rectangle {
-                    required property var modelData
-                    visible: modelData.show
-                    readonly property bool on: modelData.key === "hd" && root.hd
-                    implicitWidth: ctlText.implicitWidth + 18
-                    implicitHeight: 28
-                    radius: Theme.radius
-                    color: on ? Theme.accentDim : (ctlHover.hovered ? Theme.surfaceAlt : "transparent")
-                    border.color: on ? Theme.accent : Theme.border
-                    Text {
-                        id: ctlText
-                        anchors.centerIn: parent
-                        text: parent.modelData.label
-                        color: Theme.text
-                        font.pixelSize: 12
-                    }
-                    HoverHandler { id: ctlHover; cursorShape: Qt.PointingHandCursor }
-                    ToolTip.visible: ctlHover.hovered
-                    ToolTip.delay: 500
-                    ToolTip.text: modelData.tip
-                    TapHandler {
-                        onTapped: {
-                            switch (parent.modelData.key) {
-                            case "sound": root.soundOn = !root.soundOn; break;
-                            case "hd": root.setHd(!root.hd); break;
-                            case "up": root.stepRequested(-1); break;
-                            case "down": root.stepRequested(1); break;
-                            }
-                        }
-                    }
-                }
-            }
-            Item { Layout.fillWidth: true }
-            Rectangle {
-                implicitWidth: openText.implicitWidth + 18
-                implicitHeight: 28
-                radius: Theme.radius
-                color: openHover.hovered ? Theme.surfaceAlt : "transparent"
-                border.color: Theme.border
-                Text {
-                    id: openText
-                    anchors.centerIn: parent
-                    text: qsTr("Open in Playback")
-                    color: Theme.text
-                    font.pixelSize: 12
-                }
-                HoverHandler { id: openHover; cursorShape: Qt.PointingHandCursor }
-                TapHandler { onTapped: root._openInPlayback() }
             }
         }
 

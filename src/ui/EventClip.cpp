@@ -86,4 +86,19 @@ bool EventClip::atEnd(double position) const
     return m_active && !m_openEnded && position >= double(m_to);
 }
 
+double EventClip::timeAt(double fraction) const
+{
+    if (!m_active)
+        return 0;
+    return double(m_from) + std::clamp(fraction, 0.0, 1.0) * double(m_to - m_from);
+}
+
+double EventClip::skipFrom(double position, double secs) const
+{
+    if (!m_active)
+        return 0;
+    const double to = position + secs;
+    return m_openEnded ? std::max(double(m_from), to) : std::clamp(to, double(m_from), double(m_to));
+}
+
 } // namespace rl

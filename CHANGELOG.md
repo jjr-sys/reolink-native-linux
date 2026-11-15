@@ -10,11 +10,23 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **One bar on every video pane.** Live View, Playback and the Events clip player now share
+  one floating bar at the bottom of each pane (shown on hover): a thin time line on top, then
+  ↺ « ◀½ ◀ ❚❚ ▶ ▶½ » ↻, HD, sound, the page's common tools and ⋯ for the rest. Each fast
+  button steps 2× → 4× → 8× → 16× → 1× and shows the speed it is on ("fast" at rest); each
+  slow button ½× → ¼× → 1×. On Live it replaces both the hover toolbar and Live replay's side
+  rail: ↺ or ◀ start replay, and the "time behind live" line is the bar's line (its marks
+  show on hover). On Playback each pane's bar drives every pane together, as the page's bar
+  (which stays) does. The Events clip player gains pause, ±10 s and seeking along the clip;
+  its speeds and reverse come next. Buttons that can't act are greyed with the reason (nothing
+  ahead of live; Frigate plays 1× forward only); Bosch and bare streams have no transport.
+  A narrow pane drops ↺ / ↻, then moves tools under ⋯. Live View gets its own sound on/off.
+
 - **Live replay.** Any Reolink recorder camera on Live View can step back from now into its
-  recording without leaving the page. Hover a pane (or maximise it) for a side rail with
-  Playback's controls: ◀ (or J) plays backwards from the newest footage, ↺ (or ← on a grid
+  recording without leaving the page. Hover a pane for its bar (below) with Playback's
+  controls: ◀ (or J) plays backwards from the newest footage, ↺ (or ← on a grid
   pane) goes 10 s back and plays on, and the same fast and slow speeds as Playback, in HD up
-  to 4× on a maximised pane. A "time behind live" slider along the bottom reaches anywhere in
+  to 4× on a maximised pane. A "time behind live" line along the bar reaches anywhere in
   the recorder's storage on a stretched scale (now · 1 min · 10 min · 1 h · 1 day · 1 week ·
   oldest), with the recordings marked along it; dragging shows the moment and how far behind
   live it is, and the pane plays from there when you let go. While a pane replays it has an

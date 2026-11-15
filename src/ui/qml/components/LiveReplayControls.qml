@@ -3,11 +3,12 @@ import QtQuick.Controls
 import ReolinkApp
 import ReolinkApp.Core
 
-// Live replay on a Live View pane (wayfinder/live-replay ticket 07, layout C): a side rail with
-// Playback's transport, a "time behind live" slider along the bottom, and while replaying the
+// Live replay on a Live View pane (wayfinder/live-replay ticket 07): while replaying, the
 // camera's recording played by Playback's pane over the live picture (the live stream stops),
-// an amber border, the recording's date and time with "N behind live", and "● Live" to return.
-// LiveReplay (one per Live View page) decides what plays where; this only shows and asks.
+// an amber border and "● Live" to return. The transport and the "time behind live" line are
+// the pane's bottom bar (PaneBar, ticket 11), which calls the actions here (act, track*) and
+// reads the line and the time from here. LiveReplay (one per Live View page) decides what
+// plays where; this only shows and asks.
 Item {
     id: root
 
@@ -15,15 +16,12 @@ Item {
     property string cameraKey: ""
     property int deviceRow: -1
     property bool replayable: false   // a Reolink recorder camera (not Frigate, not a bare stream)
-    property bool hovered: false      // the pane is hovered
-    property bool maximized: false
     property bool selected: false
     property bool audioAllowed: true
     property bool hd: false
     property int viewRotation: 0
     property bool fisheyeLens: false
     property string fisheyeMode: "fisheye"
-    property bool hideRail: false     // the PTZ pad has the right edge
     property color highlightColour: "transparent"
 
     signal clicked()
@@ -34,10 +32,9 @@ Item {
     property bool wasReplaying: false
     onReplayingChanged: Qt.callLater(function () { root.wasReplaying = root.replaying; })
     readonly property PlaybackGroup group: replay ? replay.group : null
-    readonly property bool shown: replayable && (replaying || maximized || hovered || slider.dragging)
     readonly property bool playing: replaying && !replay.paused
 
-    // ---- Actions (the rail, the slider and the page's keys) -----------------------------
+    // ---- Actions (the pane bar and the page's keys) ---------------------------------------
     function user() { if (pane.item) pane.item.clearLinkSlow(); }
     function begin() {
         if (!replaying)
@@ -102,6 +99,76 @@ Item {
         replay.playFrom(replay.epochForPos(pos), group.direction);
     }
     function goLive() { if (replaying) replay.stop(); }
+    // The pane bar's transport (PaneBarRules ids).
+    function act(id) {
+        if (!replayable || !group)
+            return;
+        switch (id) {
+        case "skipBack": skip(-10); break;
+        case "skipForward": skip(10); break;
+        case "back": back(() => group.playBackward()); break;
+        case "fastBack": back(() => group.stepFast(-1)); break;
+        case "slowBack": back(() => group.stepSlow(-1)); break;
+        case "pause": togglePause(); break;
+        case "forward": speed(() => group.playForward()); break;
+        case "slowForward": speed(() => group.stepSlow(1)); break;
+        case "fastForward": speed(() => group.stepFast(1)); break;
+        }
+    }
+    // The pane bar's time line: a press from live starts the search for recordings; a release
+    // at "now" goes back to live, anywhere else plays from there.
+    property bool _trackFromLive: false
+    function trackPressed() {
+        _trackFromLive = !replaying;
+        if (_trackFromLive) begin();
+    }
+    function trackReleased(pos) {
+        if (pos <= 0.0005) goLive();
+        else seekToPos(pos);
+    }
+    function trackCanceled() { if (_trackFromLive) goLive(); }
+    // What the line shows: where the recordings are (known so far), the playhead (0 = now) and
+    // the marks now · 1 min · 10 min · 1 h · 1 day · 1 week · oldest (LiveReplay::sliderMarks).
+    readonly property real oldestBehind: replay && replay.oldest > 0 ? replay.now - replay.oldest : 0
+    readonly property var strip: replay && replaying ? replay.strip : []
+    // posFor reads now and the oldest too: re-read when either moves.
+    readonly property real headPos: replaying ? (replay.now, replay.oldest, replay.posFor(replay.playhead)) : 0
+    readonly property var markNames: [qsTr("now"), qsTr("1 min"), qsTr("10 min"), qsTr("1 h"),
+                                      qsTr("1 day"), qsTr("1 wk")]
+    readonly property var marks: {
+        if (!replay || oldestBehind <= 0) return [];
+        var out = [], m = replay.sliderMarks();
+        for (var i = 0; i < m.length && i < markNames.length; i++)
+            if (oldestBehind > m[i]) out.push({ pos: replay.posForBehind(m[i], oldestBehind), text: markNames[i] });
+        out.push({ pos: 1, text: replay.oldestFound ? qsTr("oldest") : qsTr("oldest so far") });
+        return out;
+    }
+    function labelAt(pos) {
+        if (!replay) return "";
+        var e = replay.epochForPos(pos);
+        return Qt.formatDateTime(new Date(e * 1000), "ddd d MMM  hh:mm:ss") + "  ·  "
+            + replay.behindText(replay.now - e) + " " + qsTr("behind live");
+    }
+    // When and how far behind live (the bar's time, bottom-left).
+    readonly property string whenText: {
+        if (!replaying) return "";
+        var t = new Date(replay.playhead * 1000);
+        return Qt.formatDateTime(t, "ddd d MMM  hh:mm:ss") + "  ·  "
+            + replay.behindText(replay.behind) + " " + qsTr("behind live")
+            + (replay.paused ? "  ·  " + qsTr("paused") : "");
+    }
+    // The replaying picture's tools (the bar's ◉ and ⊕ while replaying).
+    readonly property bool hasAudio: !!pane.item && pane.item.hasAudio
+    readonly property bool zoomed: !!pane.item && pane.item.zoom > 1.01
+    function snapshot() {
+        return pane.item ? pane.item.snapshot(Math.floor(replay.playhead)) : "";
+    }
+    function toggleZoom() {
+        if (!pane.item) return;
+        if (pane.item.zoom > 1.01) { pane.item.zoom = 1; pane.item.panX = 0; pane.item.panY = 0; }
+        else pane.item.zoom = 2;
+    }
+    function showNotice(t) { notice.show(t); }
     // Play from `secs` behind now going `dir`, after `fast` presses of » (the test hook).
     function playBehind(secs, dir, fast) {
         begin();
@@ -219,32 +286,6 @@ Item {
         TapHandler { onTapped: root.goLive() }
     }
 
-    // When and how far behind live.
-    Rectangle {
-        z: 4
-        visible: root.replaying
-        anchors.left: parent.left
-        anchors.bottom: slider.top
-        anchors.margins: 8
-        width: whenText.implicitWidth + 14
-        height: whenText.implicitHeight + 8
-        radius: 4
-        color: "#cc0d141b"
-        Text {
-            id: whenText
-            anchors.centerIn: parent
-            color: Theme.warning
-            font.pixelSize: 12
-            text: {
-                if (!root.replay) return "";
-                var t = new Date(root.replay.playhead * 1000);
-                return Qt.formatDateTime(t, "ddd d MMM  hh:mm:ss") + "  ·  "
-                    + root.replay.behindText(root.replay.behind) + " " + qsTr("behind live")
-                    + (root.replay.paused ? "  ·  " + qsTr("paused") : "");
-            }
-        }
-    }
-
     // A short message on the pane.
     Rectangle {
         id: notice
@@ -260,225 +301,5 @@ Item {
         Text { id: noticeText; anchors.centerIn: parent; color: Theme.text; font.pixelSize: 12 }
         Timer { id: noticeTimer; interval: 4000; onTriggered: notice.opacity = 0 }
         Behavior on opacity { NumberAnimation { duration: 200 } }
-    }
-
-    // ---- The side rail ----------------------------------------------------------------
-    component RailButton: Rectangle {
-        id: b
-        property string glyph: ""
-        property string tip: ""
-        property bool lit: false
-        property bool dim: false
-        signal activated()
-        width: 34; height: 28; radius: Theme.radius
-        color: lit ? Theme.accent : bHover.hovered && !dim ? Theme.surfaceAlt : Theme.surface
-        border.color: lit ? Theme.accent : Theme.border
-        opacity: dim ? 0.35 : 1
-        Text {
-            anchors.centerIn: parent
-            text: b.glyph
-            color: b.lit ? Theme.window : Theme.text
-            font.pixelSize: 13
-        }
-        HoverHandler { id: bHover }
-        ToolTip {
-            visible: bHover.hovered && b.tip !== ""
-            delay: 500
-            x: -width - 8
-            y: (parent.height - height) / 2
-            contentItem: Text { text: b.tip; color: Theme.text; font.pixelSize: 11 }
-            background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
-        }
-        TapHandler { enabled: !b.dim; onTapped: b.activated() }
-    }
-    Rectangle {
-        id: rail
-        z: 5
-        visible: root.shown && !root.hideRail && root.height > 200
-        anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
-        anchors.rightMargin: 8
-        width: railCol.implicitWidth + 10
-        height: railCol.implicitHeight + 10
-        radius: Theme.radius
-        color: "#cc0d141b"
-        border.color: Theme.border
-        readonly property bool ready: !!root.group
-        Column {
-            id: railCol
-            anchors.centerIn: parent
-            spacing: 4
-            RailButton {
-                glyph: "◀"; tip: root.replaying ? qsTr("Backwards at 1× (J)") : qsTr("Replay backwards from now (J)")
-                lit: root.playing && rail.ready && root.group.direction === -1 && root.group.speed === 1
-                onActivated: root.back(() => root.group.playBackward())
-            }
-            RailButton {
-                glyph: "«"; tip: qsTr("Fast backwards: 2× → 4× → 8× → 16× → 1×")
-                lit: root.playing && rail.ready && root.group.direction === -1 && root.group.speed >= 2
-                onActivated: root.back(() => root.group.stepFast(-1))
-            }
-            RailButton {
-                glyph: "◀½"; tip: qsTr("Slow backwards: ½× → ¼× → 1×")
-                lit: root.playing && rail.ready && root.group.direction === -1 && root.group.speed < 1
-                onActivated: root.back(() => root.group.stepSlow(-1))
-            }
-            RailButton {
-                glyph: root.replaying && root.replay.paused ? "⏵" : "⏸"
-                tip: qsTr("Pause / play on (K)"); dim: !root.replaying
-                onActivated: root.togglePause()
-            }
-            RailButton {
-                glyph: "▶½"; tip: qsTr("Slow forwards: ½× → ¼× → 1×"); dim: !root.replaying
-                lit: root.playing && rail.ready && root.group.direction === 1 && root.group.speed < 1
-                onActivated: root.speed(() => root.group.stepSlow(1))
-            }
-            RailButton {
-                glyph: "»"; tip: qsTr("Fast forwards: 2× → 4× → 8× → 16× → 1× (L)"); dim: !root.replaying
-                lit: root.playing && rail.ready && root.group.direction === 1 && root.group.speed >= 2
-                onActivated: root.speed(() => root.group.stepFast(1))
-            }
-            RailButton {
-                glyph: "▶"; tip: qsTr("Forwards at 1×"); dim: !root.replaying
-                lit: root.playing && rail.ready && root.group.direction === 1 && root.group.speed === 1
-                onActivated: root.speed(() => root.group.playForward())
-            }
-            RailButton {
-                glyph: "↺"; tip: qsTr("Back 10 seconds (←)")
-                onActivated: root.skip(-10)
-            }
-            RailButton {
-                glyph: "↻"; tip: qsTr("Forward 10 seconds (→)"); dim: !root.replaying
-                onActivated: root.skip(10)
-            }
-        }
-    }
-
-    // ---- The "time behind live" slider --------------------------------------------------
-    Item {
-        id: slider
-        z: 5
-        visible: root.shown
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.leftMargin: 12
-        anchors.rightMargin: rail.visible ? rail.width + 20 : 12
-        anchors.bottomMargin: root.replaying ? 8 : 56   // above the live toolbar when live
-        height: 34
-        property bool dragging: false
-        property bool fromLive: false     // the press started replay: a cancelled drag goes back
-        property real dragPos: 0
-        readonly property real oldestBehind: root.replay && root.replay.oldest > 0
-                                             ? root.replay.now - root.replay.oldest : 0
-        // posFor reads now and the oldest too: re-read when either moves.
-        readonly property real headPos: dragging ? dragPos
-            : root.replaying ? (root.replay.now, root.replay.oldest, root.replay.posFor(root.replay.playhead)) : 0
-
-        Rectangle {
-            anchors.fill: parent
-            anchors.topMargin: -4
-            radius: 4
-            color: "#aa0d141b"
-        }
-        Rectangle {
-            id: track
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.topMargin: 8
-            height: 6
-            radius: 3
-            color: Theme.surfaceAlt
-            // Where the recordings are (known so far).
-            Repeater {
-                model: root.replay && root.replaying ? root.replay.strip : []
-                Rectangle {
-                    required property var modelData
-                    x: modelData.from * track.width
-                    width: Math.max(1, (modelData.to - modelData.from) * track.width)
-                    height: track.height
-                    radius: 2
-                    color: Theme.accentDim
-                }
-            }
-            Rectangle {
-                width: 12; height: 12; radius: 6
-                x: slider.headPos * track.width - width / 2
-                anchors.verticalCenter: parent.verticalCenter
-                color: root.replaying || slider.dragging ? Theme.warning : Theme.danger
-                border.color: Theme.window
-            }
-        }
-        // The marks (LiveReplay::sliderMarks): now · 1 min · 10 min · 1 h · 1 day · 1 week · oldest.
-        readonly property var markNames: [qsTr("now"), qsTr("1 min"), qsTr("10 min"), qsTr("1 h"),
-                                          qsTr("1 day"), qsTr("1 wk")]
-        Repeater {
-            model: root.replay ? root.replay.sliderMarks() : []
-            Text {
-                required property var modelData
-                required property int index
-                visible: !!root.replay && slider.oldestBehind > modelData && track.width > 240
-                x: (root.replay ? root.replay.posForBehind(modelData, slider.oldestBehind) : 0) * track.width - (modelData === 0 ? 0 : width / 2)
-                y: track.y + track.height + 3
-                text: slider.markNames[index] || ""
-                color: Theme.textMuted
-                font.pixelSize: 9
-            }
-        }
-        Text {
-            visible: slider.oldestBehind > 0
-            anchors.right: parent.right
-            y: track.y + track.height + 3
-            text: root.replay && root.replay.oldestFound ? qsTr("oldest") : qsTr("oldest so far")
-            color: Theme.textMuted
-            font.pixelSize: 9
-        }
-        // Dragging: the moment under the pointer; the pane opens there on release.
-        Rectangle {
-            visible: slider.dragging
-            x: Math.max(0, Math.min(slider.width - width, slider.dragPos * track.width - width / 2))
-            y: -height - 6
-            width: dragText.implicitWidth + 12
-            height: dragText.implicitHeight + 6
-            radius: 4
-            color: Theme.surfaceAlt
-            border.color: Theme.border
-            Text {
-                id: dragText
-                anchors.centerIn: parent
-                color: Theme.text
-                font.pixelSize: 11
-                text: {
-                    if (!root.replay || !slider.dragging) return "";
-                    var e = root.replay.epochForPos(slider.dragPos);
-                    return Qt.formatDateTime(new Date(e * 1000), "ddd d MMM  hh:mm:ss") + "  ·  "
-                        + root.replay.behindText(root.replay.now - e) + " " + qsTr("behind live");
-                }
-            }
-        }
-        MouseArea {
-            anchors.fill: parent
-            enabled: slider.oldestBehind > 0 || !root.replaying
-            preventStealing: true
-            function posAt(x) { return Math.max(0, Math.min(1, x / track.width)); }
-            onPressed: (m) => {
-                // From live, the first press starts the search for recordings.
-                slider.fromLive = !root.replaying;
-                if (slider.fromLive) root.begin();
-                slider.dragPos = posAt(m.x);
-                slider.dragging = true;
-            }
-            onPositionChanged: (m) => { if (slider.dragging) slider.dragPos = posAt(m.x); }
-            onReleased: {
-                slider.dragging = false;
-                if (slider.dragPos <= 0.0005) root.goLive();
-                else root.seekToPos(slider.dragPos);
-            }
-            onCanceled: {
-                slider.dragging = false;
-                if (slider.fromLive) root.goLive();
-            }
-        }
     }
 }

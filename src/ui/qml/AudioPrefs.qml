@@ -7,10 +7,13 @@ import QtQuick
 QtObject {
     // Playback starts muted the first time, then keeps whatever was chosen.
     property alias playbackMuted: store.playbackMuted
+    // Live View: the selected pane's sound (the pane bar's 🔊, live-replay ticket 11); on by default.
+    property alias liveMuted: store.liveMuted
 
     property Settings store: Settings {
         id: store
         category: "audio"
         property bool playbackMuted: true
+        property bool liveMuted: false
     }
 }

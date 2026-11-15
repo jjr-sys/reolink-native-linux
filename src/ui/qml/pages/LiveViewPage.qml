@@ -607,7 +607,6 @@ Item {
                 watchPicture: true
                 replay: liveReplay
                 replayable: { Devices.count; return !Devices.isDirectAt(index); }
-                maximized: isMaximized
                 onQualityChosen: (main) => {
                     if (!isMaximized)
                         PanePrefs.set("hd", cameraKey, main);

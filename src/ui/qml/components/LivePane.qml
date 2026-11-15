@@ -6,7 +6,7 @@ import ReolinkApp
 import ReolinkApp.Core
 
 // One cell of the live grid: video + name overlay + connection-state overlay +
-// a hover floating toolbar and an optional PTZ joystick. Double-click toggles
+// the pane bar (PaneBar: transport, HD, sound, tools) and an optional PTZ joystick. Double-click toggles
 // maximize (handled by the page). Digital zoom via wheel + drag.
 Rectangle {
     id: root
@@ -126,7 +126,6 @@ Rectangle {
     // stops and its recording plays over the picture (LiveReplayControls).
     property LiveReplay replay: null
     property bool replayable: false
-    property bool maximized: false
     readonly property bool replaying: replayControls.replaying
     function replayKey(k) { return replayControls.key(k); }
     function replayBehind(secs, dir, fast) { replayControls.playBehind(secs, dir, fast); }
@@ -208,7 +207,7 @@ Rectangle {
         viewVisible: root.visible
         watchPicture: root.watchPicture
         videoSink: video.videoSink
-        muted: !(root.audioOn && root.audioAllowed && !talk.active)
+        muted: !(root.audioOn && root.audioAllowed && !talk.active) || AudioPrefs.liveMuted
     }
 
     // The Site tab drawer shows each camera's last-seen frame: kept a few seconds after
@@ -683,8 +682,10 @@ Rectangle {
     Loader {
         active: root.ptzOpen && root.capPtz
         anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
         anchors.rightMargin: 10
+        // Centred on the right edge, lifted clear of the pane bar on a short pane.
+        y: Math.max(0, Math.min((parent.height - height) / 2, paneBar.y + paneBar.pillTop - height - 8))
+        z: 32
         sourceComponent: PtzPad {
             deviceRow: root.deviceRow
             showZoom: root.capZoom
@@ -693,10 +694,10 @@ Rectangle {
 
     Loader {
         active: root.boschPtzOpen && root.isBoschFeed
-        anchors.right: toolbar.right
-        anchors.bottom: toolbar.top
-        anchors.bottomMargin: 8
-        z: 23
+        anchors.right: videoArea.right
+        anchors.rightMargin: 8
+        y: paneBar.y + paneBar.pillTop - height - 8
+        z: 32
         sourceComponent: PtzPad {
             deviceRow: -1
             showZoom: true
@@ -705,7 +706,6 @@ Rectangle {
         }
     }
 
-    // ---- Floating toolbar (hover) -----------------------------------------
     HoverHandler { id: paneHover }
 
     LiveReplayControls {
@@ -716,273 +716,187 @@ Rectangle {
         cameraKey: root.cameraKey
         deviceRow: root.deviceRow
         replayable: !!root.replay && root.replayable && root.hasSource && !root.offline
-        hovered: paneHover.hovered
-        maximized: root.maximized
         selected: root.selected
         audioAllowed: root.audioAllowed && !talk.active
         hd: root.effectiveMain
         viewRotation: root.viewRotation
         fisheyeLens: root.fisheyeLens
         fisheyeMode: root.fisheyeMode
-        hideRail: root.ptzOpen || root.boschPtzOpen
         highlightColour: root.highlightLit && root.highlight ? root.highlight.colour : "transparent"
         onClicked: root.clicked(root.deviceRow)
         onDoubleClicked: root.toggleMaximize(root.deviceRow)
     }
 
-    Rectangle {
-        id: toolbar
-        visible: root.hasSource && !root.replaying && (paneHover.hovered || root.ptzOpen || root.boschPtzOpen)
-        anchors.bottom: videoArea.bottom
-        anchors.horizontalCenter: videoArea.horizontalCenter
-        anchors.bottomMargin: 8
-        radius: Theme.radius
-        color: "#cc0d141b"
-        border.color: Theme.border
-        height: Math.max(36, toolRow.implicitHeight + 16)
-        width: Math.min(toolRow.implicitWidth + 16, Math.max(1, videoArea.width - 16))
-
-        Flickable {
-            id: toolScroll
-            anchors.fill: parent
-            anchors.margins: 8
-            clip: true
-            contentWidth: Math.max(width, toolRow.implicitWidth)
-            contentHeight: toolRow.implicitHeight
-            flickableDirection: Flickable.HorizontalFlick
-            boundsBehavior: Flickable.StopAtBounds
-            interactive: contentWidth > width
-
-            Row {
-                id: toolRow
-                x: Math.max(0, (toolScroll.width - implicitWidth) / 2)
-                y: (toolScroll.height - implicitHeight) / 2
-                spacing: 2
-
-                component ToolButton: Rectangle {
-                    property string glyph: ""
-                    property string tip: ""
-                    property bool active: false
-                    property bool enabledTool: true
-                    signal activated()
-                    width: 28; height: 28; radius: 4
-                    visible: enabledTool
-                    color: active ? Theme.accentDim : (hover.hovered ? Theme.surfaceAlt : "transparent")
-                    Text {
-                        anchors.centerIn: parent
-                        text: parent.glyph
-                        color: parent.active ? Theme.text : Theme.textMuted
-                        font.pixelSize: 14
-                    }
-                    HoverHandler { id: hover }
-                    ToolTip {
-                        visible: hover.hovered && tip !== ""
-                        delay: 500
-                        x: (parent.width - width) / 2
-                        y: -height - 8
-                        contentItem: Text { text: tip; color: Theme.text; font.pixelSize: 11 }
-                        background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
-                    }
-                    TapHandler {
-                        gesturePolicy: TapHandler.ReleaseWithinBounds
-                        onTapped: parent.activated()
-                    }
-                }
-
-                component ToolPickerButton: Rectangle {
-                    id: pickerButton
-                    property string label: ""
-                    property string kind: "positions"
-                    property string tip: ""
-                    property bool active: false
-                    property bool enabledTool: true
-                    signal activated()
-                    width: kind === "scene" ? 112 : 88
-                    height: 28
-                    radius: 4
-                    color: active ? Theme.accentDim : (pickerHover.hovered ? Theme.surfaceAlt : "transparent")
-                    opacity: enabledTool ? 1 : 0.48
-                    Text {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 8
-                        anchors.right: pickerArrow.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: pickerButton.label
-                        color: pickerButton.active ? Theme.text : Theme.textMuted
-                        font.pixelSize: 10
-                        font.bold: true
-                        elide: Text.ElideRight
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    Text {
-                        id: pickerArrow
-                        anchors.right: parent.right
-                        anchors.rightMargin: 7
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "⌃"
-                        color: pickerButton.active ? Theme.text : Theme.textMuted
-                        font.pixelSize: 13
-                    }
-                    HoverHandler { id: pickerHover }
-                    ToolTip {
-                        visible: pickerHover.hovered && pickerButton.tip !== ""
-                        delay: 450
-                        text: pickerButton.tip
-                        contentItem: Text { text: pickerButton.tip; color: Theme.text; font.pixelSize: 11 }
-                        background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
-                    }
-                    TapHandler {
-                        enabled: pickerButton.enabledTool
-                        gesturePolicy: TapHandler.ReleaseWithinBounds
-                        onTapped: root.openBoschPicker(pickerButton, pickerButton.kind)
-                    }
-                }
-
-                ToolButton {
-                    glyph: root.qualityMain ? "HD" : "SD"
-                    tip: root.qualityMain ? qsTr("Switch to Fluent (SD)") : qsTr("Switch to Clear (HD)")
-                    active: root.qualityMain
-                    onActivated: {
-                        var why = !root.qualityMain && !root.forceMain && root.hdRefusal
-                                  ? root.hdRefusal() : "";
-                        if (why) {
-                            paneNotice.show(why);
-                            return;
-                        }
-                        root.qualityMain = !root.qualityMain;
-                        root.qualityChosen(root.qualityMain);
-                    }
-                }
-                ToolButton {
-                    glyph: "⤢"
-                    enabledTool: root.showLarge
-                    active: root.large
-                    tip: root.large ? qsTr("Large pane: make it Normal") : qsTr("Make this pane Large")
-                    onActivated: root.largeToggled()
-                }
-
-                ToolPickerButton {
-                    visible: root.isBoschFeed
-                    label: qsTr("Positions")
-                    kind: "positions"
-                    active: boschPicker.visible && boschPicker.kind === "positions"
-                    enabledTool: BoschTour.connected
-                    tip: BoschTour.connected
-                        ? qsTr("Choose a camera position%1").arg(BoschTour.selectionTourMode
-                            ? qsTr(" · tap to add or remove tour stops") : "")
-                        : qsTr("Home Assistant is disconnected")
-                }
-                ToolPickerButton {
-                    visible: root.isBoschFeed
-                    label: qsTr("Marked range")
-                    kind: "scene"
-                    active: (boschPicker.visible && boschPicker.kind === "scene") || BoschTour.sceneModePending
-                    enabledTool: BoschTour.sceneModeAvailable && !BoschTour.sceneModePending
-                    tip: BoschTour.sceneModeName === ""
-                        ? (BoschTour.sceneModeError || qsTr("Marked-range mode unavailable"))
-                        : qsTr("Marked range: %1%2%3").arg(BoschTour.sceneModeName)
-                            .arg(BoschTour.sceneModeStale ? qsTr(" · stale") : "")
-                            .arg(BoschTour.sceneModeError === "" ? "" : " · " + BoschTour.sceneModeError)
-                }
-
-                ToolButton {
-                    visible: root.isBoschFeed && !BoschTour.connected
-                    glyph: "!"
-                    active: true
-                    tip: qsTr("Home Assistant is disconnected. Reconnect to restore Bosch PTZ, positions, scene modes, and tours.")
-                    onActivated: root.openBoschTourRequested()
-                }
-
-                ToolButton {
-                    glyph: "◉"
-                    tip: qsTr("Save snapshot")
-                    onActivated: Devices.snapshot(root.deviceRow)
-                }
-                ToolButton {
-                    glyph: "⏺"; active: player.recording
-                    tip: player.recording ? qsTr("Stop recording") : qsTr("Record video")
-                    onActivated: player.recording ? player.stopRecording() : player.startRecording()
-                }
-                ToolButton {
-                    glyph: "⟳"; active: root.viewRotation !== 0
-                    tip: root.viewRotation !== 0 ? qsTr("Rotate view 90° (now %1°)").arg(root.viewRotation)
-                                                : qsTr("Rotate view 90°")
-                    onActivated: Devices.setRotationOverride(root.deviceRow, root.viewRotation + 90)
-                }
-                ToolButton {
-                    glyph: "⊕"; active: root.zoom > 1.01
-                    tip: root.zoom > 1.01 ? qsTr("Reset zoom") : qsTr("Digital zoom (scroll to adjust)")
-                    onActivated: { if (root.zoom > 1.01) { root.zoom = 1; root.panX = 0; root.panY = 0; }
-                                   else root.zoom = 2; }
-                }
-                ToolButton {
-                    glyph: "⇅"; active: root.isBoschFeed ? root.boschPtzOpen : root.ptzOpen
-                    enabledTool: root.capPtz || (root.isBoschFeed && root.width >= 760 && root.height >= 460)
-                    tip: qsTr("PTZ controls")
-                    onActivated: {
-                        if (root.isBoschFeed) {
-                            root.boschPtzOpen = !root.boschPtzOpen;
-                            root.ptzOpen = false;
-                            if (root.boschPtzOpen && BoschTour.selectionTourMode)
-                                root.activateTourSelection();
-                        } else {
-                            root.ptzOpen = !root.ptzOpen;
-                        }
-                    }
-                }
-                ToolButton {
-                    glyph: "T"; active: BoschTour.selectionTourMode
-                    enabledTool: root.isBoschFeed && root.width >= 760 && root.height >= 460
-                    tip: !BoschTour.connected
-                         ? qsTr("Reconnect Home Assistant to restore positions and tours")
-                         : BoschTour.selectionTourMode
-                             ? qsTr("Turn off tour and clear positions")
-                             : qsTr("Select positions for a tour")
-                    onActivated: {
-                        if (!BoschTour.connected) {
-                            root.openBoschTourRequested();
-                            return;
-                        }
-                        if (!BoschTour.selectionTourMode) {
-                            root.boschPtzOpen = false;
-                            root.ptzOpen = false;
-                        }
-                        root.activateTourSelection();
-                    }
-                }
-                ToolButton {
-                    glyph: "🎙"; active: talk.active; enabledTool: root.capTalk
-                    tip: talk.state === TalkSession.Talking ? qsTr("Talking — click to stop")
-                       : talk.state === TalkSession.Connecting ? qsTr("Connecting…")
-                       : qsTr("Two-way talk (click to start, click again to stop)")
-                    onActivated: talk.active ? talk.stop() : Devices.startTalk(root.deviceRow, talk)
-                }
-                ToolButton {
-                    glyph: "📢"; enabledTool: root.capSiren
-                    tip: qsTr("Sound siren")
-                    onActivated: Devices.applySetting(root.deviceRow, "AudioAlarmPlay",
-                        { "alarm_mode": "times", "times": 1, "channel": Devices.channelOf(root.deviceRow) })
-                }
-                ToolButton {
-                    glyph: "💡"; active: root.floodOn; enabledTool: root.capFloodlight
-                    tip: qsTr("Toggle floodlight")
-                    onActivated: {
-                        root.floodOn = !root.floodOn;
-                        Devices.toggleFloodlight(root.deviceRow);
-                    }
-                }
-                ToolButton {
-                    glyph: "⧉"
-                    tip: qsTr("Pop out to a window")
-                    onActivated: if (root.hasSource) root.popOut(root.deviceRow, root.label)
-                }
-                ToolButton {
-                    glyph: "⛶"
-                    tip: root.forceMain ? qsTr("Restore grid") : qsTr("Maximize")
-                    onActivated: if (root.hasSource) root.toggleMaximize(root.deviceRow)
-                }
-            }
+    // ---- The pane's bottom bar (live-replay ticket 11, layout A) ----------------------------
+    // Live: ↺ and ◀ start Live replay, HD, sound and the camera's tools. Replaying: the whole
+    // transport, the "time behind live" line and the replayed picture's tools.
+    readonly property bool roomyForBosch: root.width >= 760 && root.height >= 460
+    readonly property var liveTools: {
+        var t = [], bosch = root.isBoschFeed;
+        if (root.replaying) {
+            t.push({ id: "snapshot", glyph: "◉", tip: qsTr("Save snapshot") });
+            t.push({ id: "rotate", glyph: "⟳", active: root.viewRotation !== 0, tip: qsTr("Rotate view 90°") });
+            t.push({ id: "zoom", glyph: "⊕", active: replayControls.zoomed,
+                     tip: replayControls.zoomed ? qsTr("Reset zoom") : qsTr("Digital zoom (scroll to adjust)") });
+            t.push({ id: "popout", glyph: "⧉", tip: qsTr("Pop out to a window") });
+            t.push({ id: "maximise", glyph: "⛶", tip: root.forceMain ? qsTr("Restore grid") : qsTr("Maximize") });
+            return t;
         }
+        if (bosch) {
+            t.push({ id: "positions", wide: true, wideWidth: 88, label: qsTr("Positions"),
+                     active: boschPicker.visible && boschPicker.kind === "positions",
+                     usable: BoschTour.connected,
+                     tip: BoschTour.connected
+                          ? qsTr("Choose a camera position%1").arg(BoschTour.selectionTourMode
+                              ? qsTr(" · tap to add or remove tour stops") : "")
+                          : qsTr("Home Assistant is disconnected") });
+            t.push({ id: "scene", wide: true, wideWidth: 112, label: qsTr("Marked range"),
+                     active: (boschPicker.visible && boschPicker.kind === "scene") || BoschTour.sceneModePending,
+                     usable: BoschTour.sceneModeAvailable && !BoschTour.sceneModePending,
+                     tip: BoschTour.sceneModeName === ""
+                          ? (BoschTour.sceneModeError || qsTr("Marked-range mode unavailable"))
+                          : qsTr("Marked range: %1%2%3").arg(BoschTour.sceneModeName)
+                              .arg(BoschTour.sceneModeStale ? qsTr(" · stale") : "")
+                              .arg(BoschTour.sceneModeError === "" ? "" : " · " + BoschTour.sceneModeError) });
+            if (!BoschTour.connected)
+                t.push({ id: "haOffline", glyph: "!", active: true,
+                         tip: qsTr("Home Assistant is disconnected. Reconnect to restore Bosch PTZ, positions, scene modes, and tours.") });
+        }
+        if (root.showLarge)
+            t.push({ id: "large", glyph: "⤢", active: root.large,
+                     tip: root.large ? qsTr("Large pane: make it Normal") : qsTr("Make this pane Large") });
+        t.push({ id: "snapshot", glyph: "◉", tip: qsTr("Save snapshot") });
+        t.push({ id: "record", glyph: "⏺", active: player.recording,
+                 tip: player.recording ? qsTr("Stop recording") : qsTr("Record video") });
+        t.push({ id: "rotate", glyph: "⟳", active: root.viewRotation !== 0,
+                 tip: root.viewRotation !== 0 ? qsTr("Rotate view 90° (now %1°)").arg(root.viewRotation)
+                                              : qsTr("Rotate view 90°") });
+        t.push({ id: "zoom", glyph: "⊕", active: root.zoom > 1.01,
+                 tip: root.zoom > 1.01 ? qsTr("Reset zoom") : qsTr("Digital zoom (scroll to adjust)") });
+        if (root.capPtz || (bosch && root.roomyForBosch))
+            t.push({ id: "ptz", glyph: "⇅", active: bosch ? root.boschPtzOpen : root.ptzOpen,
+                     tip: qsTr("PTZ controls") });
+        if (bosch && root.roomyForBosch)
+            t.push({ id: "tour", glyph: "T", active: BoschTour.selectionTourMode,
+                     tip: !BoschTour.connected ? qsTr("Reconnect Home Assistant to restore positions and tours")
+                        : BoschTour.selectionTourMode ? qsTr("Turn off tour and clear positions")
+                        : qsTr("Select positions for a tour") });
+        if (root.capTalk)
+            t.push({ id: "talk", glyph: "🎙", active: talk.active,
+                     tip: talk.state === TalkSession.Talking ? qsTr("Talking — click to stop")
+                        : talk.state === TalkSession.Connecting ? qsTr("Connecting…")
+                        : qsTr("Two-way talk (click to start, click again to stop)") });
+        if (root.capSiren)
+            t.push({ id: "siren", glyph: "📢", tip: qsTr("Sound siren") });
+        if (root.capFloodlight)
+            t.push({ id: "floodlight", glyph: "💡", active: root.floodOn, tip: qsTr("Toggle floodlight") });
+        t.push({ id: "popout", glyph: "⧉", tip: qsTr("Pop out to a window") });
+        t.push({ id: "maximise", glyph: "⛶", tip: root.forceMain ? qsTr("Restore grid") : qsTr("Maximize") });
+        return t;
+    }
+    function useTool(id, anchor) {
+        switch (id) {
+        case "positions": root.openBoschPicker(anchor, "positions"); break;
+        case "scene": root.openBoschPicker(anchor, "scene"); break;
+        case "haOffline": root.openBoschTourRequested(); break;
+        case "large": root.largeToggled(); break;
+        case "snapshot":
+            if (root.replaying) {
+                var f = replayControls.snapshot();
+                replayControls.showNotice(f !== "" ? qsTr("Snapshot saved: %1").arg(f.split("/").pop())
+                                                   : qsTr("Nothing to save: no picture yet"));
+            } else {
+                Devices.snapshot(root.deviceRow);
+            }
+            break;
+        case "record": player.recording ? player.stopRecording() : player.startRecording(); break;
+        case "rotate": Devices.setRotationOverride(root.deviceRow, root.viewRotation + 90); break;
+        case "zoom":
+            if (root.replaying) replayControls.toggleZoom();
+            else if (root.zoom > 1.01) { root.zoom = 1; root.panX = 0; root.panY = 0; }
+            else root.zoom = 2;
+            break;
+        case "ptz":
+            if (root.isBoschFeed) {
+                root.boschPtzOpen = !root.boschPtzOpen;
+                root.ptzOpen = false;
+                if (root.boschPtzOpen && BoschTour.selectionTourMode)
+                    root.activateTourSelection();
+            } else {
+                root.ptzOpen = !root.ptzOpen;
+            }
+            break;
+        case "tour":
+            if (!BoschTour.connected) { root.openBoschTourRequested(); break; }
+            if (!BoschTour.selectionTourMode) { root.boschPtzOpen = false; root.ptzOpen = false; }
+            root.activateTourSelection();
+            break;
+        case "talk": talk.active ? talk.stop() : Devices.startTalk(root.deviceRow, talk); break;
+        case "siren":
+            Devices.applySetting(root.deviceRow, "AudioAlarmPlay",
+                { "alarm_mode": "times", "times": 1, "channel": Devices.channelOf(root.deviceRow) });
+            break;
+        case "floodlight": root.floodOn = !root.floodOn; Devices.toggleFloodlight(root.deviceRow); break;
+        case "popout": if (root.hasSource) root.popOut(root.deviceRow, root.label); break;
+        case "maximise": if (root.hasSource) root.toggleMaximize(root.deviceRow); break;
+        }
+    }
+    function toggleHd() {
+        var why = !root.qualityMain && !root.forceMain && root.hdRefusal ? root.hdRefusal() : "";
+        if (why) {
+            paneNotice.show(why);
+            return;
+        }
+        root.qualityMain = !root.qualityMain;
+        root.qualityChosen(root.qualityMain);
+    }
+
+    PaneBar {
+        id: paneBar
+        anchors.fill: videoArea
+        z: 31
+        visible: root.hasSource
+        pageKind: root.replaying ? "replay" : "live"
+        camera: replayControls.replayable ? "recorder" : "stream"
+        speedGroup: replayControls.group
+        paused: root.replaying && root.replay.paused
+        shown: paneHover.hovered || root.ptzOpen || root.boschPtzOpen || boschPicker.visible
+        toolList: root.liveTools
+        hdOn: root.qualityMain
+        hdTip: root.qualityMain ? qsTr("Switch to Fluent (SD)") : qsTr("Switch to Clear (HD)")
+        // Sound: the selected pane's (live) or the replay's, as Playback (1× forward only).
+        soundShown: root.replaying ? replayControls.hasAudio : player.hasAudio
+        soundOn: root.audioOn && (root.replaying
+                 ? !AudioPrefs.playbackMuted && !!replayControls.group && !replayControls.group.offNormal
+                 : !AudioPrefs.liveMuted)
+        soundTip: root.replaying
+                  ? (!!replayControls.group && replayControls.group.offNormal ? qsTr("Sound plays at 1× forward only")
+                     : AudioPrefs.playbackMuted ? qsTr("Sound on") : qsTr("Mute"))
+                  : (!root.audioOn || AudioPrefs.liveMuted ? qsTr("Hear this pane") : qsTr("Mute Live View"))
+        segments: replayControls.strip
+        head: replayControls.headPos
+        headColour: root.replaying ? Theme.warning : Theme.danger
+        marks: replayControls.marks
+        labelAt: replayControls.replayable ? replayControls.labelAt : null
+        seekable: replayControls.oldestBehind > 0 || !root.replaying
+        timeText: replayControls.whenText
+        timeColour: Theme.warning
+        timeAlways: root.replaying
+        onAction: (id) => {
+            if (id === "hd") root.toggleHd();
+            else if (id === "sound") {
+                // Only the selected pane plays sound: on another pane this selects it, sound on.
+                var muted = root.replaying ? AudioPrefs.playbackMuted : AudioPrefs.liveMuted;
+                var on = !(root.audioOn && !muted);
+                if (!root.audioOn) root.clicked(root.deviceRow);
+                if (root.replaying) AudioPrefs.playbackMuted = !on;
+                else AudioPrefs.liveMuted = !on;
+            } else replayControls.act(id);
+        }
+        onTool: (id, anchor) => root.useTool(id, anchor)
+        onSeekPressed: replayControls.trackPressed()
+        onSeekReleased: (pos) => replayControls.trackReleased(pos)
+        onSeekCanceled: replayControls.trackCanceled()
     }
 
     Popup {
@@ -1080,7 +994,7 @@ Rectangle {
     FisheyeViewIcons {
         anchors.top: videoArea.top
         anchors.right: videoArea.right
-        available: videoArea.height - (toolbar.visible ? toolbar.height + 8 : 0)
+        available: paneBar.visibleNow ? paneBar.pillTop - 8 : videoArea.height
         shown: root.fisheyeLens && root.hasSource && paneHover.hovered
         current: root.fisheyeMode
         onPicked: (view) => Devices.setViewMode(root.deviceRow, view)

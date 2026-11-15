@@ -99,6 +99,35 @@ private slots:
         QVERIFY(!c.active());
         QCOMPARE(c.from(), qint64(0));
         QCOMPARE(c.progress(1000), 0.0);
+        QCOMPARE(c.timeAt(0.5), 0.0);
+    }
+
+    // The pane bar's time line and ↺ / ↻ (wayfinder/live-replay ticket 11): a point on the
+    // line is a moment in the window; a skip stays inside it.
+    void aPointOnTheLineIsAMomentInTheWindow()
+    {
+        EventClip c;
+        c.setClipResolver([](qint64, int, qint64, int, int) { return QString(); });
+        c.setEvent(1, 7, 1000);   // 995 .. 1030
+        QCOMPARE(c.timeAt(0), 995.0);
+        QCOMPARE(c.timeAt(1), 1030.0);
+        QCOMPARE(c.timeAt(0.2), 1002.0);
+        QCOMPARE(c.timeAt(-1), 995.0);
+        QCOMPARE(c.timeAt(2), 1030.0);
+    }
+
+    void aSkipStaysInsideTheWindow()
+    {
+        EventClip c;
+        c.setClipResolver([](qint64, int, qint64, int, int) { return QString(); });
+        c.setEvent(1, 7, 1000);   // 995 .. 1030
+        QCOMPARE(c.skipFrom(1010, -10), 1000.0);
+        QCOMPARE(c.skipFrom(1000, -10), 995.0);
+        QCOMPARE(c.skipFrom(1025, 10), 1030.0);
+        // Kept playing (open-ended): forward runs on past the window's end.
+        c.keepPlaying();
+        QCOMPARE(c.skipFrom(1025, 10), 1035.0);
+        QCOMPARE(c.skipFrom(998, -10), 995.0);
     }
 };
 

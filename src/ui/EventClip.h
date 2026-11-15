@@ -62,6 +62,10 @@ public:
     // Where `position` sits in [from, to], 0..1; and whether it has reached `to`.
     Q_INVOKABLE double progress(double position) const;
     Q_INVOKABLE bool atEnd(double position) const;
+    // The pane bar (live-replay ticket 11): the moment at `fraction` (0..1) of the window, and
+    // `secs` on from `position` kept inside it (no end once open-ended). 0 with no event.
+    Q_INVOKABLE double timeAt(double fraction) const;
+    Q_INVOKABLE double skipFrom(double position, double secs) const;
 
 signals:
     void devicesChanged();

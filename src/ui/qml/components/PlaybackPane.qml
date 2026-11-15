@@ -701,10 +701,11 @@ Rectangle {
 
     // ---- Fisheye views: hover icons at the right edge, right-click View menu ----------
     HoverHandler { id: paneHover }
+    readonly property bool hovered: paneHover.hovered
     FisheyeViewIcons {
         anchors.top: videoArea.top
         anchors.right: videoArea.right
-        available: videoArea.height
+        available: root.barItem && root.barItem.visibleNow ? root.barItem.pillTop - 8 : videoArea.height
         shown: root.fisheyeLens && root.hasSource && paneHover.hovered
         current: root.fisheyeMode
         onPicked: (view) => Devices.setViewMode(root.deviceRow, view)
@@ -722,5 +723,17 @@ Rectangle {
         current: root.fisheyeMode
         onPicked: (view) => Devices.setViewMode(root.deviceRow, view)
         onResetAim: FisheyeAims.reset(root.cameraKey, root.fisheyeMode)
+    }
+
+    // The pane's bottom bar (PaneBar, live-replay ticket 11), given by the pane's host — the
+    // Playback page; Live replay's pane has its Live pane's bar instead, so it leaves this empty.
+    property Component bar: null
+    readonly property Item barItem: barLoader.item
+    Loader {
+        id: barLoader
+        anchors.fill: parent
+        z: 40
+        active: root.bar !== null && root.hasSource && root.visible
+        sourceComponent: root.bar
     }
 }

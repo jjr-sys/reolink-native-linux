@@ -13,8 +13,12 @@ A live stream using a fallback transport after its preferred transport fails; th
 _Avoid_: SD (when referring to transport fallback)
 
 **Live replay**:
-One Live View pane stepping back from now into its recorder camera's recording, across days as far back as storage holds, with Playback's controls on a side rail and a "time behind live" slider; its live stream stops meanwhile. "● Live", leaving Live View, or playing forwards into the recorder's newest footage returns it to live. One pane at a time.
+One Live View pane stepping back from now into its recorder camera's recording, across days as far back as storage holds, with Playback's controls on the pane bar and its time line as the "time behind live" line; its live stream stops meanwhile. "● Live", leaving Live View, or playing forwards into the recorder's newest footage returns it to live. One pane at a time.
 _Avoid_: timeshift, instant replay
+
+**Pane bar**:
+The one floating bar at the bottom of every video pane (Live View, Playback, the Events clip player): a thin time line, the transport, HD, sound, the page's common tools and ⋯ for the rest. Shown on hover.
+_Avoid_: toolbar, rail, pill (in user-facing text)
 
 ## Camera positions and tours
 

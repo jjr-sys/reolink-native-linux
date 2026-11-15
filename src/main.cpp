@@ -33,6 +33,7 @@
 #include "ui/EventClip.h"
 #include "ui/EventFeed.h"
 #include "ui/FrameShape.h"
+#include "ui/PaneBarRules.h"
 #include "ui/FisheyeLens.h"
 #include "ui/StillQueue.h"
 #include "ui/MosaicLayout.h"
@@ -199,6 +200,7 @@ int main(int argc, char *argv[])
                      });
     rl::DeviceDiscovery discovery;
     rl::FisheyeAims fisheyeAims; // each camera's fisheye aim, shared by every page (playback-controls 13)
+    rl::PaneBarRules paneBarRules;   // every video pane's bottom bar (live-replay ticket 11)
     rl::FrameShape frameShape;   // picture-shaped frames for QML (fisheye-and-framing step 06)
     rl::BoschTourController boschTour(&credentials);
     rl::Updater updater;
@@ -226,6 +228,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::MosaicLayout>("ReolinkApp.Core", 1, 0, "MosaicLayout");
     qmlRegisterType<rl::StillQueue>("ReolinkApp.Core", 1, 0, "StillQueue");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "FrameShape", &frameShape);
+    qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "PaneBarRules", &paneBarRules);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "FisheyeAims", &fisheyeAims);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", &devices);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", &boschTour);
@@ -284,6 +287,10 @@ int main(int argc, char *argv[])
     // RL_PLAYBACK_FAST=<n>: with RL_PLAYBACK_AUTOPLAY, press » (fast forward) n times once it plays.
     engine.rootContext()->setContextProperty(
         QStringLiteral("playbackFastSteps"), qEnvironmentVariableIntValue("RL_PLAYBACK_FAST"));
+    // RL_PANE_BARS=1 shows every video pane's bottom bar without hover (live-replay ticket 11):
+    // for screenshots, which have no pointer.
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("paneBarsShown"), qEnvironmentVariableIsSet("RL_PANE_BARS"));
     // RL_LIVE_REPLAY="<hostId:channel>;<action>": Live View maximises that camera and, 8 s
     // later, starts Live replay: action "J" (◀ from now) or "<secs behind now>:<1|-1>"
     // (play from there forwards or backwards), optionally ":<» presses>" (live-replay 07).
