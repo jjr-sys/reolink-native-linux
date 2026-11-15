@@ -555,6 +555,12 @@ Item {
                 keyNavigationEnabled: false
                 Keys.onUpPressed: (e) => { if (clipPlayer.active) page.stepClip(-1); else e.accepted = false; }
                 Keys.onDownPressed: (e) => { if (clipPlayer.active) page.stepClip(1); else e.accepted = false; }
+                // J / K / L and ← / → drive the clip as on Live and Playback (live-replay ticket 12).
+                Keys.onPressed: (e) => {
+                    const k = e.key === Qt.Key_J ? "J" : e.key === Qt.Key_K ? "K" : e.key === Qt.Key_L ? "L"
+                            : e.key === Qt.Key_Left ? "Left" : e.key === Qt.Key_Right ? "Right" : "";
+                    e.accepted = k !== "" && (e.modifiers & ~Qt.KeypadModifier) === Qt.NoModifier && clipPlayer.key(k);
+                }
                 header: Column {
                     width: feedView.width
                     // The header fills in after the feed is placed: keep its top in view
@@ -1196,6 +1202,17 @@ Item {
         interval: 1500
         property bool played: false
         onTriggered: { played = true; page.playRow(feed.stepEvent(-1, 1)); }
+    }
+    // RL_EVENTS_KEYS test hook (main.cpp): keys to the clip once it plays ("SD" turns HD off).
+    Timer {
+        running: typeof eventsKeys !== "undefined" && eventsKeys !== "" && clipPlayer.phase === "playing" && !sent
+        interval: 4000
+        property bool sent: false
+        onTriggered: {
+            sent = true;
+            eventsKeys.split(",").forEach(k => k.trim() === "SD" ? clipPlayer.setHd(false) : clipPlayer.key(k.trim()));
+            console.log("events keys:", eventsKeys, "→", clipPlayer.speedGroup.label(clipPlayer.paused));
+        }
     }
     // Play a feed row in the player, and keep it in view.
     function playRow(row) {

@@ -66,6 +66,13 @@ public:
     // `secs` on from `position` kept inside it (no end once open-ended). 0 with no event.
     Q_INVOKABLE double timeAt(double fraction) const;
     Q_INVOKABLE double skipFrom(double position, double secs) const;
+    // Ticket 12: whether playing `direction` (1 / -1) from `position` has reached the window's
+    // edge — its start backwards (within a quarter second), its end forwards (atEnd).
+    Q_INVOKABLE bool edgeReached(double position, int direction) const;
+    // A recorder stream going `direction` stopped at `position`: where to open it again (a
+    // second backwards from the window's start / forwards from its end is the edge), or -1 —
+    // the edge, or it already reopened there (`lastReopenAt`, -1 for none) and ended again.
+    Q_INVOKABLE double reopenAfterEnd(double position, int direction, double lastReopenAt) const;
 
 signals:
     void devicesChanged();

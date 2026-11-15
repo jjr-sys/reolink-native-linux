@@ -173,18 +173,29 @@ private slots:
         QVERIFY(t[kFastForward].enabled);
     }
 
-    void eventClipsPauseAndSkipButHaveNoSpeedsYet()
+    // Ticket 12: a recorder's event clip has every speed both ways, as Playback.
+    void recorderEventClipsHaveEverySpeedBothWays()
     {
-        const auto t = transport(playing(Page::Events, 1, 1.0), Full);
-        for (const QString &id : {kSkipBack, kPause, kForward, kSkipForward})
-            QVERIFY2(t[id].enabled, qPrintable(id));
-        for (const QString &id : {kFastBack, kSlowBack, kBack, kSlowForward, kFastForward}) {
-            QVERIFY2(t[id].shown && !t[id].enabled, qPrintable(id));
-            QVERIFY(t[id].reason.contains(QStringLiteral("Playback")));
-        }
-        State f = playing(Page::Events, 1, 1.0);
+        const auto t = transport(playing(Page::Events, -1, 4.0), Full);
+        for (const Button &b : t)
+            QVERIFY(b.shown && b.enabled);
+        QVERIFY(t[kFastBack].lit);
+        QCOMPARE(t[kFastBack].caption, QStringLiteral("4×"));
+    }
+
+    // A Frigate clip is a downloaded file: every forward speed, no reverse.
+    void frigateEventClipsPlayForwardsAtAnySpeed()
+    {
+        State f = playing(Page::Events, 1, 8.0);
         f.camera = Camera::Frigate;
-        QCOMPARE(transport(f, Full)[kFastForward].reason, QStringLiteral("Frigate plays at 1× forward only"));
+        const auto t = transport(f, Full);
+        for (const QString &id : {kSkipBack, kPause, kForward, kSlowForward, kFastForward, kSkipForward})
+            QVERIFY2(t[id].enabled, qPrintable(id));
+        QVERIFY(t[kFastForward].lit);
+        for (const QString &id : {kFastBack, kSlowBack, kBack}) {
+            QVERIFY2(!t[id].enabled, qPrintable(id));
+            QCOMPARE(t[id].reason, QStringLiteral("Frigate clips play forwards only"));
+        }
     }
 
     // ---- Collapsing to fit --------------------------------------------------------------

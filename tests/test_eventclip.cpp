@@ -129,6 +129,47 @@ private slots:
         QCOMPARE(c.skipFrom(1025, 10), 1035.0);
         QCOMPARE(c.skipFrom(998, -10), 995.0);
     }
+
+    // Speeds and reverse on event clips (live-replay ticket 12): backwards stops at the
+    // window's start, forwards at its end (until Keep playing makes it open-ended).
+    void playingReachesTheWindowsEdges()
+    {
+        EventClip c;
+        c.setClipResolver([](qint64, int, qint64, int, int) { return QString(); });
+        c.setEvent(1, 7, 1000);   // 995 .. 1030
+        QVERIFY(!c.edgeReached(1000, -1));
+        QVERIFY(c.edgeReached(995.2, -1));   // within a quarter second of the start
+        QVERIFY(c.edgeReached(990, -1));
+        QVERIFY(!c.edgeReached(995.2, 1));
+        QVERIFY(c.edgeReached(1030, 1));
+        QVERIFY(!c.edgeReached(1029, 1));
+        c.keepPlaying();
+        QVERIFY(!c.edgeReached(1100, 1));
+        QVERIFY(c.edgeReached(995, -1));
+        c.clear();
+        QVERIFY(!c.edgeReached(0, -1));
+    }
+
+    // A recorder's stream ends at each window (backwards) or recording file (forwards): play on
+    // from where it got to, once per place — a second end there means nothing more that way.
+    void aStreamThatEndsReopensWhereItGotTo()
+    {
+        EventClip c;
+        c.setClipResolver([](qint64, int, qint64, int, int) { return QString(); });
+        c.setEvent(1, 7, 1000);   // 995 .. 1030
+        QCOMPARE(c.reopenAfterEnd(1010, -1, -1), 1010.0);
+        QCOMPARE(c.reopenAfterEnd(1010, -1, 1010), -1.0);      // ended there again
+        QCOMPARE(c.reopenAfterEnd(1009.6, -1, 1010), -1.0);      // within half a second
+        QCOMPARE(c.reopenAfterEnd(1004, -1, 1010), 1004.0);    // got further back
+        QCOMPARE(c.reopenAfterEnd(995.8, -1, -1), -1.0);       // at the window's start
+        QCOMPARE(c.reopenAfterEnd(1010, 1, -1), 1011.0);       // forwards: the next second
+        QCOMPARE(c.reopenAfterEnd(1011.2, 1, 1011), -1.0);
+        QCOMPARE(c.reopenAfterEnd(1029.5, 1, -1), -1.0);       // at the window's end
+        c.keepPlaying();
+        QCOMPARE(c.reopenAfterEnd(1040, 1, -1), 1041.0);
+        c.clear();
+        QCOMPARE(c.reopenAfterEnd(1010, 1, -1), -1.0);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestEventClip)

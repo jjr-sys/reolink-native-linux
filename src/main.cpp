@@ -256,6 +256,10 @@ int main(int argc, char *argv[])
     // the feed has loaded: for checking the player without a click.
     engine.rootContext()->setContextProperty(
         QStringLiteral("eventsAutoPlay"), qEnvironmentVariableIsSet("RL_EVENTS_PLAY"));
+    // RL_EVENTS_KEYS="J,J,K": with RL_EVENTS_PLAY, those keys go to the clip player 4 s after
+    // its first picture (live-replay ticket 12): for checking speeds and reverse headless.
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("eventsKeys"), qEnvironmentVariable("RL_EVENTS_KEYS"));
     // RL_SETTINGS_CATEGORY=<key> opens Settings on a section (e.g. "highlights", "mosaics").
     engine.rootContext()->setContextProperty(
         QStringLiteral("initialSettingsCategory"), qEnvironmentVariable("RL_SETTINGS_CATEGORY"));

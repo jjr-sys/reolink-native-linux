@@ -17,9 +17,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
   slow button ½× → ¼× → 1×. On Live it replaces both the hover toolbar and Live replay's side
   rail: ↺ or ◀ start replay, and the "time behind live" line is the bar's line (its marks
   show on hover). On Playback each pane's bar drives every pane together, as the page's bar
-  (which stays) does. The Events clip player gains pause, ±10 s and seeking along the clip;
-  its speeds and reverse come next. Buttons that can't act are greyed with the reason (nothing
-  ahead of live; Frigate plays 1× forward only); Bosch and bare streams have no transport.
+  (which stays) does. The Events clip player gains pause, ±10 s and seeking along the clip,
+  and every speed both ways on a Reolink recorder's clip, as Playback: backwards (◀, « up to
+  16×, ◀½) in HD up to 4×, stopping paused at the clip's start ("Open in Playback for
+  earlier"); a Frigate clip plays forwards at any speed (¼× to 16×). J / K / L and ← / →
+  drive the clip as on Live and Playback; ↑ / ↓ still step events. Buttons that can't act are
+  greyed with the reason (nothing ahead of live; Frigate plays 1× forward only in Playback,
+  forwards only in Events); Bosch and bare streams have no transport.
   A narrow pane drops ↺ / ↻, then moves tools under ⋯. Live View gets its own sound on/off.
 
 - **Live replay.** Any Reolink recorder camera on Live View can step back from now into its

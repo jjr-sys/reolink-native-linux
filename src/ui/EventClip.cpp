@@ -93,6 +93,27 @@ double EventClip::timeAt(double fraction) const
     return double(m_from) + std::clamp(fraction, 0.0, 1.0) * double(m_to - m_from);
 }
 
+bool EventClip::edgeReached(double position, int direction) const
+{
+    if (!m_active)
+        return false;
+    if (direction < 0)
+        return position <= double(m_from) + 0.25;
+    return atEnd(position);
+}
+
+double EventClip::reopenAfterEnd(double position, int direction, double lastReopenAt) const
+{
+    if (!m_active)
+        return -1;
+    const int dir = direction < 0 ? -1 : 1;
+    if (edgeReached(position + dir, dir))
+        return -1;
+    if (lastReopenAt >= 0 && dir * (position - lastReopenAt) <= 0.5)
+        return -1;   // ended again where it reopened: nothing more that way
+    return dir < 0 ? position : position + 1;
+}
+
 double EventClip::skipFrom(double position, double secs) const
 {
     if (!m_active)

@@ -108,12 +108,13 @@ QHash<QString, Button> transport(const State &s, int step)
     if (live) {
         for (const QString &id : {kPause, kForward, kSlowForward, kFastForward, kSkipForward})
             grey(id, tr("Nothing ahead of live — press ◀ or ↺ to replay"));
+    } else if (s.page == Page::Events && s.camera == Camera::Frigate) {
+        // A downloaded clip file: any speed forwards, none backwards (ticket 12).
+        for (const QString &id : backs)
+            grey(id, tr("Frigate clips play forwards only"));
     } else if (s.camera == Camera::Frigate || s.speedLocked) {
         for (const QString &id : speeds)
             grey(id, tr("Frigate plays at 1× forward only"));
-    } else if (s.page == Page::Events) {
-        for (const QString &id : speeds)
-            grey(id, tr("Speeds and reverse on event clips: coming next (Open in Playback has them)"));
     } else if (!s.reverseAvailable) {
         for (const QString &id : backs)
             grey(id, tr("Reverse play isn't available for this camera"));
