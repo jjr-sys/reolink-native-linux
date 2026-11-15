@@ -586,6 +586,13 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
         if (f.keyFrame && f.time != 0) {
             keyTime = f.time;
             keyMicros = f.microseconds;
+            // RL_BC_LIVE_TIMES=1: log each live keyframe's camera time against this machine's
+            // clock (wayfinder/live-replay ticket 08a, measuring the live buffer's frame times).
+            static const bool traceTimes = qEnvironmentVariableIsSet("RL_BC_LIVE_TIMES");
+            if (traceTimes && m_p.startEpoch == 0)
+                qCInfo(lcCore).noquote() << "live keyframe ch" << m_p.channel << (m_p.mainStream ? "main" : "sub")
+                                         << "camera" << f.time << "us" << f.microseconds << "local ms"
+                                         << QDateTime::currentMSecsSinceEpoch();
         }
         if (keyTime != 0)
             lastTime = keyTime + quint32(qMax<qint64>(0, qint64(f.microseconds) - qint64(keyMicros)) / 1000000);
