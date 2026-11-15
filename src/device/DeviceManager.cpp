@@ -1505,16 +1505,33 @@ void DeviceManager::searchRecordings(int row, int year, int month, int day)
         searchFrigateRecordings(row, year, month, day);
         return;
     }
+    searchRecorderDay(row, year, month, day, false);
+}
+
+void DeviceManager::searchReplayDay(int row, int year, int month, int day)
+{
+    if (row >= 0 && row < m_entries.size() && m_entries.at(row).kindCaps().frigateApi) {
+        emit replayDayFailed(row, year, month, day);   // Live replay is for recorder cameras
+        return;
+    }
+    searchRecorderDay(row, year, month, day, true);
+}
+
+void DeviceManager::searchRecorderDay(int row, int year, int month, int day, bool forReplay)
+{
     auto client = clientFor(row);
     const QDate date(year, month, day);
     if (!client || !date.isValid()) {
-        emit recordingsFailed(row, tr("device not ready"));
+        if (forReplay)
+            emit replayDayFailed(row, year, month, day);
+        else
+            emit recordingsFailed(row, tr("device not ready"));
         return;
     }
     const int ch = m_entries.at(row).channel;
     const QDateTime start(date, QTime(0, 0, 0));
     const QDateTime end(date, QTime(23, 59, 59));
-    m_pending.addFuture(QtConcurrent::run([this, client, ch, row, start, end, date, year, month] {
+    m_pending.addFuture(QtConcurrent::run([this, client, ch, row, start, end, date, year, month, day, forReplay] {
         const api::BatchResult batch =
             client->call(Json::array({api::searchBody(ch, start, end, QStringLiteral("sub"))}));
         QVariantList segments;
@@ -1555,7 +1572,17 @@ void DeviceManager::searchRecordings(int row, int year, int month, int day)
         }
         QMetaObject::invokeMethod(
             this,
-            [this, row, segments, days, year, month, error, playbackOffsetSecs, haveOffset, files] {
+            [this, row, segments, days, year, month, day, forReplay, error, playbackOffsetSecs,
+             haveOffset, files] {
+                // Live replay's own searches (any day, as replay moves): their own signals, so
+                // Playback's timeline and file boundaries are left alone (live-replay ticket 07).
+                if (forReplay) {
+                    if (error.isEmpty())
+                        emit replayDayFound(row, year, month, day, segments, days);
+                    else
+                        emit replayDayFailed(row, year, month, day);
+                    return;
+                }
                 // Store the offset + file boundaries BEFORE emitting recordingsFound
                 // so a QML handler that immediately calls playbackUrl() sees them.
                 if (row >= 0 && row < m_entries.size()) {

@@ -26,6 +26,7 @@
 #include "ui/SiteBudget.h"
 #include "ui/SavedSelections.h"
 #include "ui/PlaybackGroup.h"
+#include "ui/LiveReplay.h"
 #include "ui/EventCameraList.h"
 #include "ui/EventDateBar.h"
 #include "ui/CameraNoise.h"
@@ -216,6 +217,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::SiteBudget>("ReolinkApp.Core", 1, 0, "SiteBudget");
     qmlRegisterType<rl::SavedSelections>("ReolinkApp.Core", 1, 0, "SavedSelections");
     qmlRegisterType<rl::PlaybackGroup>("ReolinkApp.Core", 1, 0, "PlaybackGroup");
+    qmlRegisterType<rl::LiveReplay>("ReolinkApp.Core", 1, 0, "LiveReplay");
     qmlRegisterType<rl::EventFeed>("ReolinkApp.Core", 1, 0, "EventFeed");
     qmlRegisterType<rl::EventCameraList>("ReolinkApp.Core", 1, 0, "EventCameraList");
     qmlRegisterType<rl::EventDateBar>("ReolinkApp.Core", 1, 0, "EventDateBar");
@@ -282,6 +284,11 @@ int main(int argc, char *argv[])
     // RL_PLAYBACK_FAST=<n>: with RL_PLAYBACK_AUTOPLAY, press » (fast forward) n times once it plays.
     engine.rootContext()->setContextProperty(
         QStringLiteral("playbackFastSteps"), qEnvironmentVariableIntValue("RL_PLAYBACK_FAST"));
+    // RL_LIVE_REPLAY="<hostId:channel>;<action>": Live View maximises that camera and, 8 s
+    // later, starts Live replay: action "J" (◀ from now) or "<secs behind now>:<1|-1>"
+    // (play from there forwards or backwards), optionally ":<» presses>" (live-replay 07).
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("liveReplayTest"), qEnvironmentVariable("RL_LIVE_REPLAY"));
     engine.rootContext()->setContextProperty(QStringLiteral("startHidden"),
                                              parser.isSet(hiddenOption) && tray.available());
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,

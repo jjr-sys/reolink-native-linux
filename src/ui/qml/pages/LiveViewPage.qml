@@ -1,6 +1,7 @@
 import QtCore
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Window
 import ReolinkApp
 import ReolinkApp.Core
 
@@ -215,15 +216,95 @@ Item {
         }
     }
     readonly property bool canStep: maximizedKey !== "" && selection.count > 1
+
+    // ---- Live replay (wayfinder/live-replay ticket 07) ----------------------------------
+    // One pane at a time replays its recording; LiveReplay decides what plays where, this
+    // page carries its searches to the device and keeps its clock.
+    LiveReplay {
+        id: liveReplay
+        onSearchWanted: (y, m, d) => {
+            var row = page.replayRow();
+            if (row < 0) { liveReplay.stop(); return; }
+            Devices.searchReplayDay(row, y, m, d);
+        }
+    }
+    function replayRow() {
+        var r = rowsByKey()[liveReplay.cameraKey];
+        return r === undefined ? -1 : r;
+    }
+    Connections {
+        target: Devices
+        function onReplayDayFound(row, y, m, d, segments, monthDays) {
+            if (row === page.replayRow()) liveReplay.dayFound(y, m, d, segments, monthDays);
+        }
+        function onReplayDayFailed(row, y, m, d) {
+            if (row === page.replayRow()) liveReplay.dayFailed(y, m, d);
+        }
+    }
+    Timer {
+        interval: 1000
+        repeat: true
+        running: true
+        triggeredOnStart: true
+        onTriggered: {
+            liveReplay.now = Date.now() / 1000;
+            // Recorder-paced forwards stalls at the newest footage: back to live.
+            if (liveReplay.stalledAtEdge(Date.now())) liveReplay.stop();
+        }
+    }
+    // Leaving Live View returns every pane to live (nothing is kept).
+    onActiveChanged: if (!active) liveReplay.stop()
+    onVisibleChanged: if (!visible) liveReplay.stop()
+    // The pane the keys act on: the maximised one, else the selected one.
+    function replayPane() {
+        var k = maximizedKey !== "" ? maximizedKey : selectedKey;
+        var row = rowsByKey()[k];
+        return row === undefined ? null : paneRepeater.itemAt(row);
+    }
+    function replayKey(k) {
+        var p = replayPane();
+        return !!p && p.replayKey(k);
+    }
+    // Test hook (RL_LIVE_REPLAY, main.cpp).
+    Timer {
+        interval: 8000
+        running: page.active && typeof liveReplayTest !== "undefined" && liveReplayTest !== ""
+        onTriggered: {
+            var parts = liveReplayTest.split(";");
+            page.selectedKey = parts[0];
+            page.maximizedKey = parts[0];
+            Qt.callLater(function () {
+                var p = page.replayPane();
+                if (!p) return;
+                if (parts[1] === "J") { p.replayKey("J"); return; }
+                var a = parts[1].split(":");
+                p.replayBehind(Number(a[0]), Number(a[1]), a.length > 2 ? Number(a[2]) : 0);
+            });
+        }
+    }
+    readonly property bool replayKeysOn: active && !(Window.activeFocusItem
+                                                     && Window.activeFocusItem.cursorPosition !== undefined)
+    Shortcut { sequence: "J"; enabled: page.replayKeysOn; onActivated: page.replayKey("J") }
+    Shortcut { sequence: "K"; enabled: page.replayKeysOn && liveReplay.replaying; onActivated: page.replayKey("K") }
+    Shortcut { sequence: "L"; enabled: page.replayKeysOn && liveReplay.replaying; onActivated: page.replayKey("L") }
+
+    // ← / →: while a pane replays, 10 s back / forward; else a maximised pane steps to its
+    // neighbour, and ← on a selected grid pane starts replay 10 s back.
     Shortcut {
         sequence: "Left"
-        enabled: page.active && page.canStep
-        onActivated: page.step(-1)
+        enabled: page.active
+        onActivated: {
+            if (!liveReplay.replaying && page.canStep) page.step(-1);
+            else page.replayKey("Left");
+        }
     }
     Shortcut {
         sequence: "Right"
-        enabled: page.active && page.canStep
-        onActivated: page.step(1)
+        enabled: page.active && (page.canStep || liveReplay.replaying)
+        onActivated: {
+            if (!liveReplay.replaying && page.canStep) page.step(1);
+            else page.replayKey("Right");
+        }
     }
 
     Settings {
@@ -468,6 +549,7 @@ Item {
         // Device-backed panes (model gives live name/status/caps updates); only the selected
         // ones are shown, and only shown panes stream.
         Repeater {
+            id: paneRepeater
             model: Devices
             LivePane {
                 id: pane
@@ -522,6 +604,9 @@ Item {
                 restMain: PanePrefs.has("hd", cameraKey)
                 hdRefusal: () => page.hdRefusal(cameraKey)
                 watchPicture: true
+                replay: liveReplay
+                replayable: !Devices.isDirectAt(index)
+                maximized: isMaximized
                 onQualityChosen: (main) => {
                     if (!isMaximized)
                         PanePrefs.set("hd", cameraKey, main);

@@ -12,6 +12,10 @@ _Avoid_: recorded playback
 A live stream using a fallback transport after its preferred transport fails; the picture may be less reliable even at the same resolution.
 _Avoid_: SD (when referring to transport fallback)
 
+**Live replay**:
+One Live View pane stepping back from now into its recorder camera's recording, across days as far back as storage holds, with Playback's controls on a side rail and a "time behind live" slider; its live stream stops meanwhile. "● Live", leaving Live View, or playing forwards into the recorder's newest footage returns it to live. One pane at a time.
+_Avoid_: timeshift, instant replay
+
 ## Camera positions and tours
 
 **Camera preset**:

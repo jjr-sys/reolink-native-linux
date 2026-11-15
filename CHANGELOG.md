@@ -10,6 +10,20 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **Live replay.** Any Reolink recorder camera on Live View can step back from now into its
+  recording without leaving the page. Hover a pane (or maximise it) for a side rail with
+  Playback's controls: ◀ (or J) plays backwards from the newest footage, ↺ (or ← on a grid
+  pane) goes 10 s back and plays on, and the same fast and slow speeds as Playback, in HD up
+  to 4× on a maximised pane. A "time behind live" slider along the bottom reaches anywhere in
+  the recorder's storage on a stretched scale (now · 1 min · 10 min · 1 h · 1 day · 1 week ·
+  oldest), with the recordings marked along it; dragging shows the moment and how far behind
+  live it is, and the pane plays from there when you let go. While a pane replays it has an
+  amber border, shows the recording's date and time and how far behind live it is, and its
+  live stream stops. Replay carries on across midnight and into earlier days, pausing only at
+  the oldest recording. "● Live" returns to live, and so does playing forwards into the
+  recorder's newest footage (a minute or so behind; the gap to true live comes with the live
+  buffer). One pane replays at a time; leaving Live View returns it to live.
+
 - **Fast forward in HD, and one speed ladder both ways.** An HD pane now stays HD at 2× and 4×
   forwards too, as it does backwards. Above 1× the recorder sends its HD stream as keyframes
   only, so the app fetches about 10 s of it ahead of the playhead at a time and plays it at

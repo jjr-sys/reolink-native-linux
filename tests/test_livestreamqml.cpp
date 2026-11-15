@@ -1,8 +1,10 @@
 #include "core/Database.h"
 #include "device/BoschTourController.h"
 #include "media/LiveStream.h"
+#include "media/PlaybackSession.h"
 #include "media/TalkSession.h"
 #include "ui/FisheyeLens.h"
+#include "ui/LiveReplay.h"
 
 #include <QGuiApplication>
 #include <QQmlComponent>
@@ -49,6 +51,10 @@ private slots:
         qmlRegisterType<LiveStream>("ReolinkApp.Core", 1, 0, "LiveStream");
         qmlRegisterType<StreamPlayer>("ReolinkApp.Core", 1, 0, "StreamPlayer");
         qmlRegisterType<TalkSession>("ReolinkApp.Core", 1, 0, "TalkSession");
+        // A Live pane carries Live replay, which plays through Playback's pane (ticket 07).
+        qmlRegisterType<PlaybackSession>("ReolinkApp.Core", 1, 0, "PlaybackSession");
+        qmlRegisterType<PlaybackGroup>("ReolinkApp.Core", 1, 0, "PlaybackGroup");
+        qmlRegisterType<LiveReplay>("ReolinkApp.Core", 1, 0, "LiveReplay");
         qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", m_devices.get());
         qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", m_bosch.get());
         qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(RL_QML_SOURCE_DIR "/Theme.qml")),

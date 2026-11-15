@@ -169,6 +169,9 @@ Rectangle {
     signal reverseEnded()
     // HD fast forward found nothing ahead: a gap, the day's end, the newest footage (ticket 09).
     signal forwardEnded()
+    // Report the end of any forward stream with nothing next (Live replay carries on across
+    // days and returns to live, live-replay ticket 07), not only HD fast forward's.
+    property bool reportForwardEnd: false
     // HD in windows can't keep up (the link or the decoding; forwards also a window refused near
     // now): this pane plays SD until the user's next play, jump or change of direction
     // (live-replay tickets 06, 09). PlaybackSession decides when that holds HD back.
@@ -299,7 +302,8 @@ Rectangle {
                 }
                 // HD fast forward runs until nothing is ahead (live-replay ticket 09): the page
                 // goes on to the next recording, or stops at the day's end.
-                if (session.route === PlaybackSession.BaichuanForwardMain && !root.stillMode
+                if ((session.route === PlaybackSession.BaichuanForwardMain || root.reportForwardEnd)
+                    && !root.stillMode
                     && !root.covered(root.playheadSecs + 1)) {
                     root.forwardEnded();
                     return;

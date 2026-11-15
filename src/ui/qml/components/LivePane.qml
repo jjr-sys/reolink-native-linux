@@ -121,6 +121,15 @@ Rectangle {
     property var hdRefusal: null
     // Watch for a stream that opens but shows no picture, and retry it (LiveStream).
     property bool watchPicture: false
+    // Live replay (wayfinder/live-replay ticket 07): the page's one LiveReplay, and whether
+    // this camera can replay (a Reolink recorder camera). While it replays, the live stream
+    // stops and its recording plays over the picture (LiveReplayControls).
+    property LiveReplay replay: null
+    property bool replayable: false
+    property bool maximized: false
+    readonly property bool replaying: replayControls.replaying
+    function replayKey(k) { return replayControls.key(k); }
+    function replayBehind(secs, dir, fast) { replayControls.playBehind(secs, dir, fast); }
 
     // Mosaic panes can be Normal or Large (about 1.5× the area, from the packer).
     property bool showLarge: false
@@ -150,6 +159,7 @@ Rectangle {
     // is swapped, the pane is hidden by a layout change, or the page is left —
     // the camera's speaker must never be left open behind the user's back.
     onDeviceRowChanged: {
+        if (replaying) replay.stop();   // another camera: back to live
         talk.stop(); ptzOpen = false; boschPtzOpen = false;
         if (boschTourOwnedHere && BoschTour.selectionTourMode)
             BoschTour.endSelectionTour();
@@ -172,6 +182,7 @@ Rectangle {
     }
     onVisibleChanged: {
         if (!visible) talk.stop();
+        if (!visible && replaying) replay.stop();
         if (visible && pageActive && isBoschFeed) BoschTour.refreshSceneMode();
     }
     onPageActiveChanged: {
@@ -191,7 +202,7 @@ Rectangle {
         devices: Devices
         camera: root.cameraIdentity
         mainStream: root.effectiveMain
-        active: root.pageActive
+        active: root.pageActive && !root.replaying
         viewVisible: root.visible
         watchPicture: root.watchPicture
         videoSink: video.videoSink
@@ -695,9 +706,31 @@ Rectangle {
     // ---- Floating toolbar (hover) -----------------------------------------
     HoverHandler { id: paneHover }
 
+    LiveReplayControls {
+        id: replayControls
+        anchors.fill: videoArea
+        z: 30
+        replay: root.replay
+        cameraKey: root.cameraKey
+        deviceRow: root.deviceRow
+        replayable: !!root.replay && root.replayable && root.hasSource && !root.offline
+        hovered: paneHover.hovered
+        maximized: root.maximized
+        selected: root.selected
+        audioAllowed: root.audioAllowed
+        hd: root.effectiveMain
+        viewRotation: root.viewRotation
+        fisheyeLens: root.fisheyeLens
+        fisheyeMode: root.fisheyeMode
+        hideRail: root.ptzOpen || root.boschPtzOpen
+        highlightColour: root.highlightLit && root.highlight ? root.highlight.colour : "transparent"
+        onClicked: root.clicked(root.deviceRow)
+        onDoubleClicked: root.toggleMaximize(root.deviceRow)
+    }
+
     Rectangle {
         id: toolbar
-        visible: root.hasSource && (paneHover.hovered || root.ptzOpen || root.boschPtzOpen)
+        visible: root.hasSource && !root.replaying && (paneHover.hovered || root.ptzOpen || root.boschPtzOpen)
         anchors.bottom: videoArea.bottom
         anchors.horizontalCenter: videoArea.horizontalCenter
         anchors.bottomMargin: 8

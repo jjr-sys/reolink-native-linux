@@ -246,6 +246,9 @@ public:
     // {start,end,type,name} where start/end are seconds into the day), and build
     // a playable URL for a recording file handle.
     Q_INVOKABLE void searchRecordings(int row, int year, int month, int day);
+    // The same search for Live replay (wayfinder/live-replay ticket 07): answered with
+    // replayDayFound / replayDayFailed, leaving Playback's results alone.
+    Q_INVOKABLE void searchReplayDay(int row, int year, int month, int day);
     // Playable HTTP-FLV URL for a recording starting at startEpoch (Unix seconds).
     Q_INVOKABLE QString playbackUrl(int row, qint64 startEpoch, bool mainStream = false);
 
@@ -348,6 +351,9 @@ signals:
     void recordingsFound(int row, const QVariantList &segments);
     void recordingDaysFound(int row, int year, int month, const QVariantList &days);
     void recordingsFailed(int row, const QString &error);
+    void replayDayFound(int row, int year, int month, int day, const QVariantList &segments,
+                        const QVariantList &monthDays);
+    void replayDayFailed(int row, int year, int month, int day);
     void settingsLoaded(int row, const QVariantMap &values);
     void settingsFailed(int row, const QString &error);
     void settingApplied(int row, const QString &command, bool ok, const QString &error);
@@ -445,6 +451,7 @@ private:
     void warmPushCache();   // fetch each camera's push state once, staggered
     void applyConnectivity(qint64 hostId, bool transportOk, const QHash<int, bool> &chanOnline);
     // Shared body of startBaichuanPlayback/startBaichuanLive (startEpoch<=0 = live).
+    void searchRecorderDay(int row, int year, int month, int day, bool forReplay);
     void startBaichuan(int row, qint64 startEpoch, rl::StreamPlayer *player, bool mainStream,
                        bool reverse = false, bool forwardWindows = false);
     void applyValidation(qint64 hostId, const Validation &v);
