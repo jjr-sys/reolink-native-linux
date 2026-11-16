@@ -1761,6 +1761,41 @@ void DeviceManager::startBaichuanLive(int row, StreamPlayer *player, bool mainSt
     startBaichuan(row, /*startEpoch=*/0, player, mainStream);
 }
 
+namespace {
+QString liveBufferKey(qint64 hostId, int channel) { return QStringLiteral("%1:%2").arg(hostId).arg(channel); }
+} // namespace
+
+std::shared_ptr<LiveBuffer> DeviceManager::liveBuffer(int row)
+{
+    if (row < 0 || row >= m_entries.size() || isDirectAt(row))
+        return {};
+    const Entry &e = m_entries.at(row);
+    if (!m_liveBufferLog.isActive()) {
+        m_liveBufferLog.setInterval(60000);
+        connect(&m_liveBufferLog, &QTimer::timeout, this, [this] {
+            for (int r = 0; r < m_entries.size(); ++r) {
+                const auto b = findLiveBuffer(r);
+                if (!b || b->empty())
+                    continue;
+                qCInfo(lcCore).noquote() << "live buffer" << m_entries.at(r).rec.name << "/"
+                    << m_entries.at(r).chanName << ":" << (b->newestMs() - b->oldestMs()) / 1000
+                    << "s in" << b->runs() << "run(s)," << b->bytes() / 1000000 << "MB; all"
+                    << m_liveBuffers.bytes() / 1000000 << "MB";
+            }
+        });
+        m_liveBufferLog.start();
+    }
+    return m_liveBuffers.buffer(liveBufferKey(e.rec.id, e.channel));
+}
+
+std::shared_ptr<LiveBuffer> DeviceManager::findLiveBuffer(int row) const
+{
+    if (row < 0 || row >= m_entries.size())
+        return {};
+    const Entry &e = m_entries.at(row);
+    return m_liveBuffers.find(liveBufferKey(e.rec.id, e.channel));
+}
+
 bool DeviceManager::seekBaichuanPlayback(int row, qint64 startEpoch)
 {
     if (row != m_playbackRow)

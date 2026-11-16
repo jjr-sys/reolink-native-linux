@@ -22,6 +22,7 @@
 #include <thread>
 
 namespace rl {
+class LiveBuffer;
 
 class AudioPlayback;
 
@@ -116,6 +117,10 @@ public:
         // HD fast forward: windows of the main stream the player paces by the frames'
         // recording times (media/ReversePlay.h ForwardPacer). Fixed for the session.
         bool forwardWindows = false;
+        // Live: every video packet also goes to the camera's live buffer, stamped with the
+        // camera's clock (wayfinder/live-replay ticket 08b). Fixed for the session.
+        std::shared_ptr<LiveBuffer> liveBuffer;
+        bool liveBufferMain = false;
         std::atomic<int> holdW{0}, holdH{0};
         std::atomic<bool> holdFisheye{false};
         std::atomic<int> playoutFrames{0};
@@ -202,6 +207,13 @@ public:
     void setReversePlayback(bool on) { m_reverse = on; }
     // The next start() plays forwards in windows (wayfinder/live-replay ticket 09).
     void setForwardWindows(bool on) { m_forwardWindows = on; }
+    // The next start() also keeps the stream's frames in this live buffer (`main`: the HD
+    // stream); null for none (wayfinder/live-replay ticket 08b).
+    void setLiveBuffer(std::shared_ptr<LiveBuffer> buffer, bool main)
+    {
+        m_liveBuffer = std::move(buffer);
+        m_liveBufferMain = main;
+    }
     QSize holdPaneSize() const { return m_holdPane; }
     void setHoldPaneSize(const QSize &size);
     bool holdFisheye() const { return m_holdFisheye; }
@@ -328,6 +340,8 @@ private:
     std::shared_ptr<std::atomic<double>> m_speed = std::make_shared<std::atomic<double>>(1.0);
     bool m_reverse = false;
     bool m_forwardWindows = false;
+    std::shared_ptr<LiveBuffer> m_liveBuffer;
+    bool m_liveBufferMain = false;
     QSize m_holdPane;
     bool m_holdFisheye = false;
     bool m_linkTooSlow = false;

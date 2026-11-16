@@ -619,16 +619,16 @@ void BaichuanClient::pumpMedia(QTcpSocket &sock, const QByteArray &aesKey, quint
                     QThread::msleep(static_cast<unsigned long>(qMin<qint64>(wait, 50)));
             }
         }
-        if (paceLive && (f.microseconds != 0 || livePacer.hasAnchor())) {
-            livePacer.push(f.annexB, f.microseconds,
-                           liveClock.nsecsElapsed() / 1000, f.keyFrame);
-        } else if (pace && keyTime != 0) {
-            // Recorded playback: tag the frame with its recording time for the playhead.
-            const qint64 sinceKeyUs = qMax<qint64>(0, qint64(f.microseconds) - qint64(keyMicros));
-            pushAnnexB(frametime::tag(f.annexB, f.codec, qint64(keyTime) * 1000 + sinceKeyUs / 1000));
-        } else {
-            pushAnnexB(f.annexB);
-        }
+        // Each frame tagged with its camera time (keyframe time + the frame clock since): the
+        // playhead in playback, the live buffer's stamp on live (wayfinder/live-replay 08b).
+        const qint64 sinceKeyUs = qMax<qint64>(0, qint64(f.microseconds) - qint64(keyMicros));
+        const QByteArray au = keyTime != 0
+            ? frametime::tag(f.annexB, f.codec, qint64(keyTime) * 1000 + sinceKeyUs / 1000)
+            : f.annexB;
+        if (paceLive && (f.microseconds != 0 || livePacer.hasAnchor()))
+            livePacer.push(au, f.microseconds, liveClock.nsecsElapsed() / 1000, f.keyFrame);
+        else
+            pushAnnexB(au);
     };
 
     auto releaseDueLiveFrame = [&]() {

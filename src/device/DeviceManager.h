@@ -13,6 +13,7 @@
 // Not forward-declared on purpose — see the note by the other forward
 // declarations below.
 #include "media/StreamPlayer.h"
+#include "media/LiveBuffer.h"
 #include "media/TalkSession.h"
 
 #include <QAbstractListModel>
@@ -270,6 +271,11 @@ public:
     // allows ~1 concurrent Baichuan session; callers fall back to RTSP on error.
     Q_INVOKABLE void startBaichuanLive(int row, rl::StreamPlayer *player,
                                        bool mainStream = true);
+    // The camera's live buffer (wayfinder/live-replay ticket 08b): its last 5 minutes of live
+    // frames, kept while its Live pane streams; null for a camera with no recorder behind it
+    // (Frigate, bare streams). All buffers share LiveBufferPool's cap.
+    std::shared_ptr<LiveBuffer> liveBuffer(int row);
+    std::shared_ptr<LiveBuffer> findLiveBuffer(int row) const;
     // Seek the active Baichuan playback (same row) to a new instant in place — no
     // reconnect. Returns false if there's no live session for `row` (caller should
     // then startBaichuanPlayback instead).
@@ -465,6 +471,8 @@ private:
     QFutureSynchronizer<void> m_pending; // drains in-flight validations at teardown
 
     QTimer m_pollTimer;
+    LiveBufferPool m_liveBuffers;
+    QTimer m_liveBufferLog;   // a line a minute: what each live buffer holds
     // Frigate hosts: the cameras the last validation listed, and when the poll last re-read
     // the list (epoch secs), so a camera added or removed on the server shows up by itself.
     QHash<qint64, QStringList> m_frigateListed;

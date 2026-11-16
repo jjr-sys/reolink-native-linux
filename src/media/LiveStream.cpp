@@ -85,6 +85,8 @@ public:
         const int row = exactRow(camera);
         if (row < 0)
             return;
+        // A recorder camera's live frames also go to its live buffer (live-replay ticket 08b).
+        player.setLiveBuffer(m_devices->liveBuffer(row), main);
         if (mode != Mode::Url) {
             player.setLoop(false);
             m_devices->startBaichuanLive(row, &player, mode == Mode::BaichuanMain);

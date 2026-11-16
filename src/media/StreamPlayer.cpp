@@ -1,6 +1,7 @@
 #include "StreamPlayer.h"
 #include "core/Backoff.h"
 #include "media/FrameTimeSei.h"
+#include "media/LiveBuffer.h"
 #include "media/ReversePlay.h"
 #include "media/HttpAuth.h"
 #include "media/LiveUrl.h"
@@ -225,6 +226,39 @@ void postTooSlow(const std::shared_ptr<Session> &s)
     QMetaObject::invokeMethod(p, [p, s] {
         p->applyTooSlowFromWorker(s);
     }, Qt::QueuedConnection);
+}
+
+// A live video packet into the camera's live buffer (wayfinder/live-replay ticket 08b),
+// stamped with the camera's clock: the frame-time SEI the Baichuan client puts on its frames,
+// else RTSP's RTCP wall clock (ticket 08a). Unstamped frames (before RTSP's first sender
+// report) are left out. A keyframe gets the stream's parameter sets in front if it lacks them.
+void bufferLive(Session &s, const AVFormatContext *fmt, const AVStream *stream, const AVPacket *packet)
+{
+    const AVCodecID id = stream->codecpar->codec_id;
+    const BcMediaParser::Codec codec = id == AV_CODEC_ID_H264 ? BcMediaParser::Codec::H264
+                                     : id == AV_CODEC_ID_HEVC ? BcMediaParser::Codec::H265
+                                                              : BcMediaParser::Codec::Unknown;
+    if (codec == BcMediaParser::Codec::Unknown || packet->size <= 0)
+        return;
+    reverse::Frame f;
+    f.key = packet->flags & AV_PKT_FLAG_KEY;
+    f.codec = codec;
+    f.annexB = QByteArray(reinterpret_cast<const char *>(packet->data), packet->size);
+    f.epochMs = frametime::find(f.annexB, codec);
+    if (f.epochMs < 0 && packet->pts != AV_NOPTS_VALUE) {
+        const qint64 first = stream->start_time != AV_NOPTS_VALUE ? stream->start_time : 0;
+        f.epochMs = livebuffer::rtcpEpochMs(fmt->start_time_realtime == AV_NOPTS_VALUE ? 0
+                                                                                      : fmt->start_time_realtime,
+                                            packet->pts - first, stream->time_base.num,
+                                            stream->time_base.den);
+    }
+    if (f.epochMs < 0)
+        return;
+    if (f.key && stream->codecpar->extradata_size > 0)
+        f.annexB = livebuffer::withParameterSets(
+            f.annexB, QByteArray(reinterpret_cast<const char *>(stream->codecpar->extradata),
+                                 stream->codecpar->extradata_size), codec);
+    s.liveBuffer->push(f, s.liveBufferMain);
 }
 
 // The recording time a frame was tagged with (media/FrameTimeSei.h), or -1.
@@ -1173,6 +1207,8 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
         syncRecording();
         if (recorder.active())
             recorder.write(packet); // stream-copy before the packet is consumed
+        if (s->liveBuffer)
+            bufferLive(*s, fmt, stream, packet);
         const auto pipelineStart = perfDiagnosticsEnabled
             ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         const qint64 decodeStartUs = av_gettime_relative();
@@ -1772,6 +1808,10 @@ void StreamPlayer::start()
     s->smoothing.store(m_smoothing);
     s->reverse = m_reverse;
     s->forwardWindows = m_forwardWindows;
+    s->liveBuffer = m_liveBuffer;
+    s->liveBufferMain = m_liveBufferMain;
+    if (s->liveBuffer)
+        s->liveBuffer->breakRun();   // a new connection: a new run (from its keyframe)
     ++m_sessionId;
     s->holdW.store(m_holdPane.width());
     s->holdH.store(m_holdPane.height());
