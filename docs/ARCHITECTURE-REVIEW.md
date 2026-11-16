@@ -453,6 +453,17 @@ rows in the list at their place by time (`take`, `insertSorted`).
 
 Revert: the review-fix commit, then `ee7ac4d`, then `490a4a6`.
 
+### Leftover: test hooks in one object (`a004f67`, `6a8591c`)
+
+`TestHooks` (`src/ui/TestHooks.{h,cpp}`, the `TestHooks` QML singleton) reads the 17 `RL_*`
+variables QML used once, with their documentation; it replaces 17 context properties in
+`main.cpp` and the `typeof x !== "undefined"` guards. `startHidden` (a real option) and the
+hooks C++ reads stay where they are. Behaviour unchanged (each variable read the same way;
+checked on screen with the Events keys, Playback autoplay at a time, and Live replay). Rest of
+wayfinder/architecture ticket 06: settings commands → ticket 08; DetectionHub not yet.
+
+Revert: `6a8591c`, then `a004f67`.
+
 ### Not built
 
 - **3c recorder media module:** day search built (above); DON'T for stream opening (one
