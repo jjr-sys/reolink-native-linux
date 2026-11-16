@@ -301,7 +301,8 @@ int main(int argc, char *argv[])
     // (play from there forwards or backwards), optionally ":<» presses>" (live-replay 07);
     // optionally ";<secs>": ● Live that many seconds after replay starts (live-replay 08d);
     // optionally ";<key>,<key>": with the grid not maximised, those panes press J 2 s after
-    // replay starts — joining it (live-replay 15b; "<secs>" may be empty).
+    // replay starts — joining it (live-replay 15b; "<secs>" may be empty); optionally
+    // ";<key>@<secs>": maximise that camera then, and back to the grid 5 s later.
     engine.rootContext()->setContextProperty(
         QStringLiteral("liveReplayTest"), qEnvironmentVariable("RL_LIVE_REPLAY"));
     engine.rootContext()->setContextProperty(QStringLiteral("startHidden"),

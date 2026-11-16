@@ -192,6 +192,10 @@ void LiveReplay::start(const QString &cameraKey)
 {
     if (cameraKey.isEmpty() || cameraKey == m_lead)
         return;
+    if (m_books.contains(cameraKey)) {   // already in step with the others: it leads now
+        setLead(cameraKey);
+        return;
+    }
     if (m_lead.isEmpty())
         reset();
     else
@@ -286,12 +290,30 @@ void LiveReplay::leadChanged()
 // the first replaying camera that has (Playback's frameDriverSecs).
 QString LiveReplay::frameDriver() const
 {
-    if (covers(m_lead, m_playhead))
+    auto playing = [this](const QString &k) {
+        return m_books.value(k).shown && covers(k, m_playhead);
+    };
+    if (playing(m_lead))
         return m_lead;
     for (const QString &k : m_keys)
-        if (k != m_lead && covers(k, m_playhead))
+        if (k != m_lead && playing(k))
             return k;
     return m_lead;
+}
+
+void LiveReplay::setShown(const QString &cameraKey, bool shown)
+{
+    const auto it = m_books.find(cameraKey);
+    if (it != m_books.end())
+        it.value().shown = shown;
+}
+
+bool LiveReplay::anyShown() const
+{
+    for (const Book &b : m_books)
+        if (b.shown)
+            return true;
+    return false;
 }
 
 void LiveReplay::want(const QString &key, const QDate &day, bool urgent)

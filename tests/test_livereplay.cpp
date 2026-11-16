@@ -954,6 +954,48 @@ private slots:
         QCOMPARE(play.count(), 1);
         QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 13, 1, 30));
     }
+    // A hidden pane (another maximised) plays nothing: its frames can't move the playhead, so
+    // the frame driver passes over it (ticket 15b).
+    void aHiddenPaneDoesntDriveThePlayhead()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 7200}});
+        r.start(QStringLiteral("5:0"));
+        r.join(QStringLiteral("1:6"));
+        r.join(QStringLiteral("1:2"));
+        rec.answerAll();
+        r.dayFound(QStringLiteral("1:6"), 2026, 11, 15, segs({{28800, 32400}}), {});
+        r.dayFound(QStringLiteral("1:2"), 2026, 11, 15, segs({{28800, 32400}}), {});
+        r.setLead(QStringLiteral("1:6"));
+        r.playFrom(at(2026, 11, 15, 8, 30), 1);
+        r.setLead(QStringLiteral("5:0"));                 // no footage at 08:30
+        QCOMPARE(r.frameDriver(), QStringLiteral("1:6"));
+        r.setShown(QStringLiteral("1:6"), false);
+        QCOMPARE(r.frameDriver(), QStringLiteral("1:2"));
+        QVERIFY(r.anyShown());
+        r.setShown(QStringLiteral("1:2"), false);
+        r.setShown(QStringLiteral("5:0"), false);
+        QVERIFY(!r.anyShown());
+    }
+    // start() on a camera already in the replay makes it the lead; it doesn't restart from now.
+    void startOnAJoinedCameraLeadsInstead()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 7200}});
+        r.start(QStringLiteral("5:0"));
+        r.join(QStringLiteral("1:6"));
+        rec.answerAll();
+        r.playFrom(at(2026, 11, 15, 1, 30), 1);
+        r.start(QStringLiteral("1:6"));
+        QCOMPARE(r.cameraKeys(), (QStringList{"5:0", "1:6"}));
+        QCOMPARE(r.cameraKey(), QStringLiteral("1:6"));
+        QCOMPARE(r.playhead(), at(2026, 11, 15, 1, 30));
+        QCOMPARE(r.maxCameras(), 4);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestLiveReplay)

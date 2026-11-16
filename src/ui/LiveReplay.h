@@ -39,6 +39,7 @@ class LiveReplay : public QObject
     Q_PROPERTY(bool replaying READ replaying NOTIFY replayingChanged)
     Q_PROPERTY(QString cameraKey READ cameraKey NOTIFY replayingChanged)    // the lead
     Q_PROPERTY(QStringList cameraKeys READ cameraKeys NOTIFY replayingChanged)
+    Q_PROPERTY(int maxCameras READ maxCameras CONSTANT)
     Q_PROPERTY(double now READ now WRITE setNow NOTIFY nowChanged)
     Q_PROPERTY(double playhead READ playhead NOTIFY playheadChanged)
     Q_PROPERTY(double behind READ behind NOTIFY behindChanged)
@@ -57,6 +58,7 @@ public:
     QString cameraKey() const { return m_lead; }
     QStringList cameraKeys() const { return m_keys; }
     static constexpr int kMaxCameras = 4;
+    int maxCameras() const { return kMaxCameras; }
     double now() const { return m_now; }
     void setNow(double epochSecs);
     double playhead() const { return m_playhead; }
@@ -89,6 +91,10 @@ public:
     // Whose frames move the playhead: the lead's, or where it has no footage at the playhead,
     // the first replaying camera that has (Playback's frameDriverSecs).
     Q_INVOKABLE QString frameDriver() const;
+    // Whether a replaying camera's pane is on screen (another maximised hides it: it plays
+    // nothing, so it can't drive the playhead). anyShown: any replaying pane is.
+    Q_INVOKABLE void setShown(const QString &cameraKey, bool shown);
+    Q_INVOKABLE bool anyShown() const;
 
     // Play from `epoch`, going `direction` (1 forwards, -1 backwards): there if a recording
     // covers it, else forwards to the next recording's start (or, with nothing ahead before
@@ -184,6 +190,7 @@ private:
         int scanMonth = 0;               // year*100+month the oldest scan asked for last (0 = idle)
         double todayAnswered = -1;       // now when today's search was last answered
         bool landedInBuffer = false;     // its pane's last play opened in its buffer
+        bool shown = true;               // its pane is on screen
         bool known(const QDate &day) const { return days.contains(day); }
     };
     // A replaying camera's book (never makes one: callers hold a camera that replays).

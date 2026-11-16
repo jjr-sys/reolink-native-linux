@@ -290,7 +290,31 @@ Item {
         if (liveReplay.cameraKeys.indexOf(k) >= 0)
             liveReplay.setLead(k);
     }
-    onMaximizedKeyChanged: followLead()
+    onMaximizedKeyChanged: {
+        followLead();
+        Qt.callLater(followShown);   // after the panes have shown or hidden
+    }
+    // Every replaying pane hidden (a live camera maximised): the replay pauses where it is, and
+    // plays on from there when one is shown again.
+    property bool _pausedByHiding: false
+    function followShown() {
+        if (!liveReplay.replaying) {
+            _pausedByHiding = false;
+            return;
+        }
+        if (!liveReplay.anyShown()) {
+            if (!liveReplay.paused) {
+                _pausedByHiding = true;
+                liveReplay.paused = true;
+                console.info("live replay: every replaying pane hidden, paused");
+            }
+        } else if (_pausedByHiding) {
+            _pausedByHiding = false;
+            liveReplay.paused = false;
+            console.info("live replay: a replaying pane shown again, playing on");
+            liveReplay.playFrom(liveReplay.playhead, liveReplay.group.direction);
+        }
+    }
     onSelectedKeyChanged: followLead()
     Connections {
         target: liveReplay
@@ -309,6 +333,15 @@ Item {
         return row === undefined ? null : paneRepeater.itemAt(row);
     }
     function replayKey(k) {
+        // While a replay runs, J or ← on a selected (or maximised) pane that isn't in it joins
+        // it there (ticket 15b); the other keys act on the replay.
+        if (liveReplay.replaying && (k === "J" || k === "Left")) {
+            var own = maximizedKey !== "" ? maximizedKey : selectedKey;
+            var row = rowsByKey()[own];
+            var mine = row === undefined ? null : paneRepeater.itemAt(row);
+            if (mine && liveReplay.cameraKeys.indexOf(own) < 0)
+                return mine.replayKey(k);
+        }
         var p = replayPane();
         return !!p && p.replayKey(k);
     }
@@ -337,6 +370,13 @@ Item {
                 }
                 replayTestJoin.keys = joiners;
                 if (joiners.length > 0) replayTestJoin.start();
+                // ";<key>@<secs>": maximise that (live) camera then, and back 5 s later.
+                if (parts.length > 4 && parts[4].indexOf("@") > 0) {
+                    var m = parts[4].split("@");
+                    replayTestMax.key = m[0];
+                    replayTestMax.interval = Number(m[1]) * 1000;
+                    replayTestMax.start();
+                }
             });
         }
     }
@@ -344,9 +384,16 @@ Item {
         id: replayTestJoin
         property var keys: []
         interval: 2000
+        // As the keyboard: select the pane, press J (the page's key path).
+        onTriggered: keys.forEach(k => { page.selectedKey = k; page.replayKey("J"); })
+    }
+    Timer {
+        id: replayTestMax
+        property string key: ""
+        property bool back: false
         onTriggered: {
-            var byKey = page.rowsByKey();
-            keys.forEach(k => { var p = paneRepeater.itemAt(byKey[k]); if (p) p.replayKey("J"); });
+            page.maximizedKey = back ? "" : key;
+            if (!back) { back = true; interval = 5000; start(); }
         }
     }
     Timer {

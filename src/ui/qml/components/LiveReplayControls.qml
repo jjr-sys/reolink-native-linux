@@ -36,11 +36,12 @@ Item {
 
     // This pane's camera is one of those replaying (ticket 15a: several in step).
     readonly property bool replaying: !!replay && cameraKey !== "" && replay.cameraKeys.indexOf(cameraKey) >= 0
-    // The camera this pane was replaying (read when the pane's camera changes: that one leaves).
-    property string replayedKey: ""
-    onReplayingChanged: Qt.callLater(function () { root.replayedKey = root.replaying ? root.cameraKey : ""; })
+    onReplayingChanged: if (replaying) replay.setShown(cameraKey, visible)
+    // On screen or hidden (another pane maximised): a hidden pane plays nothing, so it can't
+    // drive the playhead (ticket 15b).
+    onVisibleChanged: if (replaying) replay.setShown(cameraKey, visible)
     // Several panes replay in step (ticket 15b).
-    readonly property bool together: replaying && replay.cameraKeys.length > 1
+    readonly property bool inStep: replaying && replay.cameraKeys.length > 1
     readonly property PlaybackGroup group: replay ? replay.group : null
     readonly property bool playing: replaying && !replay.paused
 
@@ -55,7 +56,7 @@ Item {
         if (replay.join(cameraKey))
             refreshBuffer();
         else
-            notice.show(qsTr("Up to %1 cameras replay together").arg(4));
+            notice.show(qsTr("Up to %1 cameras replay together").arg(replay.maxCameras));
         return true;
     }
     function begin() {
@@ -249,7 +250,9 @@ Item {
         var at = replay.playhead;
         if (!replay.covers(cameraKey, at))
             return;
-        var off = p.frameSecs >= 0 && Math.abs(p.dayEpoch + p.frameSecs - at) > 5;
+        // 5 s of recording time at 1×, more at speed (a fast stream's frames run ahead in bursts).
+        var off = p.frameSecs >= 0
+                  && Math.abs(p.dayEpoch + p.frameSecs - at) > 5 * Math.max(1, group.speed);
         if (!p.busy || off) {
             _stepWall = Date.now();
             p.playAtSecs(at - replay.dayEpoch, at);
@@ -258,7 +261,7 @@ Item {
     Timer {
         interval: 1000
         repeat: true
-        running: root.together && root.visible
+        running: root.inStep && root.visible
         onTriggered: root.keepInStep()
     }
 
@@ -317,6 +320,8 @@ Item {
             if (root.replay.paused && pane.item) pane.item.stopPlayback();
         }
         function onNothingEarlier() {
+            if (root.cameraKey !== root.replay.cameraKey)
+                return;   // the lead's pane says it, once (every pane stops on paused)
             root.replay.paused = true;
             if (pane.item) pane.item.stopPlayback();
             notice.show(qsTr("Nothing earlier: this is the oldest recording"));

@@ -188,8 +188,8 @@ Rectangle {
             boschPicker.close();
     }
     // Another camera on this pane: its replay ends (a model row shift keeps the camera).
-    onCameraKeyChanged: if (replay && replayControls.replayedKey !== ""
-                            && replayControls.replayedKey !== cameraKey) replay.leave(replayControls.replayedKey)
+    // A camera moving to another pane stays in the replay there; one taken out of the selection
+    // leaves it (the page, ticket 15b).
     onVisibleChanged: {
         if (!visible) talk.stop();
         // Hidden (another pane maximised) a replaying pane stays in the replay, playing nothing;
@@ -733,7 +733,7 @@ Rectangle {
         audioAllowed: root.audioAllowed && !talk.active
         // HD as live (maximised, or the pane's HD choice); with several panes replaying, a grid
         // pane plays SD and only a maximised one HD (ticket 15b: memory and recorder links).
-        hd: root.forceMain || (root.effectiveMain && !replayControls.together)
+        hd: root.effectiveMain && (!replayControls.inStep || root.forceMain)
         viewRotation: root.viewRotation
         fisheyeLens: root.fisheyeLens
         fisheyeMode: root.fisheyeMode
@@ -861,7 +861,7 @@ Rectangle {
     }
     function toggleHd() {
         // Several panes replaying: grid panes play SD (ticket 15b); HD is for a maximised pane.
-        if (replayControls.together && !root.forceMain) {
+        if (replayControls.inStep && !root.forceMain) {
             paneNotice.show(qsTr("Several cameras are replaying: maximise this one for HD"));
             return;
         }
@@ -886,7 +886,8 @@ Rectangle {
         shown: paneHover.hovered || root.ptzOpen || root.boschPtzOpen || boschPicker.visible
         toolList: root.liveTools
         hdOn: root.replaying ? replayControls.hd : root.qualityMain
-        hdTip: root.qualityMain ? qsTr("Switch to Fluent (SD)") : qsTr("Switch to Clear (HD)")
+        hdTip: (root.replaying ? replayControls.hd : root.qualityMain) ? qsTr("Switch to Fluent (SD)")
+                                                                        : qsTr("Switch to Clear (HD)")
         // Sound: the selected pane's (live) or the replay's, as Playback (1× forward only).
         soundShown: root.replaying ? replayControls.hasAudio : player.hasAudio
         soundOn: root.audioOn && (root.replaying
