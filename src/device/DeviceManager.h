@@ -8,6 +8,7 @@
 #include "EventHistory.h"
 #include "EventSwitches.h"
 #include "HostSession.h"
+#include "RecorderDays.h"
 #include "DownloadSource.h"
 #include "protocol/ReolinkApi.h"
 // Not forward-declared on purpose — see the note by the other forward
@@ -57,6 +58,7 @@ class DeviceManager : public QAbstractListModel
 {
     Q_OBJECT
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
+    Q_PROPERTY(rl::RecorderDays *days READ days CONSTANT)
 
 public:
     enum Role {
@@ -181,6 +183,20 @@ public:
                 return i;
         return rowForHostId(hostId);
     }
+    // The row of a camera key ("hostId:channel", as the pages name cameras); -1 if none.
+    int rowOfCameraKey(const QString &key) const
+    {
+        const QStringList hc = key.split(QLatin1Char(':'));
+        bool okH = false, okC = false;
+        const qint64 hostId = hc.value(0).toLongLong(&okH);
+        const int channel = hc.value(1).toInt(&okC);
+        if (hc.size() != 2 || !okH || !okC)
+            return -1;
+        for (int i = 0; i < m_entries.size(); ++i)
+            if (m_entries.at(i).rec.id == hostId && m_entries.at(i).channel == channel)
+                return i;
+        return -1;
+    }
     // A URL stream or Frigate camera: plays from liveUrl() only (no Baichuan HD path).
     Q_INVOKABLE bool isDirectAt(int row) const
     {
@@ -245,13 +261,9 @@ public:
     // the caller's cookie (no snapshotSaved toast). Silent no-op on failure.
     void captureEventThumbnail(qint64 hostId, int channel, qint64 eventId);
 
-    // Playback: search a day's recordings (emits recordingsFound with a list of
-    // {start,end,type,name} where start/end are seconds into the day), and build
-    // a playable URL for a recording file handle.
-    Q_INVOKABLE void searchRecordings(int row, int year, int month, int day);
-    // The same search for Live replay (wayfinder/live-replay ticket 07): answered with
-    // replayDayFound / replayDayFailed, leaving Playback's results alone.
-    Q_INVOKABLE void searchReplayDay(int row, int year, int month, int day);
+    // A camera's day of recordings, for Playback and Live replay: days->search(key, y, m, d)
+    // answers dayFound / dayFailed keyed by camera and dated (wayfinder/architecture 01).
+    RecorderDays *days() const { return m_days; }
     // A direct (Frigate) camera's playable URL from startEpoch (Unix seconds); "" otherwise.
     Q_INVOKABLE QString playbackUrl(int row, qint64 startEpoch);
 
@@ -358,12 +370,6 @@ signals:
                           const QString &model, const QString &problem);
     void snapshotSaved(int row, const QString &path);
     void snapshotFailed(int row, const QString &error);
-    void recordingsFound(int row, const QVariantList &segments);
-    void recordingDaysFound(int row, int year, int month, const QVariantList &days);
-    void recordingsFailed(int row, const QString &error);
-    void replayDayFound(int row, int year, int month, int day, const QVariantList &segments,
-                        const QVariantList &monthDays);
-    void replayDayFailed(int row, int year, int month, int day);
     void settingsLoaded(int row, const QVariantMap &values);
     void settingsFailed(int row, const QString &error);
     void settingApplied(int row, const QString &command, bool ok, const QString &error);
@@ -448,13 +454,11 @@ private:
     void validateAsync(qint64 hostId, const QString &newPassword = QString(),
                        bool storeNew = false);
     Validation validateFrigate(const HostRecord &rec, const QString &password);
-    void searchFrigateRecordings(int row, int year, int month, int day);
     void pollFrigate();
     int rowForHostId(qint64 hostId) const;
     void warmPushCache();   // fetch each camera's push state once, staggered
     void applyConnectivity(qint64 hostId, bool transportOk, const QHash<int, bool> &chanOnline);
     // Shared body of startBaichuanPlayback/startBaichuanLive (startEpoch<=0 = live).
-    void searchRecorderDay(int row, int year, int month, int day, bool forReplay);
     void startBaichuan(int row, qint64 startEpoch, rl::StreamPlayer *player, bool mainStream,
                        bool reverse = false, bool forwardWindows = false);
     void applyValidation(qint64 hostId, const Validation &v);
@@ -466,6 +470,7 @@ private:
     EventSwitches *m_eventSwitches;
     QVector<Entry> m_entries;
     QFutureSynchronizer<void> m_pending; // drains in-flight validations at teardown
+    RecorderDays *m_days = nullptr;      // child; goes first at teardown (its searches stop)
 
     QTimer m_pollTimer;
     std::shared_ptr<LiveBufferPool> m_liveBuffers = std::make_shared<LiveBufferPool>();

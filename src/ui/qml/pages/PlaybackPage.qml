@@ -193,6 +193,10 @@ Item {
         paneOrder: selection.paneOrder
         selectedKey: page.selectedKey
         directKeys: group.directKeys
+        // The day shown, so an answer for another day (a search still out) isn't taken.
+        readonly property string shownDate: page.selYear + "-" + page.selMonth + "-" + page.selDay
+        onShownDateChanged: setDate(page.selYear, page.selMonth, page.selDay)
+        Component.onCompleted: setDate(page.selYear, page.selMonth, page.selDay)
     }
     // A recorder that has just connected may answer its first search empty: an empty day is
     // asked again (PlaybackDay::wantSearch) as the device list changes.
@@ -204,7 +208,7 @@ Item {
             Qt.callLater(() => page.mockAnswer(key, row));
             return;
         }
-        Devices.searchRecordings(row, selYear, selMonth, selDay);
+        Devices.days.search(key, selYear, selMonth, selDay);
     }
     // Ask for every selected camera's day (the searches queue per recorder).
     function refresh() {
@@ -240,7 +244,7 @@ Item {
                     { start: 61200, end: 79200, type: "timer" }];
         var segs = base.map(s => ({ start: Math.min(86399, s.start + i * 1800),
                                     end: Math.min(86399, s.end + i * 1800), type: s.type }));
-        gotSegments(row, segs);
+        gotSegments(key, segs);
         group.setDays(key, selYear, selMonth, [1, 3, 4, 8 + i, selDay]);
     }
 
@@ -584,29 +588,32 @@ Item {
 
     Connections {
         target: Devices
-        function onRecordingsFound(row, segments) { page.gotSegments(row, segments); }
-        function onRecordingsFailed(row, error) {
-            var key = page.cameraKey(row);
-            if (!selection.contains(key))
-                return;
-            // An empty lane is the honest render of a failed search; the status says why.
-            page.gotSegments(row, []);
-            statusText.text = error;
-            // A recorder not ready yet (just started) may never change the device list:
-            // ask again in 10 s (search() keeps it to 3 tries a day).
-            searchRetry.restart();
-        }
-        function onRecordingDaysFound(row, year, month, days) {
-            var key = page.cameraKey(row);
-            if (key)
-                group.setDays(key, year, month, days);
-        }
         // A selected camera's recorder connected (its first search may have come back
         // empty): ask again for the cameras still unanswered.
         function onDataChanged() { page.searchMissing(); }
         function onRowsInserted() { page.rowsShifted(); page.searchMissing(); }
         function onRowsRemoved() { page.rowsShifted(); }
         function onModelReset() { page.scheduleMosaic(); }
+    }
+    // A camera's day, keyed and dated (wayfinder/architecture ticket 01): the month's days
+    // mark the calendar; the recordings are taken only for a pane's camera and the day shown.
+    Connections {
+        target: Devices.days
+        function onDayFound(key, y, m, d, segments, monthDays) {
+            group.setDays(key, y, m, monthDays);
+            if (day.takes(key, y, m, d))
+                page.gotSegments(key, segments);
+        }
+        function onDayFailed(key, y, m, d, error) {
+            if (!day.takes(key, y, m, d))
+                return;
+            // An empty lane is the honest render of a failed search; the status says why.
+            page.gotSegments(key, []);
+            statusText.text = error;
+            // A recorder not ready yet (just started) may never change the device list:
+            // ask again in 10 s (search() keeps it to 3 tries a day).
+            searchRetry.restart();
+        }
     }
     // Panes follow device rows: when rows shift, panes after them hide (and stop) until the
     // mosaic is rebuilt. Those playing start again at the playhead once shown.
@@ -616,8 +623,7 @@ Item {
         scheduleMosaic();
         pruneTimer.restart();
     }
-    function gotSegments(row, segments) {
-        var key = cameraKey(row);
+    function gotSegments(key, segments) {
         if (!key || !selection.contains(key))
             return;
         day.setSegments(key, segments);

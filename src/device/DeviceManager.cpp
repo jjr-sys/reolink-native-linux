@@ -91,22 +91,37 @@ DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject
     : QAbstractListModel(parent), m_db(db), m_credentials(credentials),
       m_eventSwitches(new EventSwitches(db, this))
 {
-    // The Playback page shows search results only on screen; log them so an empty page
-    // can be told apart from a failed search afterwards.
-    auto searchLabel = [this](int row) {
-        if (row < 0 || row >= m_entries.size())
-            return QStringLiteral("row %1").arg(row);
+    // A camera's day of recordings: Frigate's own API, else its Reolink recorder or camera
+    // over HTTP; none while the device isn't ready.
+    m_days = new RecorderDays([this](const QString &key) -> DaySearch {
+        const int row = rowOfCameraKey(key);
+        if (row < 0)
+            return {};
+        const Entry &e = m_entries.at(row);
+        if (e.kindCaps().frigateApi)
+            return frigateDaySearch(e.rec.addr, e.rec.port, e.serverName());
+        const auto client = clientFor(row);
+        return client ? reolinkDaySearch(client, e.channel) : DaySearch{};
+    }, this);
+    // Pages show search results only on screen; log them so an empty page can be told apart
+    // from a failed search afterwards.
+    auto searchLabel = [this](const QString &key) {
+        const int row = rowOfCameraKey(key);
+        if (row < 0)
+            return key;
         const Entry &e = m_entries.at(row);
         return QStringLiteral("%1 / %2 (ch %3)").arg(e.rec.name, e.chanName).arg(e.channel);
     };
-    connect(this, &DeviceManager::recordingsFound, this,
-            [searchLabel](int row, const QVariantList &segments) {
-                qCInfo(lcCore).noquote() << "recording search" << searchLabel(row) << ":"
+    connect(m_days, &RecorderDays::dayFound, this,
+            [searchLabel](const QString &key, int y, int m, int d, const QVariantList &segments) {
+                qCInfo(lcCore).noquote() << "recording search" << searchLabel(key)
+                                         << QDate(y, m, d).toString(Qt::ISODate) << ":"
                                          << segments.size() << "recordings";
             });
-    connect(this, &DeviceManager::recordingsFailed, this,
-            [searchLabel](int row, const QString &error) {
-                qCWarning(lcCore).noquote() << "recording search" << searchLabel(row)
+    connect(m_days, &RecorderDays::dayFailed, this,
+            [searchLabel](const QString &key, int y, int m, int d, const QString &error) {
+                qCWarning(lcCore).noquote() << "recording search" << searchLabel(key)
+                                            << QDate(y, m, d).toString(Qt::ISODate)
                                             << "failed:" << error;
             });
     const QVector<HostRecord> stored = m_db->hosts();
@@ -140,6 +155,8 @@ DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject
 
 DeviceManager::~DeviceManager()
 {
+    delete m_days;   // its searches stop first; nothing below waits on them
+    m_days = nullptr;
     for (qint64 hostId : m_pushListeners.keys())
         stopPushListener(hostId);
     qDeleteAll(m_frigateLive);
@@ -1437,148 +1454,6 @@ void DeviceManager::captureEventThumbnail(qint64 hostId, int channel, qint64 eve
     m_pending.addFuture(QtConcurrent::run([client, ch, finish] {
         QString error;
         finish(client->fetchSnapshot(ch, &error));
-    }));
-}
-
-// A Frigate camera's footage for one local day, as the same segments the Playback
-// timeline draws for an NVR, plus the days of the month that have footage.
-void DeviceManager::searchFrigateRecordings(int row, int year, int month, int day)
-{
-    const QDate date(year, month, day);
-    if (row < 0 || row >= m_entries.size() || !date.isValid()) {
-        emit recordingsFailed(row, tr("device not ready"));
-        return;
-    }
-    const Entry &e = m_entries.at(row);
-    const QString host = e.rec.addr;
-    const int port = e.rec.port;
-    const QString camera = e.serverName();
-    const QDateTime dayStart = date.startOfDay();
-    const qint64 after = dayStart.toSecsSinceEpoch();
-    const qint64 before = date.addDays(1).startOfDay().toSecsSinceEpoch();
-    const QString zone = QString::fromLatin1(QTimeZone::systemTimeZoneId());
-    m_pending.addFuture(QtConcurrent::run([this, row, host, port, camera, after, before, zone, year, month] {
-        QString error;
-        const QByteArray body =
-            frigate::httpGet(frigate::recordingsUrl(host, port, camera, after, before), 20000, &error);
-        const Json parsed = Json::parse(body.toStdString(), nullptr, false);
-        QVariantList segments;
-        if (!error.isEmpty() || parsed.is_discarded() || !parsed.is_array()) {
-            if (error.isEmpty())
-                error = tr("unexpected reply from Frigate");
-        } else {
-            for (const frigate::Recording &r : frigate::mergeRecordings(frigate::parseRecordings(parsed))) {
-                const double s = qBound<double>(0, r.start - after, 86400);
-                const double e2 = qBound<double>(s, r.end - after, 86400);
-                QVariantMap seg;
-                seg["start"] = s;
-                seg["end"] = e2;
-                seg["type"] = QStringLiteral("timer");
-                seg["startEpoch"] = r.start;
-                segments.append(seg);
-            }
-        }
-        QVariantList days;
-        QString ignored;
-        const QByteArray sumBody =
-            frigate::httpGet(frigate::summaryUrl(host, port, camera, zone), 20000, &ignored);
-        const Json sum = Json::parse(sumBody.toStdString(), nullptr, false);
-        if (!sum.is_discarded())
-            for (int d : frigate::parseRecordingDays(sum, year, month))
-                days.append(d);
-        QMetaObject::invokeMethod(
-            this,
-            [this, row, segments, days, year, month, error] {
-                if (error.isEmpty()) {
-                    emit recordingsFound(row, segments);
-                    emit recordingDaysFound(row, year, month, days);
-                } else {
-                    emit recordingsFailed(row, error);
-                }
-            },
-            Qt::QueuedConnection);
-    }));
-}
-
-void DeviceManager::searchRecordings(int row, int year, int month, int day)
-{
-    if (row >= 0 && row < m_entries.size() && m_entries.at(row).kindCaps().frigateApi) {
-        searchFrigateRecordings(row, year, month, day);
-        return;
-    }
-    searchRecorderDay(row, year, month, day, false);
-}
-
-void DeviceManager::searchReplayDay(int row, int year, int month, int day)
-{
-    if (row >= 0 && row < m_entries.size() && m_entries.at(row).kindCaps().frigateApi) {
-        emit replayDayFailed(row, year, month, day);   // Live replay is for recorder cameras
-        return;
-    }
-    searchRecorderDay(row, year, month, day, true);
-}
-
-void DeviceManager::searchRecorderDay(int row, int year, int month, int day, bool forReplay)
-{
-    auto client = clientFor(row);
-    const QDate date(year, month, day);
-    if (!client || !date.isValid()) {
-        if (forReplay)
-            emit replayDayFailed(row, year, month, day);
-        else
-            emit recordingsFailed(row, tr("device not ready"));
-        return;
-    }
-    const int ch = m_entries.at(row).channel;
-    const QDateTime start(date, QTime(0, 0, 0));
-    const QDateTime end(date, QTime(23, 59, 59));
-    m_pending.addFuture(QtConcurrent::run([this, client, ch, row, start, end, date, year, month, day, forReplay] {
-        const api::BatchResult batch =
-            client->call(Json::array({api::searchBody(ch, start, end, QStringLiteral("sub"))}));
-        QVariantList segments;
-        QVariantList days;
-        QString error;
-        if (batch.transportOk && !batch.results.isEmpty() && batch.results.first().ok) {
-            const api::SearchResult sr = api::parseSearch(batch.results.first().value);
-            for (const api::RecordingFile &f : sr.files) {
-                if (!f.start.isValid())
-                    continue;
-                const qint64 dayStart = date.startOfDay().secsTo(f.start);
-                const qint64 dayEnd = date.startOfDay().secsTo(f.end);
-                const qint64 s = qBound(qint64(0), dayStart, qint64(86400));
-                const qint64 e = qBound(s, dayEnd, qint64(86400));
-                QVariantMap seg;
-                seg["start"] = static_cast<double>(s);
-                seg["end"] = static_cast<double>(e);
-                seg["type"] = QStringLiteral("timer");
-                seg["startEpoch"] = static_cast<double>(f.start.toSecsSinceEpoch());
-                segments.append(seg);
-            }
-            for (int d : sr.recordingDays)
-                days.append(d);
-        } else {
-            error = batch.error.isEmpty() ? tr("search failed") : batch.error;
-        }
-        QMetaObject::invokeMethod(
-            this,
-            [this, row, segments, days, year, month, day, forReplay, error] {
-                // Live replay's own searches (any day, as replay moves): their own signals, so
-                // Playback's timeline is left alone (live-replay ticket 07).
-                if (forReplay) {
-                    if (error.isEmpty())
-                        emit replayDayFound(row, year, month, day, segments, days);
-                    else
-                        emit replayDayFailed(row, year, month, day);
-                    return;
-                }
-                if (error.isEmpty()) {
-                    emit recordingsFound(row, segments);
-                    emit recordingDaysFound(row, year, month, days);
-                } else {
-                    emit recordingsFailed(row, error);
-                }
-            },
-            Qt::QueuedConnection);
     }));
 }
 

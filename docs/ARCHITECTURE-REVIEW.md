@@ -353,10 +353,34 @@ rules Playback and `LiveReplay` share.
 6. Small differences noted by review: the wall-clock playhead now moves backwards from 23:59:59
    (it stuck there); EventClip's give-up count starts at the first 200 ms tick of a start.
 
+### 3c: RecorderDays, one camera's day of recordings (`9a508dc` and step b)
+
+**Module.** `RecorderDays` (`src/device/RecorderDays.{h,cpp}`): `search(key, y, m, d)` answers
+`dayFound(key, y, m, d, segments, monthDays)` / `dayFailed(key, y, m, d, error)`. Vendors are
+adapters behind a `DaySearch` (`reolinkDaySearch`: the HTTP `Search` over `ReolinkTransport`;
+`frigateDaySearch`: recordings + summary, with a cancel flag). `daySegments(files, date)` is
+the one segment rule. `DeviceManager` hands it key → search (`rowOfCameraKey`, exact) and
+owns it (`Devices.days`); the four old searches and five old signals are gone.
+
+**Decisions** (wayfinder/architecture ticket 01, with its three amendments).
+1. Keyed by camera key, not row: rows shift while a search is out. Live replay already spoke
+   keys; Playback moved to them.
+2. Always dated, and no `purpose` argument: one answer serves both pages. Playback takes it
+   only for a pane's camera and the day shown (`PlaybackDay::takes`, tested), which closes the
+   undated answer that could land on a newer day; a Live replay search can fill Playback's
+   same camera and day.
+3. The Reolink search is HTTP (the review said Baichuan): `ScriptedHttp` is its test double.
+   Frigate's adapter is tested against a local stand-in server, including cancel.
+4. Its own pool (4 workers); going cancels and waits at most 2 s (as `ClipLoader`, ticket 05).
+5. Stream opening stays in `DeviceManager` (DON'T, as decided).
+6. Behaviour unchanged on screen: Playback (two recorders + Frigate) and Live replay (from
+   now, joined) log and draw as before. Found while checking, older than this work: a Frigate
+   camera's Playback day stays empty when Playback opens at start (ticket 07).
+
 ### Not built
 
-- **3c recorder media module:** LATER, day search only (it has a second adapter in
-  `ScriptedHttp`); DON'T for stream opening (one adapter; shared with HD live).
+- **3c recorder media module:** day search built (above); DON'T for stream opening (one
+  adapter; shared with HD live).
 - **Candidate 5 one press module:** LATER, after this branch (`PaneBarRules.press`), plus the
   small fixes listed in the review (bottom-bar ⏸, dead `reverseTip`, greyed-but-lit buttons,
   refusal reasons).

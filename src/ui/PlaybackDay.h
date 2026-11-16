@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QDate>
 #include <QObject>
 #include <QStringList>
 #include <QVariantList>
@@ -44,6 +45,13 @@ public:
     Q_INVOKABLE void setSegments(const QString &key, const QVariantList &segments);
     Q_INVOKABLE void clear();
     Q_INVOKABLE bool known(const QString &key) const { return m_segments.contains(key); }
+    // The day shown; takes() is true only for an answer about one of the panes' cameras and
+    // that day (a search may answer after the day changed).
+    Q_INVOKABLE void setDate(int year, int month, int day) { m_date = QDate(year, month, day); }
+    Q_INVOKABLE bool takes(const QString &key, int year, int month, int day) const
+    {
+        return m_order.contains(key) && m_date == QDate(year, month, day);
+    }
 
     // The camera whose recordings decide where a play lands and carries on: the selected one,
     // or with a Frigate one selected (forward 1× only), the first recorder in pane order.
@@ -85,6 +93,7 @@ private:
     panesync::Pane paneFrom(const QVariantMap &m, double playhead, bool offNormal) const;
     QList<panesync::Pane> panesFrom(const QVariantList &panes, double playhead, bool offNormal) const;
 
+    QDate m_date;
     QStringList m_order;
     QString m_selected;
     QStringList m_direct;

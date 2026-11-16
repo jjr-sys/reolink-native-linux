@@ -227,20 +227,17 @@ Item {
         id: liveReplay
         // Each replaying camera searches its own recorder (ticket 15a).
         onSearchWanted: (key, y, m, d) => {
-            var row = page.rowsByKey()[key];
-            if (row === undefined) { liveReplay.leave(key); return; }   // that camera is gone
-            Devices.searchReplayDay(row, y, m, d);
+            if (page.rowsByKey()[key] === undefined) { liveReplay.leave(key); return; }   // that camera is gone
+            Devices.days.search(key, y, m, d);
         }
     }
     Connections {
-        target: Devices
-        // Answers for cameras not replaying are ignored by LiveReplay.
-        function onReplayDayFound(row, y, m, d, segments, monthDays) {
-            liveReplay.dayFound(page.cameraKey(row), y, m, d, segments, monthDays);
+        target: Devices.days
+        // Answers for cameras not replaying (or for Playback's searches) LiveReplay ignores.
+        function onDayFound(key, y, m, d, segments, monthDays) {
+            liveReplay.dayFound(key, y, m, d, segments, monthDays);
         }
-        function onReplayDayFailed(row, y, m, d) {
-            liveReplay.dayFailed(page.cameraKey(row), y, m, d);
-        }
+        function onDayFailed(key, y, m, d, error) { liveReplay.dayFailed(key, y, m, d); }
     }
     Timer {
         interval: 1000
