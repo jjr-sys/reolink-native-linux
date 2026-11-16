@@ -134,11 +134,23 @@ qint64 remuxToIndexedMp4(const QString &src, const QString &dst, QString *error)
     return (lastUs - firstUs) / 1000;
 }
 
-ClipLoader::ClipLoader(QObject *parent) : QObject(parent) {}
+ClipLoader::ClipLoader(QObject *parent) : QObject(parent)
+{
+    m_pool.setMaxThreadCount(2);   // a superseded download winds down beside the new one
+}
 
 ClipLoader::~ClipLoader()
 {
-    ++m_generation; // an in-flight worker only touches its own local files
+    ++m_generation;
+    stopDownload();
+    m_pool.waitForDone();   // stopped within ~50 ms (a remux in progress: its few MB)
+}
+
+void ClipLoader::stopDownload()
+{
+    if (m_stop)
+        m_stop->store(true);
+    m_stop.reset();
 }
 
 void ClipLoader::setState(State s)
@@ -150,6 +162,7 @@ void ClipLoader::setState(State s)
 void ClipLoader::cancel()
 {
     ++m_generation;
+    stopDownload();
     m_localUrl.clear();
     m_durationMs = 0;
     m_error.clear();
@@ -159,6 +172,7 @@ void ClipLoader::cancel()
 void ClipLoader::load(const QString &url)
 {
     const int gen = ++m_generation;
+    stopDownload();
     m_localUrl.clear();
     m_durationMs = 0;
     m_error.clear();
@@ -172,6 +186,8 @@ void ClipLoader::load(const QString &url)
     const QString raw = m_dir.filePath(QStringLiteral("raw-%1.mp4").arg(gen));
     const QString done = m_dir.filePath(QStringLiteral("clip-%1.mp4").arg(gen));
     struct Result { qint64 durationMs = -1; QString error; };
+    auto stop = std::make_shared<std::atomic<bool>>(false);
+    m_stop = stop;
     auto *watcher = new QFutureWatcher<Result>(this);
     connect(watcher, &QFutureWatcher<Result>::finished, this, [this, watcher, gen, raw, done] {
         const Result r = watcher->result();
@@ -190,10 +206,14 @@ void ClipLoader::load(const QString &url)
         m_localUrl = QUrl::fromLocalFile(done);
         setState(State::Ready);
     });
-    watcher->setFuture(QtConcurrent::run([url, raw, done]() -> Result {
+    watcher->setFuture(QtConcurrent::run(&m_pool, [url, raw, done, stop]() -> Result {
         Result r;
         QString err;
-        const QByteArray body = frigate::httpGet(url, kDownloadTimeoutMs, &err);
+        const QByteArray body = frigate::httpGet(url, kDownloadTimeoutMs, &err, stop.get());
+        if (stop->load()) {
+            r.error = QStringLiteral("cancelled");
+            return r;
+        }
         if (body.isEmpty()) {
             r.error = err.isEmpty() ? QObject::tr("the server sent an empty clip") : err;
             return r;

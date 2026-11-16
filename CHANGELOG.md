@@ -264,6 +264,11 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Fixed
 
+- **Quitting during a Frigate clip download.** Closing the app while an Events clip from
+  Frigate was downloading (for example just after Keep playing) could leave it hanging for up
+  to 90 s, or crash it. The download now stops at once when the clip player goes, or when
+  another clip replaces it.
+
 - **Frigate Keep playing shows the right time.** While the next minute of a Frigate event clip
   loaded, the clip's time showed the end of the minute before until its first picture.
 

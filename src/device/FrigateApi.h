@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 
 #include "protocol/Json.h"
 
@@ -124,8 +125,10 @@ QString latestFrameUrl(const QString &host, int port, const QString &camera);
 void setCredentials(const QString &host, int port, const QString &username,
                     const QString &password);
 
-// Blocking GET for worker threads. Empty result with `error` set on failure.
-QByteArray httpGet(const QString &url, int timeoutMs, QString *error = nullptr);
+// Blocking GET for worker threads. Empty result with `error` set on failure. When `stop` is
+// given and becomes true, the request is aborted within about 50 ms ("cancelled").
+QByteArray httpGet(const QString &url, int timeoutMs, QString *error = nullptr,
+                   const std::atomic<bool> *stop = nullptr);
 // The session cookie ("frigate_token=…") for a host whose login was registered with
 // setCredentials, signing in if needed; empty when it has no login (port 5000) or on
 // failure. Blocking, for worker threads with an event loop (QThread).

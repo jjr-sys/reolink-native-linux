@@ -348,7 +348,8 @@ void configureTls(QNetworkRequest &request)
 }
 
 QByteArray awaitReply(QNetworkReply *reply, int timeoutMs, QString *error,
-                      int *status = nullptr, QByteArray *setCookie = nullptr)
+                      int *status = nullptr, QByteArray *setCookie = nullptr,
+                      const std::atomic<bool> *stop = nullptr)
 {
     QEventLoop loop;
     QTimer timer;
@@ -356,7 +357,16 @@ QByteArray awaitReply(QNetworkReply *reply, int timeoutMs, QString *error,
     QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     timer.start(timeoutMs);
-    loop.exec();
+    QTimer stopCheck;   // the caller gave up (its owner went): stop waiting
+    if (stop) {
+        QObject::connect(&stopCheck, &QTimer::timeout, &loop, [&loop, stop] {
+            if (stop->load())
+                loop.quit();
+        });
+        stopCheck.start(50);
+    }
+    if (!stop || !stop->load())
+        loop.exec();
 
     const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     if (status)
@@ -367,7 +377,7 @@ QByteArray awaitReply(QNetworkReply *reply, int timeoutMs, QString *error,
     QByteArray body;
     if (!reply->isFinished()) {
         if (error)
-            *error = QStringLiteral("timed out");
+            *error = stop && stop->load() ? QStringLiteral("cancelled") : QStringLiteral("timed out");
         reply->abort();
     } else {
         body = reply->readAll();
@@ -541,7 +551,8 @@ void installMediaAuth()
         [](const QUrl &url) { clearSession(url); });
 }
 
-QByteArray httpGet(const QString &url, int timeoutMs, QString *error)
+QByteArray httpGet(const QString &url, int timeoutMs, QString *error,
+                   const std::atomic<bool> *stop)
 {
     QNetworkAccessManager nam; // thread-local: safe on any worker thread
     if (error)
@@ -557,7 +568,7 @@ QByteArray httpGet(const QString &url, int timeoutMs, QString *error)
             request.setRawHeader("Cookie", session);
         configureTls(request);
         int status = 0;
-        QByteArray body = awaitReply(nam.get(request), timeoutMs, error, &status);
+        QByteArray body = awaitReply(nam.get(request), timeoutMs, error, &status, nullptr, stop);
         return qMakePair(body, status);
     };
 
