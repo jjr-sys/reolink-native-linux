@@ -591,7 +591,8 @@ void EventManager::syncAllFrigateHistory()
 void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> &channelOf,
                                        const QVector<frigate::Event> &events)
 {
-    const qint64 cutoff = QDateTime::currentSecsSinceEpoch() - device::kOtherKeepSecs;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const qint64 cutoff = now - device::kOtherKeepSecs;
     device::BurstGate burst; // the live poller's gate, so a lingering person doesn't
                              // become a dozen separate rows.
     bool added = false;
@@ -611,7 +612,8 @@ void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> 
         if (!burst.admit(ev.camera, type, ev.start))
             continue;
 
-        const qint64 ts = static_cast<qint64>(ev.start);
+        // Never ahead of our clock (as onDetection), so a live report of it meets this row.
+        const qint64 ts = qMin(static_cast<qint64>(ev.start), now);
         // Skip anything that already covers this moment — a rerun of the sync, or
         // the live poller having already caught it — but if that existing row is
         // still missing its thumbnail (e.g. it was filed before this sync could

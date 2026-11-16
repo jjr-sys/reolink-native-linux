@@ -165,7 +165,18 @@ private slots:
         QCOMPARE(db.recentEvents(10, {}, {9}).size(), 2);   // 50 s on: a new event
         QCOMPARE(events.unread(), unread + 1);
 
-        // Reolink: two detections in a row, no source time, both filed (as before).
+        // Frigate's clock ahead of ours: history files it at our now, never in the future, so
+        // the live report (also capped at now) meets it.
+        events.applyFrigateHistory(9, {{QStringLiteral("drive"), 2}},
+            {{QStringLiteral("e9"), QStringLiteral("drive"), QStringLiteral("car"), double(now + 600)}});
+        const QVector<EventRecord> ahead = db.recentEvents(10, {}, {9});
+        QCOMPARE(ahead.size(), 3);
+        QVERIFY(ahead.first().timestamp <= QDateTime::currentSecsSinceEpoch());
+        devices.reportDetection(9, 2, QStringLiteral("vehicle"), QStringLiteral("Drive"), now + 600);
+        QCOMPARE(db.recentEvents(10, {}, {9}).size(), 3);
+
+        // Reolink: two detections in a row, no source time, both filed (as before; the live
+        // gate that makes one row per burst sits before reportDetection and is unchanged).
         devices.reportDetection(7, 1, QStringLiteral("person"), QStringLiteral("Gate"));
         devices.reportDetection(7, 1, QStringLiteral("person"), QStringLiteral("Gate"));
         QCOMPARE(db.recentEvents(10, {}, {7}).size(), 2);
