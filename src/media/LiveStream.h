@@ -22,6 +22,9 @@ class LiveStream : public QObject, public QQmlParserStatus
     Q_PROPERTY(bool viewVisible READ viewVisible WRITE setViewVisible NOTIFY viewVisibleChanged)
     Q_PROPERTY(QVideoSink *videoSink READ videoSink WRITE setVideoSink NOTIFY videoSinkChanged)
     Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
+    // While the pane replays (wayfinder/live-replay ticket 08b): stay connected, keep filling
+    // the camera's live buffer, decode nothing; the picture watch rests meanwhile.
+    Q_PROPERTY(bool receiveOnly READ receiveOnly WRITE setReceiveOnly NOTIFY receiveOnlyChanged)
     Q_PROPERTY(rl::StreamPlayer::State state READ state NOTIFY stateChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY stateChanged)
     Q_PROPERTY(bool degraded READ degraded NOTIFY degradedChanged)
@@ -61,6 +64,8 @@ public:
     void setVideoSink(QVideoSink *sink) { m_transport->player.setVideoSink(sink); }
     bool muted() const { return m_transport->player.muted(); }
     void setMuted(bool muted);
+    bool receiveOnly() const { return m_receiveOnly; }
+    void setReceiveOnly(bool on);
     StreamPlayer::State state() const { return m_state; }
     QString errorString() const { return m_error; }
     bool degraded() const { return m_degraded; }
@@ -85,6 +90,7 @@ signals:
     void viewVisibleChanged();
     void videoSinkChanged();
     void mutedChanged();
+    void receiveOnlyChanged();
     void stateChanged();
     void degradedChanged();
     void recoveringChanged();
@@ -120,6 +126,7 @@ private:
     bool m_active = true;
     bool m_visible = true;
     bool m_muted = true;
+    bool m_receiveOnly = false;
     bool m_released = false;
     bool m_open = false;
     bool m_changing = false;

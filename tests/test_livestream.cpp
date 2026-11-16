@@ -203,6 +203,30 @@ private slots:
         QVERIFY(!v.stream.noPicture());
         QCOMPARE(v.transport->opens.size(), 2);
     }
+    // While its pane replays (live-replay ticket 08b) the stream stays connected, receiving
+    // into the live buffer with no picture: no "No picture", no reopen; the watch resumes after.
+    void receiveOnlyKeepsTheConnectionWithoutWatching()
+    {
+        View v;
+        v.stream.setWatchPicture(true);
+        v.start();
+        v.transport->publish(State::Streaming);
+        v.transport->frames = 5;
+        v.clock->advance(1000);
+        v.stream.setReceiveOnly(true);
+        QVERIFY(v.transport->player.receiveOnly());
+        QVERIFY(v.transport->player.muted());
+        v.clock->advance(60000);
+        QVERIFY(!v.stream.noPicture());
+        QCOMPARE(v.transport->opens.size(), 1);
+        QVERIFY(!v.transport->stopped);
+        v.stream.setReceiveOnly(false);
+        QVERIFY(!v.transport->player.receiveOnly());
+        v.clock->advance(7999);
+        QCOMPARE(v.transport->opens.size(), 1);
+        v.clock->advance(1);
+        QVERIFY(v.stream.noPicture());   // no picture 8 s after replay ended: watched again
+    }
     // Hiding the pane, leaving the page or changing the stream on purpose forgets it.
     void noPictureEndsWithTheView()
     {

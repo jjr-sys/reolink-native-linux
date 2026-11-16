@@ -203,7 +203,10 @@ Rectangle {
         devices: Devices
         camera: root.cameraIdentity
         mainStream: root.effectiveMain
-        active: root.pageActive && !root.replaying
+        // Replaying, the stream stays connected filling the live buffer, not decoded
+        // (live-replay ticket 08b): "● Live" picks up at once.
+        active: root.pageActive
+        receiveOnly: root.replaying
         viewVisible: root.visible
         watchPicture: root.watchPicture
         videoSink: video.videoSink

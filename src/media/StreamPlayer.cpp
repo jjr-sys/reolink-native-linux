@@ -1149,6 +1149,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                       saved.isEmpty() ? QStringLiteral("no frames captured") : QString());
     };
 
+    bool awaitKeyframe = false;   // receive-only ended: skip to a keyframe
     while (!s->abort.load()) {
         if (s->reverse) {
             while (showNext(false)) {}
@@ -1209,6 +1210,21 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             recorder.write(packet); // stream-copy before the packet is consumed
         if (s->liveBuffer)
             bufferLive(*s, fmt, stream, packet);
+        // Receiving only (its pane replays): buffered, not decoded; decoding picks up again at
+        // the next keyframe (the frames between can't be decoded without the ones skipped).
+        if (s->receiveOnly.load(std::memory_order_relaxed)) {
+            awaitKeyframe = true;
+            av_packet_unref(packet);
+            continue;
+        }
+        if (awaitKeyframe) {
+            if (!(packet->flags & AV_PKT_FLAG_KEY)) {
+                av_packet_unref(packet);
+                continue;
+            }
+            awaitKeyframe = false;
+            avcodec_flush_buffers(dec);
+        }
         const auto pipelineStart = perfDiagnosticsEnabled
             ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         const qint64 decodeStartUs = av_gettime_relative();
@@ -1524,6 +1540,16 @@ void StreamPlayer::setVolume(qreal volume)
     emit volumeChanged();
 }
 
+void StreamPlayer::setReceiveOnly(bool on)
+{
+    if (m_receiveOnly == on)
+        return;
+    m_receiveOnly = on;
+    if (m_session)
+        m_session->receiveOnly.store(on);
+    emit receiveOnlyChanged();
+}
+
 void StreamPlayer::setPlayback(bool on)
 {
     if (m_playback == on)
@@ -1806,6 +1832,7 @@ void StreamPlayer::start()
     s->speed = m_speed;
     s->audioWanted.store(!m_muted && speed() == 1.0);
     s->smoothing.store(m_smoothing);
+    s->receiveOnly.store(m_receiveOnly);
     s->reverse = m_reverse;
     s->forwardWindows = m_forwardWindows;
     s->liveBuffer = m_liveBuffer;

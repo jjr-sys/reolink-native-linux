@@ -86,6 +86,9 @@ class StreamPlayer : public QObject
     Q_PROPERTY(qreal speed READ speed WRITE setSpeed NOTIFY speedChanged)
     Q_PROPERTY(qreal volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(bool playback READ playback WRITE setPlayback NOTIFY playbackChanged)
+    // Live, while its pane replays (wayfinder/live-replay ticket 08b): the stream keeps coming
+    // into the live buffer but isn't decoded or shown; decoding resumes at the next keyframe.
+    Q_PROPERTY(bool receiveOnly READ receiveOnly WRITE setReceiveOnly NOTIFY receiveOnlyChanged)
 
 public:
     enum class State { Idle, Connecting, Streaming, Error, Stopped };
@@ -160,6 +163,7 @@ public:
 
         // Live smoothing requested (see the property). Read by the worker per session.
         std::atomic<bool> smoothing{false};
+        std::atomic<bool> receiveOnly{false};
 
         // Recording taps this same demux session (DESIGN §5.5): no second stream.
         std::atomic<bool> recordRequested{false};
@@ -253,6 +257,8 @@ public:
 
     bool playback() const { return m_playback; }
     void setPlayback(bool on);
+    bool receiveOnly() const { return m_receiveOnly; }
+    void setReceiveOnly(bool on);
 
     // Native Baichuan carries audio in the same byte stream as video, but the video
     // path is a raw elementary stream with no room for it. The client feeds ADTS AAC
@@ -305,6 +311,7 @@ signals:
     void hasAudioChanged();
     void smoothingChanged();
     void playbackChanged();
+    void receiveOnlyChanged();
     void volumeChanged();
     void speedChanged();
     void recordingSaved(const QString &path);
@@ -336,6 +343,7 @@ private:
     bool m_hasAudio = false;
     bool m_smoothing = false;
     bool m_playback = false;
+    bool m_receiveOnly = false;
     qreal m_volume = 1.0;
     std::shared_ptr<std::atomic<double>> m_speed = std::make_shared<std::atomic<double>>(1.0);
     bool m_reverse = false;

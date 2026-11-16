@@ -244,7 +244,23 @@ void LiveStream::setMuted(bool muted)
 
 void LiveStream::updateAudio()
 {
-    m_transport->player.setMuted(m_muted || !m_visible || !m_active || m_released);
+    m_transport->player.setMuted(m_muted || !m_visible || !m_active || m_released || m_receiveOnly);
+}
+
+void LiveStream::setReceiveOnly(bool on)
+{
+    if (m_receiveOnly == on)
+        return;
+    m_receiveOnly = on;
+    m_transport->player.setReceiveOnly(on);
+    updateAudio();
+    if (on) {
+        disarmWatch();   // no picture is expected
+    } else if (m_open && m_visible && m_active) {
+        m_seenFrames = m_transport->framesDecoded();
+        restartWatch();
+    }
+    emit receiveOnlyChanged();
 }
 
 void LiveStream::release()
@@ -375,7 +391,7 @@ void LiveStream::watchTick()
 {
     if (!m_watchArmed)
         return;
-    if (!m_visible || !m_active || m_released || m_terminal) {
+    if (!m_visible || !m_active || m_released || m_terminal || m_receiveOnly) {
         disarmWatch();
         return;
     }
