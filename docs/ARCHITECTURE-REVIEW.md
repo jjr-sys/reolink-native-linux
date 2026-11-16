@@ -271,3 +271,88 @@ watermark, poll/socket dedup in both orders, history window).
 `ctest` runs offscreen without a display or keyring. `test_mosaicpacker` has a wall-clock
 assertion (`tieBreakBuildTime`, under 10 ms) that fails when the machine is loaded (seen
 at load average 29, passes at load 4); it does not touch this code.
+
+## Review #2 (2026-11-16): transport across the video tabs
+
+Branch `arch/transport-deepening`, one commit per item below; each is reversible with
+`git revert` of the named commit (revert in reverse order: 788d34c, f87457c, f4df1b9, 2f42811,
+d95c2ab). Scope came from the hot spots of the last 80 commits. Not built, with reasons, at the
+end.
+
+### 3a: seek in place per stream (`d95c2ab`)
+
+**Problem.** DeviceManager kept one weak `m_playbackClient` + `m_playbackRow` for in-place
+seek. Playback (and several Live replay panes) start every pane in turn, so each pane found the
+slot held by the pane before it and reconnected on every scrub.
+
+**Decision.** The seek lives on the stream: `StreamPlayer::setPacketSource(…, onSeek)` and
+`seekSource(epoch)`. The handle moves with the source's stop handle (pending → active on start,
+cleared on stop/setSource), so a stopped client is never seeked. Live, live buffer and URL
+sources have none and reopen. Test: `test_livestream::seekGoesToThisPlayersOwnSource`.
+
+### 3b: unreachable recorder HTTP-FLV playback (`2f42811`)
+
+`PlaybackSession::chooseRoute` returns `Http` only for direct rows; the Reolink branch of
+`playbackUrl` needed `reolinkReady()` (not direct). Removed that branch, `RecordingFileSnap`
+and its tests, `Entry::playbackOffsetSecs` / `recordingFiles`. **Supersedes** candidate 3's
+"the snap extraction may stay". Kept: `api::playbackFlvUrl` (an endpoint checked on hardware)
+and the `forReplay` split of the day search (Live replay uses it).
+
+### 4a: event filing fixes (`f4df1b9`)
+
+`Database::eventNear` matches type (bursts are per camera and type); `device::Detection::at`
+carries Frigate's start through `reportDetection` / `detectionEvent` (filed at
+`min(at, now)`); unread, snapshot and notification only for a stored row. Not done: the
+history-then-live duplicate (narrow), the Inbox module (LATER: worth it with a third filing
+source), deduplicating the switch-off check (DON'T: one implementation, four consumers; the
+source gate protects Highlights).
+
+### Candidate 2: EventClip is the clip player's state machine (`f87457c`)
+
+**Module.** `EventClip` owns the phase (`Idle/Starting/Playing/Paused/Ended/Failed`), the paused
+moment, the give-up times (10 s at 1×, 30 s off 1×, 20 s Frigate), the reopen-once-per-place
+rule, the clock and its `PlaybackGroup`. **Seam.** Events in (`play`, `togglePause`, `seekTo`,
+`skip`, `speedChanged`, `hdChanged`, `keepPlaying`, `firstPicture`, `streamReconnecting`,
+`streamStopped`, `mediaEnded`, `loadFailed`, `openFailed`, `reopenNeeded`, `tick(wallMs)`; bound
+`frameEpochMs`, `mediaPositionMs`), commands out (`openWanted`, `stopAllWanted`,
+`stopStreamWanted`, `pauseMediaWanted`, `seekMediaWanted`, `retryHdWanted`, `notice`).
+
+**Decisions.**
+1. Not driven through `PlaybackTransport`: the Frigate clip plays through `ClipLoader` /
+   `MediaPlayer`, outside that seam, so commands are signals the QML binds to its engines.
+2. The clock is passed in (`tick(wallMs)`), as Backoff decided: no timer or fake clock in C++;
+   the give-up count starts at the first tick of each start.
+3. `edgeReached` / `reopenAfterEnd` became private; their table tests became sequences through
+   the interface. `progress` / `timeAt` / `skipFrom` stay public (the pane bar binds them).
+4. Behaviour unchanged: before/after smoke logs of a recorder and a Frigate event clip match.
+
+### Candidate 1: PlaybackDay and PaneSync (`788d34c`)
+
+**Module.** `PlaybackDay` (`src/ui/PlaybackDay.{h,cpp}`): one day's footage per camera, the lead
+camera, `previousEnd` / `nextStart`, `landing` (backwards), `carryOn` (the lead's stream ran
+out), `wantSearch` (3 tries, 10 s), `advance` (the clock), and the panes' frame driver and
+restart verdicts from plain pane state. `PaneSync` (`src/ui/PaneSync.{h,cpp}`) holds the two
+rules Playback and `LiveReplay` share.
+
+**Decisions.**
+1. A sibling of `LiveReplay`, not a mode of it: `LiveReplay` is built around now, cross-day
+   books, pending plays, the oldest scan and the live buffer; a one-day flag would make its
+   interface shallow.
+2. In step: one rule, Live replay's (both ways, 5 s × speed, 3 s gap). **Visible change** for
+   Playback forwards (was backwards only, 5 s flat). Frigate panes are locked off 1×. Revert
+   the commit to restore the old rule.
+3. Frame driver: the lead's pane while shown, not frozen and covered, else the first such
+   pane; none → the wall clock (Playback) or the lead (Live replay). "Has shown a frame" was
+   left out: it would let a non-lead pane drive before the lead's first picture and change
+   tested Live replay behaviour.
+4. Reopens review #1 candidate 3 decision 3 ("coverage stays in QML") for the pane group only;
+   `PlaybackSession` still takes `covered` as an argument.
+5. Kept: the `RL_PLAYBACK_*`, `RL_EVENTS_*`, `RL_LIVE_REPLAY` hooks (the smoke harness).
+
+### Not built
+
+- **3c recorder media module:** LATER, day search only (it has a second adapter in
+  `ScriptedHttp`); DON'T for stream opening (one adapter; shared with HD live).
+- **Candidate 5 one press module:** LATER, after this branch (`PaneBarRules.press`), plus the
+  small fixes listed in the review (bottom-bar ⏸, dead `reverseTip`, greyed-but-lit buttons,
+  refusal reasons).

@@ -200,6 +200,17 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Changed
 
+- **Playback keeps panes in step both ways.** A pane that drifts more than 5 s × speed from
+  the playhead, or stops where the playhead has its footage, starts again at the playhead
+  going forwards too (it was backwards only, 5 s at any speed), as Live replay's panes do.
+  Frigate panes are left alone off 1×. The pane whose frames move the playhead is the lead
+  camera's while it has footage there.
+- **Internal:** Playback's day rules (lead camera, where a play lands and carries on, the
+  playhead's clock, search retries) moved from the page into a tested `PlaybackDay` module, and
+  the in-step and frame-driver rules into `PaneSync`, shared with Live replay. The Events clip
+  player's phases, give-up times and clock moved into `EventClip`. The recorder HTTP-FLV
+  playback path, unreachable since playback went native, was removed with its file snapping.
+
 - **Quad view sees the whole circle.** Its four views are now 120° wide and tilted 44°
   from straight down, covering from the floor under the camera out to the rim with no
   sky. The old 85° views left wedges at the rim unseen.
@@ -252,6 +263,18 @@ While the project is pre-1.0, minor versions may still change behaviour.
   each camera supports, and when it was running.
 
 ### Fixed
+
+- **Scrubbing several Playback or Live replay panes reconnected every one of them.** Seek in
+  place was kept for one pane at a time (the last one opened), so each pane in turn found it
+  taken and reopened its stream on the connection-limited recorder. Each pane's stream now
+  seeks itself.
+- **Frigate history dropped a second kind of event seen with the first.** A car beside a
+  person on one camera within 30 s was taken as the person's duplicate.
+- **Frigate events reported late were filed at the wrong time.** After a Frigate outage the
+  next poll filed its backlog at "now" (and a later history sync filed them again); events are
+  filed at the time Frigate saw them, never ahead of this computer's clock.
+- An event that couldn't be stored no longer counts as unread, fetches a snapshot or raises a
+  desktop notification.
 
 - Playback opened straight after start-up no longer shows an empty timeline when a recorder
   wasn't ready for the first recording search: a failed search is asked again after 10 s.

@@ -125,12 +125,24 @@ The transport chosen for recorded footage. HD holds up to 4× both ways while th
 _Avoid_: playback mode, quality
 
 **Seek in place**:
-Moving a running native playback stream to another moment without reconnecting.
+Moving a running native playback stream to another moment without reconnecting. Each pane's stream seeks only itself.
 _Avoid_: fast seek
 
-**Recording file snap**:
-Choosing the NVR recording file that contains a requested moment (or the nearest earlier one across a gap) and the offset into it, because the HTTP-FLV endpoint only starts on file boundaries.
-_Avoid_: seek rounding
+**Playback day**:
+Playback's rules for one day of the selected cameras' footage: which camera leads, where a play lands, where every pane carries on when the lead's stream runs out, the playhead's clock and the day's searches. Live replay keeps the same rules across days.
+_Avoid_: timeline controller
+
+**Lead camera**:
+The camera whose recordings decide where a play lands and carries on: the selected one, or with a Frigate camera selected, the first recorder camera in pane order. In Live replay, the camera chosen to lead.
+_Avoid_: master, primary
+
+**Frame driver**:
+The pane whose frames move the playhead off 1×: the lead camera's pane while it is on screen, not frozen and has footage at the playhead, else the first such pane in order. With none, the playhead runs on the wall clock.
+_Avoid_: clock pane
+
+**In step**:
+Panes playing one playhead together. A pane that isn't the frame driver plays at its own pace; where it has footage at the playhead and isn't playing, or is more than 5 s × speed away, it starts again at the playhead (not within 3 s of its last restart).
+_Avoid_: synced, aligned (alignment is the pane's own catch-up at its first picture)
 
 ## Device model
 
