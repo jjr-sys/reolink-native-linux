@@ -157,6 +157,7 @@ set(APP_QML_FILES
     src/ui/qml/components/PlaybackPane.qml
     src/ui/qml/components/LiveReplayControls.qml
     src/ui/qml/components/PaneBar.qml
+    src/ui/qml/components/TransportActions.js
     src/ui/qml/components/EventClipPlayer.qml
     src/ui/qml/components/PtzPad.qml
     src/ui/qml/components/Timeline.qml

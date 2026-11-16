@@ -5,6 +5,7 @@ import QtQuick.Layouts
 import QtQuick.Window
 import ReolinkApp
 import ReolinkApp.Core
+import "../components/TransportActions.js" as TransportActions
 
 // Playback on Site tabs (wayfinder/site-tabs-redesign, step 4): the panes are exactly the
 // selected cameras, from any Sites, packed as a mosaic. One calendar and one playhead drive
@@ -967,15 +968,7 @@ Item {
                                         if (AudioPrefs.playbackMuted || !pbPane.selected) AudioPrefs.playbackMuted = false;
                                         else AudioPrefs.playbackMuted = true;
                                         break;
-                                    case "skipBack": page.skip(-10); break;
-                                    case "skipForward": page.skip(10); break;
-                                    case "pause": page.togglePause(); break;
-                                    case "back": page.speedAction(() => group.playBackward()); break;
-                                    case "fastBack": page.speedAction(() => group.stepFast(-1)); break;
-                                    case "slowBack": page.speedAction(() => group.stepSlow(-1)); break;
-                                    case "forward": page.speedAction(() => group.playForward()); break;
-                                    case "slowForward": page.speedAction(() => group.stepSlow(1)); break;
-                                    case "fastForward": page.speedAction(() => group.stepFast(1)); break;
+                                    default: TransportActions.apply(id, group, page); break;
                                     }
                                 }
                                 onTool: (id) => {

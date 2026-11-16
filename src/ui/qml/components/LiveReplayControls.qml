@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import ReolinkApp
 import ReolinkApp.Core
+import "TransportActions.js" as TransportActions
 
 // Live replay on a Live View pane (wayfinder/live-replay ticket 07): while replaying, the
 // camera's recording played by Playback's pane over the live picture (the live stream stops),
@@ -110,21 +111,14 @@ Item {
         replay.playFrom(replay.epochForPos(pos), group.direction);
     }
     function goLive() { if (replaying) replay.stop(); }
-    // The pane bar's transport (PaneBarRules ids).
+    // A speed button: backwards ones start replay from live (back), forwards ones only change
+    // a running replay (speed).
+    function speedAction(step, dir) { if (dir < 0) back(step); else speed(step); }
+    // The pane bar's transport (PaneBarRules ids; TransportActions).
     function act(id) {
         if (!replayable || !group)
             return;
-        switch (id) {
-        case "skipBack": skip(-10); break;
-        case "skipForward": skip(10); break;
-        case "back": back(() => group.playBackward()); break;
-        case "fastBack": back(() => group.stepFast(-1)); break;
-        case "slowBack": back(() => group.stepSlow(-1)); break;
-        case "pause": togglePause(); break;
-        case "forward": speed(() => group.playForward()); break;
-        case "slowForward": speed(() => group.stepSlow(1)); break;
-        case "fastForward": speed(() => group.stepFast(1)); break;
-        }
+        TransportActions.apply(id, group, root);
     }
     // The pane bar's time line: a press from live starts the search for recordings; a release
     // at "now" goes back to live, anywhere else plays from there.
@@ -192,19 +186,18 @@ Item {
     function key(k) {
         if (!replayable)
             return false;
+        // J from live starts ◀ (as the bar's ◀); while replaying it steps « like a forwards
+        // speed (no restart of a paused replay's direction first).
         if (k === "J") {
             if (!replaying) back(() => group.playBackward());
             else speed(() => group.stepFast(-1));
-        } else if (k === "K") {
-            togglePause();
-        } else if (k === "L") {
-            speed(() => group.stepFast(1));
-        } else if (k === "Left") {
-            skip(-10);
-        } else if (k === "Right") {
-            if (!replaying) return false;
-            skip(10);
+            return true;
         }
+        if (k === "Right" && !replaying)
+            return false;
+        const id = TransportActions.keyId(k);
+        if (id !== "")
+            TransportActions.apply(id, group, root);
         return true;
     }
 

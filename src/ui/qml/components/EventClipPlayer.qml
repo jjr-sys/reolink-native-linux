@@ -5,6 +5,7 @@ import QtQuick.Window
 import QtMultimedia
 import ReolinkApp
 import ReolinkApp.Core
+import "TransportActions.js" as TransportActions
 
 // The Events page's clip player (wayfinder/events-feed step 22): the picked event's footage
 // beside the feed. A Reolink recorder plays its sub stream (HD on request) from 5 s before
@@ -285,13 +286,10 @@ Item {
     function key(k) {
         if (!clip.active)
             return false;
-        if (k === "J") { if (clip.frigate) return false; speedAction(() => group.stepFast(-1)); }
-        else if (k === "K") togglePause();
-        else if (k === "L") speedAction(() => group.stepFast(1));
-        else if (k === "Left") skip(-10);
-        else if (k === "Right") skip(10);
-        else return false;
-        return true;
+        const id = TransportActions.keyId(k);
+        if (id === "" || (k === "J" && clip.frigate))
+            return false;
+        return TransportActions.apply(id, group, root);
     }
     function _openInPlayback() {
         const at = Math.floor(phase === "paused" ? _pausedAt
@@ -584,15 +582,7 @@ Item {
                     switch (id) {
                     case "hd": root.setHd(!root.hd); break;
                     case "sound": root.soundOn = !root.soundOn; break;
-                    case "pause": root.togglePause(); break;
-                    case "skipBack": root.skip(-10); break;
-                    case "skipForward": root.skip(10); break;
-                    case "back": root.speedAction(() => group.playBackward()); break;
-                    case "fastBack": root.speedAction(() => group.stepFast(-1)); break;
-                    case "slowBack": root.speedAction(() => group.stepSlow(-1)); break;
-                    case "forward": root.speedAction(() => group.playForward()); break;
-                    case "slowForward": root.speedAction(() => group.stepSlow(1)); break;
-                    case "fastForward": root.speedAction(() => group.stepFast(1)); break;
+                    default: TransportActions.apply(id, group, root); break;
                     }
                 }
                 onTool: (id) => {
