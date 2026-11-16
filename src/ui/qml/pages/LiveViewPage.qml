@@ -4,6 +4,7 @@ import QtQuick.Controls
 import QtQuick.Window
 import ReolinkApp
 import ReolinkApp.Core
+import "../components/HighlightText.js" as HighlightText
 
 // Live View on Site tabs (wayfinder/site-tabs-redesign): the panes are exactly the selected
 // cameras, always packed as a mosaic, grouped by Site in Site tab order and in tap order
@@ -265,17 +266,20 @@ Item {
     }
     // The maximised replaying pane names the other selected cameras highlighted now, newest
     // first (three at most); a tap goes back to live on that camera.
-    readonly property var replayOthersLit: {
+    readonly property var replayOthersHighlighted: {
         var looks = Highlights.looks;   // re-read as highlights come and go
         if (!liveReplay.replaying || maximizedKey !== liveReplay.cameraKey)
             return [];
-        var keys = Highlights.othersLit(selection.keys, liveReplay.cameraKey);
+        var keys = Highlights.othersHighlighted(selection.keys, liveReplay.cameraKey);
         var byKey = rowsByKey(), out = [];
         for (var i = 0; i < keys.length && out.length < 3; i++) {
-            var look = looks[keys[i]], item = paneRepeater.itemAt(byKey[keys[i]]);
-            var kind = look.kind.charAt(0).toUpperCase() + look.kind.slice(1);
+            var row = byKey[keys[i]];
+            if (row === undefined)
+                continue;   // its recorder hasn't answered yet: no pane, no name
+            var look = looks[keys[i]], item = paneRepeater.itemAt(row);
             out.push({ key: keys[i], colour: look.colour,
-                       text: kind + " · " + (item ? item.label : keys[i]) });
+                       text: qsTr("%1 · %2").arg(HighlightText.kindText(look.kind))
+                                            .arg(item ? item.label : keys[i]) });
         }
         return out;
     }
@@ -677,7 +681,7 @@ Item {
                 onClicked: page.selectedKey = page.selectedKey === cameraKey ? "" : cameraKey
                 onPopOut: (row, lbl) => page.popOut(row, lbl)
                 onOpenBoschTourRequested: page.openBoschTourRequested()
-                replayOthersLit: isMaximized ? page.replayOthersLit : []
+                replayOthersHighlighted: isMaximized ? page.replayOthersHighlighted : []
                 onShowCameraRequested: (key) => page.showLive(key)
                 highlight: page.doorbellCamera === cameraKey
                            ? ({ kind: "doorbell", colour: Theme.warning, style: "steady", since: 0, flashUntil: 0, last: 0 })

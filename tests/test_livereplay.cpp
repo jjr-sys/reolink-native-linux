@@ -186,6 +186,25 @@ private slots:
         QCOMPARE(r.dayEpoch(), at(2026, 11, 15, 0));
         QCOMPARE(r.daySegments().size(), 2);
     }
+    // Pausing (the doorbell, ticket 14) drops a play still waiting for the recorder: the answer
+    // fills the day book but doesn't start the video under the "paused" bar.
+    void pausingDropsAPlayStillWaitingForTheRecorder()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 7200}, {28800, 35900}});
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.start(QStringLiteral("5:0"));
+        r.playFrom(kNow, -1);
+        r.setPaused(true);
+        rec.answerAll();
+        QCOMPARE(play.count(), 0);
+        QCOMPARE(r.daySegments().size(), 2);      // the day book still fills
+        r.setPaused(false);                        // resuming plays from the playhead
+        r.playFrom(r.playhead(), -1);
+        QCOMPARE(play.count(), 1);
+    }
     // ---- the live buffer (ticket 08b) ----
     // With the pane's live buffer, ◀ from now starts at once at the buffer's newest frame (the
     // camera's clock may run a little ahead of or behind this machine's), no search needed.

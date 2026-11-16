@@ -51,6 +51,10 @@ void LiveReplay::setPaused(bool paused)
     if (m_paused == paused)
         return;
     m_paused = paused;
+    // Paused (the button, the doorbell): a play still waiting for the recorder doesn't start
+    // the video when its answer comes; resuming plays from the playhead (ticket 14).
+    if (paused)
+        m_pending = Pending::None;
     emit pausedChanged();
 }
 

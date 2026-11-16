@@ -249,7 +249,7 @@ ApplicationWindow {
                 doorbell.deviceRow = Devices.rowOfHostChannel(parseInt(t[0]), parseInt(t[1]));
                 doorbell.cameraIdentity = { hostId: parseInt(t[0]), channel: parseInt(t[1]) };
             }
-            if (at.length > 1) {
+            if (at.length > 1 && Number(at[1]) > 0) {
                 mockDoorbellTimer.interval = Number(at[1]) * 1000;
                 mockDoorbellTimer.start();
             } else {

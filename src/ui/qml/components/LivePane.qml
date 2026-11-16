@@ -4,6 +4,7 @@ import QtQuick.Window
 import QtMultimedia
 import ReolinkApp
 import ReolinkApp.Core
+import "HighlightText.js" as HighlightText
 
 // One cell of the live grid: video + name overlay + connection-state overlay +
 // the pane bar (PaneBar: transport, HD, sound, tools) and an optional PTZ joystick. Double-click toggles
@@ -67,8 +68,8 @@ Rectangle {
     // times in epoch ms; null when not highlighted. kind "doorbell" is the pop-up's fixed one.
     property var highlight: null
     // Maximised and replaying: the other shown cameras highlighted now (LiveReplayControls
-    // othersLit); a tap asks the page to show that camera live (live-replay ticket 14).
-    property var replayOthersLit: []
+    // othersHighlighted); a tap asks the page to show that camera live (live-replay ticket 14).
+    property var replayOthersHighlighted: []
     signal showCameraRequested(string key)
     readonly property bool highlighted: highlight !== null
     property real clock: Date.now()  // ticks while highlighted: flash phase and "N s ago"
@@ -84,9 +85,9 @@ Rectangle {
     function highlightLabel() {
         if (!highlighted)
             return "";
+        var k = HighlightText.kindText(highlight.kind);
         if (highlight.kind === "doorbell")
-            return qsTr("Doorbell");
-        var k = highlight.kind.charAt(0).toUpperCase() + highlight.kind.slice(1);
+            return k;
         var ago = Math.floor((clock - highlight.last) / 1000);
         return ago < 2 ? k : qsTr("%1 · %2 s ago").arg(k).arg(ago);
     }
@@ -136,9 +137,7 @@ Rectangle {
     function replayGoLive() { replayControls.goLive(); }
     function replayPause() { replayControls.pause(); }
     // What the camera sees now, for "● Live · Person" while replaying.
-    readonly property string highlightKindText: !highlighted ? ""
-        : highlight.kind === "doorbell" ? qsTr("Doorbell")
-        : highlight.kind.charAt(0).toUpperCase() + highlight.kind.slice(1)
+    readonly property string highlightKindText: highlighted ? HighlightText.kindText(highlight.kind) : ""
 
     // Mosaic panes can be Normal or Large (about 1.5× the area, from the packer).
     property bool showLarge: false
@@ -737,7 +736,7 @@ Rectangle {
         fisheyeMode: root.fisheyeMode
         highlightColour: root.highlightLit && root.highlight ? root.highlight.colour : "transparent"
         liveNote: root.highlightKindText
-        othersLit: root.replayOthersLit
+        othersHighlighted: root.replayOthersHighlighted
         onShowCamera: (key) => root.showCameraRequested(key)
         onClicked: root.clicked(root.deviceRow)
         onDoubleClicked: root.toggleMaximize(root.deviceRow)

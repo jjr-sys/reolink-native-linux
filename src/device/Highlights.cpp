@@ -3,9 +3,10 @@
 #include "device/DeviceManager.h"
 
 #include <QDateTime>
-#include <algorithm>
 #include <QJsonDocument>
 #include <QSettings>
+
+#include <algorithm>
 
 namespace rl {
 
@@ -61,7 +62,7 @@ void Highlights::setRules(const QString &json)
     emit rulesChanged();
 }
 
-QStringList Highlights::othersLit(const QVariantMap &looks, const QStringList &shown,
+QStringList Highlights::othersHighlighted(const QVariantMap &looks, const QStringList &shown,
                                   const QString &except)
 {
     QStringList out;

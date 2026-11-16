@@ -28,7 +28,7 @@ Item {
     // "● Live" ("● Live · Person"); and, maximised, the other shown cameras highlighted now
     // ([{ key, text, colour }]), each a chip that goes to that camera live.
     property string liveNote: ""
-    property var othersLit: []
+    property var othersHighlighted: []
     signal showCamera(string key)
 
     signal clicked()
@@ -260,7 +260,8 @@ Item {
     Connections {
         target: pane
         function onLoaded() {
-            if (root.replay.daySegments.length > 0 && root.replay.covered(root.replay.playhead))
+            if (!root.replay.paused && root.replay.daySegments.length > 0
+                    && root.replay.covered(root.replay.playhead))
                 pane.item.playAtSecs(root.replay.playhead - root.replay.dayEpoch, root.replay.playhead);
         }
     }
@@ -277,6 +278,7 @@ Item {
 
     // "● Live": back to live.
     Rectangle {
+        id: liveButton
         z: 4
         visible: root.replaying
         anchors.top: parent.top
@@ -300,14 +302,13 @@ Item {
     // The other cameras highlighted now (maximised): a tap goes to that camera, live.
     Column {
         z: 4
-        visible: root.replaying && root.othersLit.length > 0
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.topMargin: 8 + 26 + 6
-        anchors.rightMargin: 8
+        visible: root.replaying && root.othersHighlighted.length > 0
+        anchors.top: liveButton.bottom
+        anchors.right: liveButton.right
+        anchors.topMargin: 6
         spacing: 4
         Repeater {
-            model: root.replaying ? root.othersLit : []
+            model: root.othersHighlighted
             delegate: Rectangle {
                 required property var modelData
                 x: parent ? parent.width - width : 0   // right-aligned (a Column sets only y)
