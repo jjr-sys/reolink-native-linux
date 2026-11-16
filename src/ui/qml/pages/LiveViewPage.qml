@@ -318,7 +318,18 @@ Item {
     onSelectedKeyChanged: followLead()
     Connections {
         target: liveReplay
-        function onReplayingChanged() { page.followLead(); }
+        function onReplayingChanged() {
+            page.followLead();
+            if (page.audioSuppressed) Qt.callLater(page.pauseUnderDoorbell);
+        }
+    }
+    // A replay started (or joined) while the doorbell pop-up is up pauses too, once its start has
+    // finished (ticket 14 follow-up).
+    function pauseUnderDoorbell() {
+        if (!audioSuppressed || !liveReplay.replaying || liveReplay.paused)
+            return;
+        var p = replayPane();
+        if (p) p.replayPause();
     }
     // A highlight chip's tap (ticket 14): back to live — every replaying pane — on that camera,
     // maximised.

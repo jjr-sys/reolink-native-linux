@@ -175,7 +175,7 @@ Item {
         width: Math.min(timeLabel.implicitWidth + 14, bar.width - 16)
         height: timeLabel.implicitHeight + 8
         radius: 4
-        color: "#cc0d141b"
+        color: Theme.paneBar
         Text {
             id: timeLabel
             anchors.centerIn: parent

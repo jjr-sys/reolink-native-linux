@@ -311,9 +311,15 @@ Item {
                 pane.item.playAtSecs(epoch - root.replay.dayEpoch, epoch);
         }
         // This pane alone (its recorder footage reached its live buffer).
+        // Asked from inside this pane's frame handler (frameAt): reopened once that has returned,
+        // not inside it (that re-entered the frameSecs binding: a binding-loop warning).
         function onPaneWanted(key, epoch) {
-            if (key === root.cameraKey && pane.item)
-                pane.item.playAtSecs(epoch - root.replay.dayEpoch, epoch);
+            if (key !== root.cameraKey)
+                return;
+            Qt.callLater(function () {
+                if (pane.item && root.replaying)
+                    pane.item.playAtSecs(epoch - root.replay.dayEpoch, epoch);
+            });
         }
         // Paused from any pane: every replaying pane stops.
         function onPausedChanged() {
@@ -358,7 +364,7 @@ Item {
         width: liveText.implicitWidth + 18
         height: 26
         radius: 13
-        color: liveHover.hovered ? Theme.surfaceAlt : "#cc0d141b"
+        color: liveHover.hovered ? Theme.surfaceAlt : Theme.paneBar
         border.color: Theme.border
         Text {
             id: liveText
@@ -386,7 +392,7 @@ Item {
                 width: chipText.implicitWidth + 18
                 height: 24
                 radius: 12
-                color: chipHover.hovered ? Theme.surfaceAlt : "#cc0d141b"
+                color: chipHover.hovered ? Theme.surfaceAlt : Theme.paneBar
                 border.color: modelData.colour
                 border.width: 2
                 Text {

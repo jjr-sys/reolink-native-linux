@@ -620,7 +620,7 @@ Rectangle {
         anchors.horizontalCenter: videoArea.horizontalCenter
         anchors.topMargin: 30
         radius: 3
-        color: talk.state === TalkSession.Error ? "#cc7a1f1f" : "#cc0d141b"
+        color: talk.state === TalkSession.Error ? Theme.paneBarError : Theme.paneBar
         width: talkMsg.width + 16
         height: talkMsg.implicitHeight + 8
         z: 20
