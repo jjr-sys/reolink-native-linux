@@ -129,6 +129,10 @@ private slots:
         QVERIFY(!d.wantSearch("1:2", 50000, false));
         d.clear();
         QVERIFY(d.wantSearch("1:2", 50001, false));
+        // No answer yet (its device not ready): asked again every 10 s, with no limit, until
+        // one comes (ticket 07: a Frigate login loaded after a minute is still searched).
+        for (int i = 0; i < 6; ++i)
+            QVERIFY(d.wantSearch("2:2", 100000 + i * 10000, false));
     }
 
     // The playhead runs with the clock at the group's speed and direction, inside the day; off

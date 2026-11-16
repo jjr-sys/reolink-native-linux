@@ -218,7 +218,11 @@ Item {
         recomputeTimeline();
     }
     function searchMissing() { selection.keys.forEach(k => search(k, false)); }
-    Timer { id: searchRetry; interval: 10000; onTriggered: page.searchMissing() }
+    // Days not answered yet (a device not ready, a search refused) are asked again every 10 s
+    // while the page shows; PlaybackDay::wantSearch says which are due (ticket 07: retries
+    // used to hang on an answer arriving at the right moment).
+    Timer { interval: 10000 /* PlaybackDay::kSearchGapMs */; repeat: true; running: page.active && selection.count > 0
+            onTriggered: page.searchMissing() }
     // The timeline: one lane per pane (who has footage where), and their union to scrub.
     function recomputeTimeline() {
         var lanes = [], union = [];
@@ -608,12 +612,11 @@ Item {
             if (!day.takes(key, y, m, d))
                 return;
             // An empty lane is the honest render of a failed search; the status says why.
+            // It is asked again (up to 3 tries a day) by the retry timer.
             page.gotSegments(key, []);
             statusText.text = error;
-            // A recorder not ready yet (just started) may never change the device list:
-            // ask again in 10 s (search() keeps it to 3 tries a day).
-            searchRetry.restart();
         }
+        // Not ready (not connected, login not loaded): no answer yet; the timer asks again.
     }
     // Panes follow device rows: when rows shift, panes after them hide (and stop) until the
     // mosaic is rebuilt. Those playing start again at the playhead once shown.

@@ -180,6 +180,7 @@ private slots:
         });
         QSignalSpy found(&days, &RecorderDays::dayFound);
         QSignalSpy failed(&days, &RecorderDays::dayFailed);
+        QSignalSpy notReady(&days, &RecorderDays::dayNotReady);
 
         days.search(QStringLiteral("1:6"), 2026, 11, 16);
         QTRY_COMPARE(found.count(), 1);
@@ -196,10 +197,14 @@ private slots:
         QCOMPARE(failed.first().at(3).toInt(), 15);
         QCOMPARE(failed.first().at(4).toString(), QStringLiteral("nothing that day"));
 
-        days.search(QStringLiteral("2:2"), 2026, 11, 16);   // its device isn't ready
-        QTRY_COMPARE(failed.count(), 2);
-        QCOMPARE(failed.last().at(0).toString(), QStringLiteral("2:2"));
-        QVERIFY(!failed.last().at(4).toString().isEmpty());
+        // Its device isn't ready (not connected, or its login not loaded yet): not an answer
+        // about the day, so a page asks again later rather than counting it as empty
+        // (wayfinder/architecture ticket 07).
+        days.search(QStringLiteral("2:2"), 2026, 11, 16);
+        QTRY_COMPARE(notReady.count(), 1);
+        QCOMPARE(notReady.first().at(0).toString(), QStringLiteral("2:2"));
+        QCOMPARE(notReady.first().at(3).toInt(), 16);
+        QCOMPARE(failed.count(), 1);
         QCOMPARE(found.count(), 1);
     }
 

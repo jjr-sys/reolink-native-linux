@@ -112,7 +112,7 @@ void RecorderDays::search(const QString &key, int year, int month, int day)
     if (!source) {
         // Queued, as a search's answer is: callers never see it inside their own call.
         QMetaObject::invokeMethod(this, [this, key, year, month, day] {
-            emit dayFailed(key, year, month, day, tr("device not ready"));
+            emit dayNotReady(key, year, month, day);
         }, Qt::QueuedConnection);
         return;
     }

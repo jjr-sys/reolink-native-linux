@@ -55,7 +55,8 @@ class RecorderDays : public QObject
 {
     Q_OBJECT
 public:
-    // The camera's search, or an empty one when it can't be searched now (device not ready).
+    // The camera's search, or an empty one when it can't be searched now (device not ready:
+    // answered with dayNotReady). An invalid date is answered the same way.
     using Sources = std::function<DaySearch(const QString &key)>;
     explicit RecorderDays(Sources sources, QObject *parent = nullptr);
     ~RecorderDays() override;   // stops searches in flight, waits at most 2 s
@@ -66,6 +67,9 @@ signals:
     void dayFound(const QString &key, int year, int month, int day, const QVariantList &segments,
                   const QVariantList &monthDays);
     void dayFailed(const QString &key, int year, int month, int day, const QString &error);
+    // The camera can't be asked yet (its device not connected or its login not loaded): no
+    // answer about the day; ask again later.
+    void dayNotReady(const QString &key, int year, int month, int day);
 
 private:
     Sources m_sources;

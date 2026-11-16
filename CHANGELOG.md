@@ -267,6 +267,11 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Fixed
 
+- **A Frigate camera's Playback day was empty when Playback opened at start.** Its first
+  search went out before the Frigate login was loaded, was refused, and was often never
+  asked again. Playback now waits for the camera to be ready and keeps asking (every 10 s)
+  for any day that hasn't been answered.
+
 - **A Frigate event listed twice.** An event the app picked up from Frigate's history (at
   start, or after an outage) and then heard about live was filed again: two rows, an extra
   unread count and a second desktop notice. It is now recognised as the same event.

@@ -240,6 +240,7 @@ Item {
             liveReplay.dayFound(key, y, m, d, segments, monthDays);
         }
         function onDayFailed(key, y, m, d, error) { liveReplay.dayFailed(key, y, m, d); }
+        function onDayNotReady(key, y, m, d) { liveReplay.dayFailed(key, y, m, d); }
     }
     Timer {
         interval: 1000

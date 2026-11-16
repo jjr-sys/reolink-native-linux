@@ -98,8 +98,8 @@ DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject
         if (row < 0)
             return {};
         const Entry &e = m_entries.at(row);
-        if (e.kindCaps().frigateApi)
-            return frigateDaySearch(e.rec.addr, e.rec.port, e.serverName());
+        if (e.kindCaps().frigateApi)   // once validated: its login is loaded (ticket 07)
+            return e.primed ? frigateDaySearch(e.rec.addr, e.rec.port, e.serverName()) : DaySearch{};
         const auto client = clientFor(row);
         return client ? reolinkDaySearch(client, e.channel) : DaySearch{};
     }, this);
