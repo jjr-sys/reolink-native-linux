@@ -178,7 +178,6 @@ Rectangle {
     readonly property bool linkSlow: session.hdHeldBack
     // The page calls this for the opens the user makes (not for the app's own restarts).
     function clearLinkSlow() { session.clearLinkSlow(); }
-    property real _restartWall: -1   // the page's last restart of this pane at the playhead
     // Double-click toggles maximize (the page owns which pane is maximized).
     signal doubleClicked()
     // A pane was dropped onto this one (to swap places).

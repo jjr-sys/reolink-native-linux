@@ -67,8 +67,7 @@ public:
     // driving pane's frame time when there is one (driverSecs >= 0).
     Q_INVOKABLE static double advance(double playhead, double dt, double speed, int direction,
                                       double driverSecs);
-    // The panes as the page sees them ([{key, shown, frozen, frameSecs, busy, still,
-    // lastRestartMs}], pane order): whose frames move the playhead (PaneSync: the lead camera's
+    // The panes as the page sees them (PaneSync::paneFrom maps, pane order): whose frames move the playhead (PaneSync: the lead camera's
     // pane, else the first that can; Frigate panes are locked off 1×), and its frame's time
     // (-1: none, or no frame yet).
     Q_INVOKABLE QString frameDriver(const QVariantList &panes, double playhead, bool offNormal) const;

@@ -122,14 +122,7 @@ double PlaybackDay::advance(double playhead, double dt, double speed, int direct
 
 panesync::Pane PlaybackDay::paneFrom(const QVariantMap &m, double playhead, bool offNormal) const
 {
-    panesync::Pane p;
-    p.key = m.value(QStringLiteral("key")).toString();
-    p.shown = m.value(QStringLiteral("shown"), true).toBool();
-    p.frozen = m.value(QStringLiteral("frozen")).toBool();
-    p.still = m.value(QStringLiteral("still")).toBool();
-    p.busy = m.value(QStringLiteral("busy")).toBool();
-    p.frameSecs = m.value(QStringLiteral("frameSecs"), -1).toDouble();
-    p.lastRestartMs = m.value(QStringLiteral("lastRestartMs"), -1).toDouble();
+    panesync::Pane p = panesync::paneFrom(m);
     p.covered = covered(p.key, playhead);
     p.locked = offNormal && m_direct.contains(p.key);   // Frigate plays at 1× forward only
     return p;

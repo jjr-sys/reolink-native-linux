@@ -264,6 +264,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Fixed
 
+- **Live replay with a second camera joined as the lead froze.** J on another pane made it
+  lead, but its pane was never opened: the playhead waited for frames that never came, and the
+  first pane was pulled back to that moment every few seconds. A pane that isn't playing where
+  its camera has footage now starts, the lead's too.
+- A pane catching up by itself after a late first picture (1.5× / 0.7×) is no longer also
+  reopened at the playhead, and a pane isn't restarted within 3 s of its own open.
+
 - Playback's bottom-bar ⏸ plays on again when paused, as K and a pane's ❚❚ do (it only
   paused); its tooltip says so.
 - A pane's speed button greyed for a Frigate camera is no longer lit while the other panes play

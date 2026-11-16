@@ -175,12 +175,20 @@ private slots:
         QTest::newRow("6 s out at 2x") << true << 94.0 << 2.0 << 9000.0 << "" << false;
         QTest::newRow("11 s out at 2x") << true << 89.0 << 2.0 << 9000.0 << "" << true;
         QTest::newRow("restarted 2 s ago") << false << -1.0 << 1.0 << 2000.0 << "" << false;
-        QTest::newRow("drives") << false << -1.0 << 1.0 << 9000.0 << "driver" << false;
+        // Its own open counts too: a pane opened a moment ago is still finding its feet.
+        QTest::newRow("opened 1 s ago") << false << -1.0 << 1.0 << 1000.0 << "" << false;
+        // The driver isn't pulled back to the playhead (its frames move it) — but a driver that
+        // isn't playing moves nothing: it starts like any pane (a joined lead never opened).
+        QTest::newRow("drives, drifted") << true << 106.0 << 1.0 << 9000.0 << "driver" << false;
+        QTest::newRow("drives, stopped") << false << -1.0 << 1.0 << 9000.0 << "driver" << true;
         QTest::newRow("hidden") << false << -1.0 << 1.0 << 9000.0 << "hidden" << false;
         QTest::newRow("frozen") << false << -1.0 << 1.0 << 9000.0 << "frozen" << false;
         QTest::newRow("still") << false << -1.0 << 1.0 << 9000.0 << "still" << false;
         QTest::newRow("locked") << false << -1.0 << 1.0 << 9000.0 << "locked" << false;
         QTest::newRow("no footage") << false << -1.0 << 1.0 << 9000.0 << "uncovered" << false;
+        // A pane catching up by itself (1.5× / 0.7× after a late first picture) isn't also
+        // reopened: one alignment at a time (review #2, after the on-screen check).
+        QTest::newRow("catching up") << true << 106.0 << 1.0 << 9000.0 << "aligning" << false;
     }
     void restartingAPaneAtThePlayhead()
     {
@@ -199,7 +207,8 @@ private slots:
         p.frozen = block == "frozen";
         p.still = block == "still";
         p.locked = block == "locked";
-        p.lastRestartMs = 100000 - sinceLastMs;
+        p.aligning = block == "aligning";
+        p.lastOpenMs = 100000 - sinceLastMs;
         QCOMPARE(panesync::needsRestart(p, 100, speed, block == "driver", 100000), restart);
     }
 
@@ -214,16 +223,21 @@ private slots:
         d.setSegments("1:2", segs({{0, 1000}}));
         d.setSegments("3:0", segs({{0, 1000}}));
         QVariantMap p{{"key", "1:2"}, {"shown", true}, {"busy", false}, {"frameSecs", -1},
-                      {"lastRestartMs", -1}};
+                      {"lastOpenMs", -1}};
         // (pane, playhead, speed, off 1×, the pane driving the playhead, now)
         QVERIFY(d.needsRestart(p, 100, 1, false, "1:6", 50000));
-        p["key"] = "1:6";   // the driver
-        QVERIFY(!d.needsRestart(p, 100, 1, false, "1:6", 50000));
+        p["key"] = "1:6";   // the driver, not playing: started
+        QVERIFY(d.needsRestart(p, 100, 1, false, "1:6", 50000));
         p["key"] = "3:0";   // Frigate: only at 1× forward
         QVERIFY(d.needsRestart(p, 100, 1, false, "1:6", 50000));
         QVERIFY(!d.needsRestart(p, 100, 2, true, "1:6", 50000));
         p["key"] = "1:2";
         QVERIFY(!d.needsRestart(p, 2000, 1, false, "1:6", 50000));   // no footage there
+        p["busy"] = true;
+        p["frameSecs"] = 108;   // 8 s out …
+        QVERIFY(d.needsRestart(p, 100, 1, false, "1:6", 50000));
+        p["aligning"] = true;   // … but catching up by itself
+        QVERIFY(!d.needsRestart(p, 100, 1, false, "1:6", 50000));
     }
 };
 

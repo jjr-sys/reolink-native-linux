@@ -241,16 +241,15 @@ Item {
     // A pane whose frames don't move the playhead plays on at its own pace; where it has
     // footage at the playhead and isn't playing (its recording ended, or it just joined or was
     // shown), or has drifted more than 5 s × speed, it starts again at the playhead.
-    property real _stepWall: -1
     function keepInStep() {
         var p = pane.item;
         if (!p)
             return;
         var now = Date.now();
-        if (!replay.needsRestart(cameraKey, p.busy, p.frozen, p.stillMode,
-                                 p.frameSecs >= 0 ? p.dayEpoch + p.frameSecs : -1, _stepWall, now))
+        if (!replay.needsRestart({ key: cameraKey, busy: p.busy, frozen: p.frozen, still: p.stillMode,
+                                   aligning: p.catchUp !== 1.0, lastOpenMs: p._openWall,
+                                   frameSecs: p.frameSecs >= 0 ? p.dayEpoch + p.frameSecs : -1 }, now))
             return;
-        _stepWall = now;
         var at = replay.playhead;
         p.playAtSecs(at - replay.dayEpoch, at);
     }

@@ -305,21 +305,14 @@ QString LiveReplay::frameDriver() const
     return key.isEmpty() ? m_lead : key;
 }
 
-bool LiveReplay::needsRestart(const QString &key, bool busy, bool frozen, bool still,
-                              double frameEpoch, double lastRestartMs, double nowMs) const
+bool LiveReplay::needsRestart(const QVariantMap &pane, double nowMs) const
 {
-    if (!replaying() || m_paused || !m_books.contains(key))
+    panesync::Pane p = panesync::paneFrom(pane);
+    if (!replaying() || m_paused || !m_books.contains(p.key))
         return false;
-    panesync::Pane p;
-    p.key = key;
-    p.shown = m_books.value(key).shown;
-    p.frozen = frozen;
-    p.still = still;
-    p.busy = busy;
-    p.covered = covers(key, m_playhead);
-    p.frameSecs = frameEpoch;
-    p.lastRestartMs = lastRestartMs;
-    return panesync::needsRestart(p, m_playhead, m_group->speed(), frameDriver() == key, nowMs);
+    p.shown = m_books.value(p.key).shown;
+    p.covered = covers(p.key, m_playhead);
+    return panesync::needsRestart(p, m_playhead, m_group->speed(), frameDriver() == p.key, nowMs);
 }
 
 void LiveReplay::setShown(const QString &cameraKey, bool shown)

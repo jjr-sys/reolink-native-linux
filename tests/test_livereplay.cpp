@@ -994,15 +994,26 @@ private slots:
         r.dayFound(QStringLiteral("1:6"), 2026, 11, 15, segs({{3600, 7200}}), {});
         const double t = at(2026, 11, 15, 1, 30);
         r.playFrom(t, 1);
-        const QString k = QStringLiteral("1:6");
-        QVERIFY(r.needsRestart(k, false, false, false, -1, -1, 100000));       // not playing
-        QVERIFY(!r.needsRestart(k, true, false, false, t + 4, -1, 100000));    // in step
-        QVERIFY(r.needsRestart(k, true, false, false, t + 6, -1, 100000));     // 6 s out
-        QVERIFY(!r.needsRestart(k, false, false, false, -1, 98000, 100000));   // just restarted
-        QVERIFY(!r.needsRestart(k, false, true, false, -1, -1, 100000));       // frozen
-        QVERIFY(!r.needsRestart(QStringLiteral("5:0"), false, false, false, -1, -1, 100000));
+        // The pane as the page reports it; frameSecs in epoch seconds.
+        auto pane = [](const char *key, bool busy, double frame) {
+            return QVariantMap{{"key", key}, {"busy", busy}, {"frameSecs", frame}};
+        };
+        QVERIFY(r.needsRestart(pane("1:6", false, -1), 100000));        // not playing
+        QVERIFY(!r.needsRestart(pane("1:6", true, t + 4), 100000));     // in step
+        QVERIFY(r.needsRestart(pane("1:6", true, t + 6), 100000));      // 6 s out
+        QVariantMap p = pane("1:6", true, t + 6);
+        p["aligning"] = true;                                           // catching up itself
+        QVERIFY(!r.needsRestart(p, 100000));
+        p = pane("1:6", false, -1);
+        p["lastOpenMs"] = 98000;                                     // just restarted
+        QVERIFY(!r.needsRestart(p, 100000));
+        p = pane("1:6", false, -1);
+        p["frozen"] = true;
+        QVERIFY(!r.needsRestart(p, 100000));
+        QVERIFY(!r.needsRestart(pane("5:0", true, t + 9), 100000));     // the driver, drifted
+        QVERIFY(r.needsRestart(pane("5:0", false, -1), 100000));        // the driver, not playing
         r.setPaused(true);
-        QVERIFY(!r.needsRestart(k, false, false, false, -1, -1, 100000));
+        QVERIFY(!r.needsRestart(pane("1:6", false, -1), 100000));
     }
     // start() on a camera already in the replay makes it the lead; it doesn't restart from now.
     void startOnAJoinedCameraLeadsInstead()

@@ -341,19 +341,15 @@ rules Playback and `LiveReplay` share.
 2. In step: one rule, Live replay's (both ways, 5 s × speed, 3 s gap). **Visible change** for
    Playback forwards (was backwards only, 5 s flat). Frigate panes are locked off 1×. To go
    back, change `panesync::needsRestart` (reverting the commit would take PlaybackDay with it).
-   Open question for the on-screen check: forwards, `PlaybackPane._align` already levels a
-   late pane (catch-up 1.5×/0.7×, one reopen past 10 s); a recorder whose first picture comes
-   more than 5 s late may be reopened by this rule instead, repeatedly. If seen, exempt a pane
-   that is aligning (catch-up ≠ 1×) or apply the drift branch backwards only.
-3. Frame driver: the lead camera's pane while shown, not frozen, not locked (Frigate off 1×)
-   and covered, else the first such pane; none → the wall clock (Playback) or the lead (Live
-   replay, which doesn't know its panes' frozen state). The first cut followed the selected
-   pane; the review fixes (`948a0b3`) made it the lead, as the glossary says. "Has shown a frame" was
-   left out: it would let a non-lead pane drive before the lead's first picture and change
-   tested Live replay behaviour.
-4. Reopens review #1 candidate 3 decision 3 ("coverage stays in QML") for the pane group only;
-   `PlaybackSession` still takes `covered` as an argument.
-5. Kept: the `RL_PLAYBACK_*`, `RL_EVENTS_*`, `RL_LIVE_REPLAY` hooks (the smoke harness).
+   On-screen checks (real display, three recorders; `cef…` below) settled the open question:
+   - a pane catching up by itself (`aligning`: catch-up ≠ 1×) is never also restarted, and the
+     3 s gap counts from the pane's own last open (`lastOpenMs`), not only this rule's restarts;
+   - a driver that isn't playing is started like any pane. The driver is exempt only from
+     drift restarts. Before, a lead joined by J was never opened and Live replay froze (seen on
+     the old build too: the joined pane said "Ready", the first pane was seeked back every few
+     seconds).
+   - Both pages now pass panes as `PaneSync::paneFrom` maps (one shape; the standards review's
+     data clump).
 6. Small differences noted by review: the wall-clock playhead now moves backwards from 23:59:59
    (it stuck there); EventClip's give-up count starts at the first 200 ms tick of a start.
 

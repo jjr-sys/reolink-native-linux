@@ -426,7 +426,8 @@ Item {
             var p = paneOf(k);
             if (p)
                 out.push({ key: k, shown: p.visible, frozen: p.frozen, still: p.stillMode, busy: p.busy,
-                           frameSecs: p.frameSecs, lastRestartMs: p._restartWall });
+                           aligning: p.catchUp !== 1.0, frameSecs: p.frameSecs,
+                           lastOpenMs: p._openWall });
         });
         return out;
     }
@@ -440,7 +441,6 @@ Item {
             if (!day.needsRestart(st, playheadSecs, group.speed, group.offNormal, driver, now))
                 return;
             var p = paneOf(st.key);
-            p._restartWall = now;
             p.playAtSecs(playheadSecs, epochAt(playheadSecs));
         });
     }
