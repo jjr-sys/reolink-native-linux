@@ -34,7 +34,8 @@ Item {
     signal clicked()
     signal doubleClicked()
 
-    readonly property bool replaying: !!replay && replay.cameraKey === cameraKey && cameraKey !== ""
+    // This pane's camera is one of those replaying (ticket 15a: several in step).
+    readonly property bool replaying: !!replay && cameraKey !== "" && replay.cameraKeys.indexOf(cameraKey) >= 0
     // This pane's camera was replaying (read when the pane's camera changes).
     property bool wasReplaying: false
     onReplayingChanged: Qt.callLater(function () { root.wasReplaying = root.replaying; })
@@ -249,6 +250,11 @@ Item {
         enabled: root.replaying
         function onPlayWanted(epoch) {
             if (pane.item)
+                pane.item.playAtSecs(epoch - root.replay.dayEpoch, epoch);
+        }
+        // This pane alone (its recorder footage reached its live buffer).
+        function onPaneWanted(key, epoch) {
+            if (key === root.cameraKey && pane.item)
                 pane.item.playAtSecs(epoch - root.replay.dayEpoch, epoch);
         }
         function onNothingEarlier() {

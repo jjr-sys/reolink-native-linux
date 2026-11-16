@@ -180,7 +180,6 @@ QVariantList LiveReplay::strip() const
 void LiveReplay::reset()
 {
     m_books.clear();
-    m_landedInBuffer = false;
     m_pending = Pending::None;
     m_lastCarry = -1;
     m_lastFrame = -1;
@@ -198,6 +197,7 @@ void LiveReplay::start(const QString &cameraKey)
     else
         stop();   // another pane was replaying: it goes back to live first (stop resets)
     m_key = cameraKey;
+    m_keys = {cameraKey};
     const QDate today = dayOf(m_now);
     m_books[m_key].scanMonth = monthId(today);
     setPlayhead(m_now, today);
@@ -211,13 +211,64 @@ void LiveReplay::stop()
 {
     if (m_key.isEmpty())
         return;
-    qCInfo(lcUi).noquote() << "live replay" << m_key << "back to live";
+    qCInfo(lcUi).noquote() << "live replay" << m_keys.join(QLatin1Char(' ')) << "back to live";
     m_key.clear();
+    m_keys.clear();
     // The pane lets its recording go before the group turns back to forwards (reset): a turn
     // while it still replays would open a forward recorder stream as it closes (ticket 08d).
     emit replayingChanged();
     reset();
     emit recordingsChanged();
+}
+
+bool LiveReplay::join(const QString &cameraKey)
+{
+    if (!replaying() || cameraKey.isEmpty() || m_books.contains(cameraKey)
+        || m_keys.size() >= kMaxCameras)
+        return false;
+    m_keys << cameraKey;
+    const QDate today = dayOf(m_now);
+    Book &b = m_books[cameraKey];
+    b.scanMonth = monthId(today);
+    qCInfo(lcUi).noquote() << "live replay" << cameraKey << "joins" << m_key;
+    emit replayingChanged();
+    emit recordingsChanged();
+    want(cameraKey, m_day.isValid() ? m_day : today, true);   // the playhead's day first
+    want(cameraKey, today, true);
+    return true;
+}
+
+void LiveReplay::leave(const QString &cameraKey)
+{
+    if (!m_books.contains(cameraKey))
+        return;
+    if (m_keys.size() == 1) {
+        stop();
+        return;
+    }
+    qCInfo(lcUi).noquote() << "live replay" << cameraKey << "back to live";
+    m_keys.removeAll(cameraKey);
+    m_books.remove(cameraKey);
+    if (cameraKey == m_key) {
+        m_key = m_keys.first();
+        m_pending = Pending::None;   // a play waiting on the old lead's search
+    }
+    emit replayingChanged();
+    emit dayChanged();
+    emit recordingsChanged();
+}
+
+bool LiveReplay::setLead(const QString &cameraKey)
+{
+    if (!m_books.contains(cameraKey))
+        return false;
+    if (cameraKey != m_key) {
+        m_key = cameraKey;
+        m_pending = Pending::None;
+        emit replayingChanged();
+        emit dayChanged();
+    }
+    return true;
 }
 
 void LiveReplay::want(const QString &key, const QDate &day, bool urgent)
@@ -453,7 +504,11 @@ void LiveReplay::setBufferSpans(const QString &key, const QVariantList &spans)
 
 bool LiveReplay::inBuffer(double epoch) const
 {
-    const Book &b = leadBook();
+    return inBufferOf(leadBook(), epoch);
+}
+
+bool LiveReplay::inBufferOf(const Book &b, double epoch)
+{
     for (const Span &s : b.buffer)
         if (epoch >= s.start && epoch <= s.end)
             return true;
@@ -636,7 +691,8 @@ void LiveReplay::land(double epoch, const QDate &day)
     if (epoch >= nextMidnight)
         epoch = nextMidnight - 1;
     m_pending = Pending::None;
-    m_landedInBuffer = inBuffer(epoch);
+    for (Book &b : m_books)   // every pane opens there: in its buffer or its recorder
+        b.landedInBuffer = inBufferOf(b, epoch);
     opened(m_key);
     setPlayhead(epoch, day);
     emit playWanted(epoch);
@@ -657,15 +713,26 @@ void LiveReplay::setPlayhead(double epoch, const QDate &day)
 
 void LiveReplay::frameAt(const QString &key, double epoch, double wallMs)
 {
-    // The lead camera's frames move the playhead (ticket 15a, as Playback).
-    if (!replaying() || key != m_key || epoch <= 0)
+    const auto it = m_books.find(key);
+    if (!replaying() || it == m_books.end() || epoch <= 0)
         return;
-    // Forwards in the recorder's footage, reaching the live buffer: play on from the buffer
-    // (ticket 08b), not on to the recorder's stall at its newest footage.
-    if (m_group->direction() > 0 && !m_landedInBuffer && inBuffer(epoch)) {
-        land(epoch, dayOf(epoch));
+    // Forwards in the recorder's footage, reaching this camera's live buffer: its pane plays
+    // on from the buffer (ticket 08b), not on to the recorder's stall at its newest footage —
+    // that pane only (ticket 15a).
+    Book &b = it.value();
+    if (m_group->direction() > 0 && !b.landedInBuffer && inBufferOf(b, epoch)) {
+        b.landedInBuffer = true;
+        qCInfo(lcUi).noquote() << "live replay" << key << "into its live buffer";
+        if (key == m_key) {
+            opened(m_key);
+            setPlayhead(epoch, dayOf(epoch));
+        }
+        emit paneWanted(key, epoch);
         return;
     }
+    // Only the lead camera's frames move the playhead (Playback's rule).
+    if (key != m_key)
+        return;
     if (epoch != m_lastFrame) {
         m_lastFrame = epoch;
         m_lastMoveWall = wallMs;

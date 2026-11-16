@@ -1,6 +1,8 @@
 #include "ui/LiveReplay.h"
 
 #include <QSignalSpy>
+
+#include <algorithm>
 #include <QtTest>
 
 using namespace rl;
@@ -332,15 +334,19 @@ private slots:
         rec.answerAll(1);
         r.setBufferSpans(r.cameraKey(), QVariantList{QVariantMap{{"start", kNow - 150}, {"end", kNow}}});
         QSignalSpy play(&r, &LiveReplay::playWanted);
+        QSignalSpy pane(&r, &LiveReplay::paneWanted);
         r.playFrom(kNow - 400, 1);                  // the recorder
         QCOMPARE(play.count(), 1);
         r.frameAt(r.cameraKey(), kNow - 200, 0);
+        QCOMPARE(pane.count(), 0);
+        r.frameAt(r.cameraKey(), kNow - 150, 0);    // the buffer's oldest frame: only this pane
         QCOMPARE(play.count(), 1);
-        r.frameAt(r.cameraKey(), kNow - 150, 0);                   // the buffer's oldest frame
-        QCOMPARE(play.count(), 2);
-        QCOMPARE(play.last().at(0).toDouble(), kNow - 150);
-        r.frameAt(r.cameraKey(), kNow - 140, 0);                   // now playing the buffer: no more reopens
-        QCOMPARE(play.count(), 2);
+        QCOMPARE(pane.count(), 1);
+        QCOMPARE(pane.last().at(0).toString(), QStringLiteral("5:0"));
+        QCOMPARE(pane.last().at(1).toDouble(), kNow - 150);
+        QCOMPARE(r.playhead(), kNow - 150);
+        r.frameAt(r.cameraKey(), kNow - 140, 0);    // now playing the buffer: no more reopens
+        QCOMPARE(pane.count(), 1);
     }
 
     // Forwards, the buffer's end is now: playing into it returns the pane to live, rather than
@@ -723,6 +729,143 @@ private slots:
         QCOMPARE(r.behind(), 90.0);
         r.setNow(kNow + 10);
         QCOMPARE(r.behind(), 100.0);
+    }
+
+    // ---- several panes in step (ticket 15a) ----
+    // A pane joins a running replay (up to four); it searches its own recorder, starting with
+    // today; the first camera leads.
+    void panesJoinUpToFourAndSearchTheirOwnRecorders()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        QVERIFY(!r.join(QStringLiteral("1:6")));          // nothing replaying: start first
+        r.start(QStringLiteral("5:0"));
+        QVERIFY(r.join(QStringLiteral("1:6")));
+        QVERIFY(!r.join(QStringLiteral("1:6")));          // already in
+        QVERIFY(r.join(QStringLiteral("1:2")));
+        QVERIFY(r.join(QStringLiteral("2:2")));
+        QVERIFY(!r.join(QStringLiteral("3:0")));          // a fifth
+        QCOMPARE(r.cameraKeys(), (QStringList{"5:0", "1:6", "1:2", "2:2"}));
+        QCOMPARE(r.cameraKey(), QStringLiteral("5:0"));   // the lead
+        QCOMPARE(rec.askedBy, (QStringList{"5:0", "1:6", "1:2", "2:2"}));   // one each, at once
+        QVERIFY(std::all_of(rec.asked.begin(), rec.asked.end(), [](const QDate &d) { return d == kToday; }));
+    }
+    // Leaving: another pane leaves alone; the lead leaving hands the lead on; the last one
+    // leaving ends replay.
+    void leavingHandsTheLeadOnAndTheLastEndsReplay()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        r.start(QStringLiteral("5:0"));
+        r.join(QStringLiteral("1:6"));
+        r.join(QStringLiteral("1:2"));
+        QSignalSpy changed(&r, &LiveReplay::replayingChanged);
+        r.leave(QStringLiteral("1:6"));
+        QCOMPARE(r.cameraKeys(), (QStringList{"5:0", "1:2"}));
+        QCOMPARE(changed.count(), 1);
+        r.leave(QStringLiteral("5:0"));
+        QCOMPARE(r.cameraKey(), QStringLiteral("1:2"));
+        QVERIFY(r.replaying());
+        r.leave(QStringLiteral("1:2"));
+        QVERIFY(!r.replaying());
+        QVERIFY(r.cameraKeys().isEmpty());
+    }
+    // The lead's footage decides where a play lands, and only its frames move the playhead;
+    // setLead hands it to another replaying camera (the selected pane, as Playback).
+    void theLeadDecidesWhereAPlayLands()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 7200}});              // both cameras: 01:00–02:00
+        r.start(QStringLiteral("5:0"));
+        r.join(QStringLiteral("1:6"));
+        rec.answerAll();
+        // 1:6 also has 08:00–09:00 (answered as its own).
+        r.dayFound(QStringLiteral("1:6"), 2026, 11, 15, segs({{3600, 7200}, {28800, 32400}}), {});
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.playFrom(at(2026, 11, 15, 8, 30), -1);              // the lead has nothing then
+        QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 15, 2, 0));
+        QVERIFY(r.covers(QStringLiteral("1:6"), at(2026, 11, 15, 8, 30)));
+        QVERIFY(!r.covers(QStringLiteral("5:0"), at(2026, 11, 15, 8, 30)));
+        r.frameAt(QStringLiteral("1:6"), at(2026, 11, 15, 1, 50), 0);   // not the lead's frame
+        QCOMPARE(r.playhead(), at(2026, 11, 15, 2, 0));
+        QVERIFY(!r.setLead(QStringLiteral("3:0")));                      // not replaying
+        QVERIFY(r.setLead(QStringLiteral("1:6")));
+        QCOMPARE(r.cameraKey(), QStringLiteral("1:6"));
+        r.playFrom(at(2026, 11, 15, 8, 30), -1);              // now 1:6's footage decides
+        QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 15, 8, 30));
+        QCOMPARE(r.daySegmentsFor(QStringLiteral("1:6")).size(), 2);
+        QCOMPARE(r.daySegmentsFor(QStringLiteral("5:0")).size(), 1);
+    }
+    // Only the lead's stream running out moves every pane on.
+    void onlyTheLeadsEndCarriesEveryPaneOn()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 7200}, {28800, 32400}});
+        r.start(QStringLiteral("5:0"));
+        r.join(QStringLiteral("1:6"));
+        rec.answerAll();
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.playFrom(at(2026, 11, 15, 8, 30), -1);
+        QCOMPARE(play.count(), 1);
+        r.frameAt(QStringLiteral("5:0"), at(2026, 11, 15, 8, 0), 0);
+        r.carryOn(QStringLiteral("1:6"), -1);                 // another pane's end: nothing
+        QCOMPARE(play.count(), 1);
+        r.carryOn(QStringLiteral("5:0"), -1);                 // the lead's: the previous recording
+        QCOMPARE(play.count(), 2);
+        QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 15, 2, 0));
+    }
+    // Forwards, another pane reaching its own live buffer switches only that pane.
+    void anotherPaneSwitchesToItsOwnBuffer()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 35880}});
+        r.start(QStringLiteral("5:0"));
+        r.join(QStringLiteral("1:6"));
+        rec.answerAll();
+        r.setBufferSpans(QStringLiteral("1:6"), QVariantList{QVariantMap{{"start", kNow - 150}, {"end", kNow}}});
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        QSignalSpy pane(&r, &LiveReplay::paneWanted);
+        r.playFrom(kNow - 400, 1);
+        r.frameAt(QStringLiteral("5:0"), kNow - 160, 0);
+        r.frameAt(QStringLiteral("1:6"), kNow - 150, 0);
+        QCOMPARE(play.count(), 1);
+        QCOMPARE(pane.count(), 1);
+        QCOMPARE(pane.last().at(0).toString(), QStringLiteral("1:6"));
+        QCOMPARE(r.playhead(), kNow - 160);                    // the lead's time stays
+        r.frameAt(QStringLiteral("1:6"), kNow - 140, 0);
+        QCOMPARE(pane.count(), 1);
+    }
+    // The time line reaches the oldest any camera has; found once every camera's is.
+    void theOldestIsTheOldestAnyCameraHas()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.months[202611] = days({15});
+        rec.months[202610] = days({});
+        rec.book[kToday] = segs({{3600, 7200}});
+        r.start(QStringLiteral("5:0"));
+        rec.answerAll();
+        QVERIFY(r.oldestFound());
+        QCOMPARE(r.oldest(), at(2026, 11, 15, 1, 0));
+        r.join(QStringLiteral("1:6"));
+        QVERIFY(!r.oldestFound());                             // 1:6's not yet
+        r.dayFound(QStringLiteral("1:6"), 2026, 11, 15, segs({{1800, 7200}}), days({15}));
+        rec.asked.clear();
+        rec.askedBy.clear();
+        r.dayFound(QStringLiteral("1:6"), 2026, 10, 1, {}, days({}));
+        QVERIFY(r.oldestFound());
+        QCOMPARE(r.oldest(), at(2026, 11, 15, 0, 30));
+        r.dayFound(QStringLiteral("3:0"), 2026, 11, 15, segs({{0, 60}}), {});   // not replaying
+        QCOMPARE(r.oldest(), at(2026, 11, 15, 0, 30));
     }
 };
 

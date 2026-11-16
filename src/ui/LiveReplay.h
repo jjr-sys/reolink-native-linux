@@ -33,7 +33,8 @@ class LiveReplay : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool replaying READ replaying NOTIFY replayingChanged)
-    Q_PROPERTY(QString cameraKey READ cameraKey NOTIFY replayingChanged)
+    Q_PROPERTY(QString cameraKey READ cameraKey NOTIFY replayingChanged)    // the lead
+    Q_PROPERTY(QStringList cameraKeys READ cameraKeys NOTIFY replayingChanged)
     Q_PROPERTY(double now READ now WRITE setNow NOTIFY nowChanged)
     Q_PROPERTY(double playhead READ playhead NOTIFY playheadChanged)
     Q_PROPERTY(double behind READ behind NOTIFY behindChanged)
@@ -50,6 +51,8 @@ public:
 
     bool replaying() const { return !m_key.isEmpty(); }
     QString cameraKey() const { return m_key; }
+    QStringList cameraKeys() const { return m_keys; }
+    static constexpr int kMaxCameras = 4;
     double now() const { return m_now; }
     void setNow(double epochSecs);
     double playhead() const { return m_playhead; }
@@ -68,8 +71,16 @@ public:
     // This camera replays (any other goes back to live): a fresh day book, 1× forward, and
     // today asked for first.
     Q_INVOKABLE void start(const QString &cameraKey);
-    // Back to live.
+    // Back to live (every replaying pane).
     Q_INVOKABLE void stop();
+    // Several panes in step (ticket 15): another camera joins the running replay at the
+    // playhead (false when nothing replays, it's in already, or four are); it searches its own
+    // recorder. leave: that pane back to live (the lead's leaving hands the lead to the next;
+    // the last's ends replay). setLead: the camera whose footage and frames lead (Playback's
+    // selected pane); false when it isn't replaying.
+    Q_INVOKABLE bool join(const QString &cameraKey);
+    Q_INVOKABLE void leave(const QString &cameraKey);
+    Q_INVOKABLE bool setLead(const QString &cameraKey);
 
     // Play from `epoch`, going `direction` (1 forwards, -1 backwards): there if a recording
     // covers it, else forwards to the next recording's start (or, with nothing ahead before
@@ -128,8 +139,10 @@ signals:
     void recordingsChanged();
     // Ask the camera's device for this day's recordings (answer with dayFound / dayFailed).
     void searchWanted(const QString &key, int year, int month, int day);
-    // Open the pane's stream at `epoch` (the playhead and its day are already there).
+    // Open every replaying pane's stream at `epoch` (the playhead and its day are already there).
     void playWanted(double epoch);
+    // Open one pane's stream at `epoch`: forwards, its recorder footage reached its live buffer.
+    void paneWanted(const QString &cameraKey, double epoch);
     // Backwards reached the oldest recording: pause there.
     void nothingEarlier();
 
@@ -162,6 +175,7 @@ private:
         QDate oldestDay;                 // once found
         int scanMonth = 0;               // year*100+month the oldest scan asked for last (0 = idle)
         double todayAnswered = -1;       // now when today's search was last answered
+        bool landedInBuffer = false;     // its pane's last play opened in its buffer
         bool known(const QDate &day) const { return days.contains(day); }
     };
     const Book &leadBook() const
@@ -171,6 +185,7 @@ private:
         return it == m_books.cend() ? none : it.value();
     }
     static double oldestOf(const Book &b);
+    static bool inBufferOf(const Book &b, double epoch);
 
     void reset();
     void want(const QString &key, const QDate &day, bool urgent);
@@ -203,8 +218,8 @@ private:
     QDate m_day;                       // the playhead's day (a recording's end at midnight is its day's)
     bool m_paused = false;
 
-    QHash<QString, Book> m_books;      // the replaying cameras' (one: the lead's)
-    bool m_landedInBuffer = false;     // the last play opened in the lead's buffer
+    QHash<QString, Book> m_books;      // the replaying cameras'
+    QStringList m_keys;                // the replaying cameras, in the order they joined
 
     Pending m_pending = Pending::None;
     double m_pendingEpoch = 0;
