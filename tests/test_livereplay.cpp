@@ -120,7 +120,37 @@ private slots:
         r.stop();
         QVERIFY(!r.replaying());
         QCOMPARE(r.cameraKey(), QString());
-        QCOMPARE(changed.count(), 3);
+        QCOMPARE(changed.count(), 4);   // 5:0, back to live, 1:6, back to live
+    }
+    // ● Live, or replay moving to another pane, lets the replaying pane go before the group
+    // turns back to forwards (live-replay 08d): turning while that pane still replays made its
+    // recording open a forward stream just before it closed.
+    void backToLiveLetsThePaneGoBeforeTheGroupTurnsForwards()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        // What QML sees, in order: the camera replaying (replayingChanged also notifies
+        // cameraKey) and each turn of the group.
+        QStringList seen;
+        connect(&r, &LiveReplay::replayingChanged, this,
+                [&] { seen << QStringLiteral("pane ") + r.cameraKey(); });
+        connect(r.group(), &PlaybackGroup::speedChanged, this,
+                [&] { seen << QStringLiteral("turn"); });
+        r.start(QStringLiteral("5:0"));
+        r.group()->playBackward();
+        seen.clear();
+        r.stop();
+        QCOMPARE(seen.first(), QStringLiteral("pane "));
+        QVERIFY(seen.contains(QStringLiteral("turn")));
+
+        r.start(QStringLiteral("5:0"));
+        r.group()->playBackward();
+        seen.clear();
+        r.start(QStringLiteral("1:6"));
+        QCOMPARE(seen.first(), QStringLiteral("pane "));
+        QVERIFY(seen.indexOf(QStringLiteral("turn")) < seen.indexOf(QStringLiteral("pane 1:6")));
+        QCOMPARE(r.cameraKey(), QStringLiteral("1:6"));
     }
     // A new camera starts with a fresh day book: one camera's recordings are not another's.
     void anotherCameraForgetsTheRecordings()

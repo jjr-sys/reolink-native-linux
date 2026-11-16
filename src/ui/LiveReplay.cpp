@@ -166,6 +166,7 @@ void LiveReplay::start(const QString &cameraKey)
 {
     if (cameraKey.isEmpty() || cameraKey == m_key)
         return;
+    stop();   // another pane was replaying: it goes back to live first
     reset();
     m_key = cameraKey;
     const QDate today = dayOf(m_now);
@@ -183,8 +184,10 @@ void LiveReplay::stop()
         return;
     qCInfo(lcUi).noquote() << "live replay" << m_key << "back to live";
     m_key.clear();
-    reset();
+    // The pane lets its recording go before the group turns back to forwards (reset): a turn
+    // while it still replays would open a forward recorder stream as it closes (ticket 08d).
     emit replayingChanged();
+    reset();
     emit recordingsChanged();
 }
 
