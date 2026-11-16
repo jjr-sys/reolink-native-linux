@@ -416,11 +416,12 @@ Item {
     readonly property bool replayKeysOn: active && !(Window.activeFocusItem
                                                      && Window.activeFocusItem.cursorPosition !== undefined)
     Shortcut { sequence: "J"; enabled: page.replayKeysOn; onActivated: page.replayKey("J") }
-    Shortcut { sequence: "K"; enabled: page.replayKeysOn && liveReplay.replaying; onActivated: page.replayKey("K") }
-    Shortcut { sequence: "L"; enabled: page.replayKeysOn && liveReplay.replaying; onActivated: page.replayKey("L") }
+    // At live K and L have nothing to act on: the pane says why (PaneBarRules.press).
+    Shortcut { sequence: "K"; enabled: page.replayKeysOn; onActivated: page.replayKey("K") }
+    Shortcut { sequence: "L"; enabled: page.replayKeysOn; onActivated: page.replayKey("L") }
 
     // ← / →: while a pane replays, 10 s back / forward; else a maximised pane steps to its
-    // neighbour, and ← on a selected grid pane starts replay 10 s back.
+    // neighbour, ← on a selected grid pane starts replay 10 s back and → there says why not.
     Shortcut {
         sequence: "Left"
         enabled: page.replayKeysOn
@@ -431,7 +432,7 @@ Item {
     }
     Shortcut {
         sequence: "Right"
-        enabled: page.replayKeysOn && (page.canStep || liveReplay.replaying)
+        enabled: page.replayKeysOn
         onActivated: {
             if (!liveReplay.replaying && page.canStep) page.step(1);
             else page.replayKey("Right");

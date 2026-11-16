@@ -132,7 +132,7 @@ Rectangle {
     property LiveReplay replay: null
     property bool replayable: false
     readonly property bool replaying: replayControls.replaying
-    function replayKey(k) { return replayControls.key(k); }
+    function replayKey(k) { return replayControls.key(k, paneBar.press(k)); }
     function replayBehind(secs, dir, fast) { replayControls.playBehind(secs, dir, fast); }
     function replayGoLive() { replayControls.goLive(); }
     function replayPause() { replayControls.pause(); }

@@ -51,6 +51,8 @@ Item {
     readonly property bool visibleNow: pill.visible
     readonly property real pillTop: pill.visible ? pill.y : height
     readonly property bool hasTransport: PaneBarRules.hasTransport(rules)
+    // A key or button press on this pane: { id, refusal } (PaneBarRules.press).
+    function press(idOrKey) { return PaneBarRules.press(rules, idOrKey); }
 
     // ---- Rules ----------------------------------------------------------------------------
     readonly property var rules: ({

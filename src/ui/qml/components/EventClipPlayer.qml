@@ -145,10 +145,12 @@ Item {
     function key(k) {
         if (!clip.active)
             return false;
-        const id = TransportActions.keyId(k);
-        if (id === "" || (k === "J" && clip.frigate))
-            return false;
-        return TransportActions.apply(id, clip.group, root);
+        const p = paneBar.press(k);   // PaneBarRules.press: J on a Frigate clip says why not
+        if (p.refusal !== "") {
+            notice.show(p.refusal, notice.refusalMs);
+            return true;
+        }
+        return p.id !== "" && TransportActions.apply(p.id, clip.group, root);
     }
     function _openInPlayback() {
         const at = Math.floor(clip.handOffAt());
@@ -376,7 +378,11 @@ Item {
                 height: noticeText.implicitHeight + 12
                 radius: 4
                 color: "#dd0d141b"
-                function show(t) { noticeText.text = t; opacity = 1; noticeTimer.restart(); }
+                readonly property int refusalMs: 2000   // why a key did nothing: short
+                function show(t, ms) {
+                    noticeText.text = t; opacity = 1;
+                    noticeTimer.interval = ms || 4000; noticeTimer.restart();
+                }
                 Text {
                     id: noticeText
                     anchors.centerIn: parent

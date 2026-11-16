@@ -5,7 +5,7 @@
 // `target` is the pane's handler: skip(secs), togglePause() and speedAction(step[, dir]), which
 // applies `step` (a PlaybackGroup change) its own way — `dir` is -1 for the backwards buttons
 // (Live replay starts from live on those; Playback and Events don't need it).
-// Each page's key(k) keeps its own guards (J on Frigate clips, → at live) around keyId().
+// Which button a key is, and whether a press can act (and why not), is PaneBarRules.press.
 
 // The speed buttons: the PlaybackGroup change each makes and its direction.
 const speeds = {
@@ -30,18 +30,4 @@ function apply(id, group, target) {
     case "pause": target.togglePause(); return true;
     }
     return false;
-}
-
-// The page keys as buttons: J « · K ❚❚ · L » · ← ↺ · → ↻ ("" for any other key). One exception
-// is the caller's: on a Live pane at live, J starts ◀ at 1× (LiveReplayControls.key), as the
-// pane's ◀ does, rather than fast backwards.
-function keyId(k) {
-    switch (k) {
-    case "J": return "fastBack";
-    case "K": return "pause";
-    case "L": return "fastForward";
-    case "Left": return "skipBack";
-    case "Right": return "skipForward";
-    }
-    return "";
 }

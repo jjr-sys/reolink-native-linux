@@ -218,22 +218,21 @@ Item {
         user();
         replay.playFrom(replay.now - secs, dir);
     }
-    // The page's keys: J, K, L, Left, Right.
-    function key(k) {
+    // The page's keys: J, K, L, Left, Right, and `p` the pane bar's answer to the press
+    // (PaneBarRules.press: J from live is ◀; K, L and → at live say why not).
+    function key(k, p) {
         if (!replayable)
             return false;
-        // J from live starts ◀ (as the bar's ◀); while replaying it steps « like a forwards
-        // speed (no restart of a paused replay's direction first).
-        if (k === "J") {
-            if (!replaying) back(() => group.playBackward());
-            else speed(() => group.stepFast(-1));
+        if (p.refusal !== "") {
+            notice.show(p.refusal, notice.refusalMs);
             return true;
         }
-        if (k === "Right" && !replaying)
+        if (p.id === "")
             return false;
-        const id = TransportActions.keyId(k);
-        if (id !== "")
-            TransportActions.apply(id, group, root);
+        // While replaying J steps « like a forwards speed (no restart of a paused replay's
+        // direction first).
+        if (k === "J" && replaying) speed(() => group.stepFast(-1));
+        else TransportActions.apply(p.id, group, root);
         return true;
     }
 
@@ -416,7 +415,11 @@ Item {
         height: noticeText.implicitHeight + 12
         radius: 4
         color: "#dd0d141b"
-        function show(t) { noticeText.text = t; opacity = 1; noticeTimer.restart(); }
+        readonly property int refusalMs: 2000   // why a key did nothing: short
+        function show(t, ms) {
+            noticeText.text = t; opacity = 1;
+            noticeTimer.interval = ms || 4000; noticeTimer.restart();
+        }
         Text { id: noticeText; anchors.centerIn: parent; color: Theme.text; font.pixelSize: 12 }
         Timer { id: noticeTimer; interval: 4000; onTriggered: notice.opacity = 0 }
         Behavior on opacity { NumberAnimation { duration: 200 } }

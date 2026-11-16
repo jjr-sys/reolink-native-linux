@@ -984,7 +984,6 @@ Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.max(leftTools.height, centre.height, rightTools.height)
                 readonly property bool playing: page.streamingPanes > 0
-                readonly property string frigateTip: qsTr("Frigate plays at 1× forward only")
                 component Ctl: Rectangle {
                     id: ctl
                     property string glyph: ""
@@ -1033,8 +1032,8 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: Theme.spacing
                     // Jump 10 s, keeping the speed.
-                    Ctl { glyph: "↺"; caption: qsTr("10s"); tip: qsTr("Back 10 seconds (←)"); onActivated: page.skip(-10) }
-                    Ctl { glyph: "↻"; caption: qsTr("10s"); tip: qsTr("Forward 10 seconds (→)"); onActivated: page.skip(10) }
+                    Ctl { glyph: "↺"; caption: qsTr("10s"); tip: qsTr("Back 10 seconds (←)"); onActivated: page.press("skipBack") }
+                    Ctl { glyph: "↻"; caption: qsTr("10s"); tip: qsTr("Forward 10 seconds (→)"); onActivated: page.press("skipForward") }
                     Sep {}
                     Ctl { glyph: "📷"; tip: qsTr("Save a snapshot of every pane")
                           onActivated: page.snapshot() }
@@ -1126,62 +1125,64 @@ Item {
                                 Math.min((bar.width - width) / 2, bar.width - rightTools.width - 12 - width))
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 2
-                    readonly property bool locked: group.speedLocked
-                    readonly property bool noReverse: locked   // reverse plays on every recorder (ticket 12)
-                    readonly property string backTip: bar.frigateTip
+                    // The transport's buttons: greyed (with why), lit (PaneBarRules).
+                    readonly property var t: PaneBarRules.transport(page.barRules, 0)
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        text: { group.speed; group.direction; return group.label(!bar.playing); }
-                        color: group.offNormal ? Theme.accent : Theme.textMuted
-                        font.pixelSize: 12; font.bold: group.offNormal
+                        text: {
+                            group.speed; group.direction;
+                            return page.refusal !== "" ? page.refusal : group.label(!bar.playing);
+                        }
+                        color: page.refusal !== "" ? Theme.text : group.offNormal ? Theme.accent : Theme.textMuted
+                        font.pixelSize: 12; font.bold: page.refusal === "" && group.offNormal
                     }
                     Row {
                         spacing: 5
                         Ctl {
                             anchors.verticalCenter: parent.verticalCenter
-                            glyph: "«"; caption: qsTr("fast"); dim: centre.noReverse
-                            lit: bar.playing && group.direction === -1 && group.speed >= 2
-                            tip: dim ? centre.backTip : qsTr("Fast backwards: 2× → 4× → 8× → 16× → back to 1× (J)")
-                            onActivated: page.speedAction(() => group.stepFast(-1))
+                            glyph: "«"; caption: qsTr("fast"); dim: !centre.t.fastBack.enabled
+                            lit: centre.t.fastBack.lit
+                            tip: dim ? centre.t.fastBack.reason : qsTr("Fast backwards: 2× → 4× → 8× → 16× → back to 1× (J)")
+                            onActivated: page.press("fastBack")
                         }
                         Ctl {
                             anchors.verticalCenter: parent.verticalCenter
-                            glyph: "◀½"; caption: qsTr("slow"); dim: centre.noReverse
-                            lit: bar.playing && group.direction === -1 && group.speed < 1
-                            tip: dim ? centre.backTip : qsTr("Slow backwards: ½× → ¼× → back to 1×")
-                            onActivated: page.speedAction(() => group.stepSlow(-1))
+                            glyph: "◀½"; caption: qsTr("slow"); dim: !centre.t.slowBack.enabled
+                            lit: centre.t.slowBack.lit
+                            tip: dim ? centre.t.slowBack.reason : qsTr("Slow backwards: ½× → ¼× → back to 1×")
+                            onActivated: page.press("slowBack")
                         }
                         Ctl {
-                            big: true; glyph: "◀"; dim: centre.noReverse
-                            lit: bar.playing && group.direction === -1 && group.speed === 1
-                            tip: dim ? centre.backTip : qsTr("Play backwards at 1×")
-                            onActivated: page.speedAction(() => group.playBackward())
+                            big: true; glyph: "◀"; dim: !centre.t.back.enabled
+                            lit: centre.t.back.lit
+                            tip: dim ? centre.t.back.reason : qsTr("Play backwards at 1×")
+                            onActivated: page.press("back")
                         }
                         Ctl {
                             big: true; glyph: "⏸"
                             glyphColor: bar.playing ? Theme.text : Theme.accent
                             tip: bar.playing ? qsTr("Pause (K)") : qsTr("Paused: play on at this speed (K)")
-                            onActivated: page.togglePause()
+                            onActivated: page.press("pause")
                         }
                         Ctl {
                             big: true; glyph: "▶"
-                            lit: bar.playing && !group.offNormal
+                            lit: centre.t.forward.lit
                             tip: qsTr("Play at 1×")
-                            onActivated: page.speedAction(() => group.playForward())
+                            onActivated: page.press("forward")
                         }
                         Ctl {
                             anchors.verticalCenter: parent.verticalCenter
-                            glyph: "▶½"; caption: qsTr("slow"); dim: centre.locked
-                            lit: bar.playing && group.direction === 1 && group.speed < 1
-                            tip: dim ? bar.frigateTip : qsTr("Slow forwards: ½× → ¼× → back to 1×")
-                            onActivated: page.speedAction(() => group.stepSlow(1))
+                            glyph: "▶½"; caption: qsTr("slow"); dim: !centre.t.slowForward.enabled
+                            lit: centre.t.slowForward.lit
+                            tip: dim ? centre.t.slowForward.reason : qsTr("Slow forwards: ½× → ¼× → back to 1×")
+                            onActivated: page.press("slowForward")
                         }
                         Ctl {
                             anchors.verticalCenter: parent.verticalCenter
-                            glyph: "»"; caption: qsTr("fast"); dim: centre.locked
-                            lit: bar.playing && group.direction === 1 && group.speed >= 2
-                            tip: dim ? bar.frigateTip : qsTr("Fast forwards: 2× → 4× → 8× → 16× → back to 1× (L)")
-                            onActivated: page.speedAction(() => group.stepFast(1))
+                            glyph: "»"; caption: qsTr("fast"); dim: !centre.t.fastForward.enabled
+                            lit: centre.t.fastForward.lit
+                            tip: dim ? centre.t.fastForward.reason : qsTr("Fast forwards: 2× → 4× → 8× → 16× → back to 1× (L)")
+                            onActivated: page.press("fastForward")
                         }
                     }
                 }
@@ -1293,19 +1294,32 @@ Item {
     // focus keeps its own keys.
     readonly property bool keysOn: active && !(Window.activeFocusItem
                                                && Window.activeFocusItem.cursorPosition !== undefined)
-    Shortcut {
-        sequence: "J"
-        enabled: page.keysOn && group.reverseAvailable && !group.speedLocked
-        onActivated: page.speedAction(() => group.stepFast(-1))
+    // Whether a key or a bottom-bar button acts, and why not, is PaneBarRules' (architecture
+    // ticket 04): the bottom bar is the whole group's, so its camera is a recorder's and a
+    // Frigate pane shows as speedLocked.
+    readonly property var barRules: ({
+        page: "playback", camera: "recorder",
+        direction: group.direction, speed: group.speed,
+        paused: page.streamingPanes === 0,
+        speedLocked: group.speedLocked, reverseAvailable: group.reverseAvailable
+    })
+    // A refused key's reason, shown for 2 s in the bottom bar's speed line.
+    property string refusal: ""
+    Timer { id: refusalTimer; interval: 2000; onTriggered: page.refusal = "" }
+    function press(idOrKey) {
+        const p = PaneBarRules.press(page.barRules, idOrKey);
+        if (p.refusal !== "") {
+            page.refusal = p.refusal;
+            refusalTimer.restart();
+        } else if (p.id !== "") {
+            TransportActions.apply(p.id, group, page);
+        }
     }
-    Shortcut { sequence: "K"; enabled: page.keysOn; onActivated: page.togglePause() }
-    Shortcut {
-        sequence: "L"
-        enabled: page.keysOn && !group.speedLocked
-        onActivated: page.speedAction(() => group.stepFast(1))
-    }
-    Shortcut { sequence: "Left"; enabled: page.keysOn; onActivated: page.skip(-10) }
-    Shortcut { sequence: "Right"; enabled: page.keysOn; onActivated: page.skip(10) }
+    Shortcut { sequence: "J"; enabled: page.keysOn; onActivated: page.press("J") }
+    Shortcut { sequence: "K"; enabled: page.keysOn; onActivated: page.press("K") }
+    Shortcut { sequence: "L"; enabled: page.keysOn; onActivated: page.press("L") }
+    Shortcut { sequence: "Left"; enabled: page.keysOn; onActivated: page.press("Left") }
+    Shortcut { sequence: "Right"; enabled: page.keysOn; onActivated: page.press("Right") }
 
     UndoToast {
         id: undoToast
