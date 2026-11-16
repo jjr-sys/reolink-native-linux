@@ -3,11 +3,12 @@
 #include <QObject>
 #include <QString>
 #include <QTemporaryDir>
-#include <QThreadPool>
 #include <QUrl>
 
 #include <atomic>
 #include <memory>
+
+class QThreadPool;
 
 namespace rl {
 
@@ -48,7 +49,9 @@ signals:
 
 private:
     void setState(State s);
-    void stopDownload();   // the running download, if any, stops (load, cancel, going)
+    // A newer load, a cancel or the loader going: the running download's answer is dropped
+    // and the download stops. Returns the new generation.
+    int supersede();
 
     QTemporaryDir m_dir;
     State m_state = State::Idle;
@@ -56,11 +59,11 @@ private:
     qint64 m_durationMs = 0;
     QString m_error;
     int m_generation = 0; // a finished download for an older load() is dropped
-    std::shared_ptr<std::atomic<bool>> m_stop;   // the running download's stop flag
-    // Its own pool, not the app's: the loader waits for its worker when it goes, so no
-    // download outlives it (it used to hold up quitting for up to 90 s). Declared after
+    std::shared_ptr<std::atomic<bool>> m_cancel;   // the running download's cancel flag
+    // Its own pool, not the app's: the loader waits (briefly) for its worker when it goes, so
+    // no download outlives it (it used to hold up quitting for up to 90 s). Declared after
     // m_dir so the worker is done before the folder goes.
-    QThreadPool m_pool;
+    std::unique_ptr<QThreadPool> m_pool = std::make_unique<QThreadPool>();
 };
 
 } // namespace rl

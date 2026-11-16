@@ -347,9 +347,12 @@ void configureTls(QNetworkRequest &request)
     request.setSslConfiguration(ssl);
 }
 
+// How often a wait checks its caller's cancel flag.
+constexpr int kCancelCheckMs = 50;
+
 QByteArray awaitReply(QNetworkReply *reply, int timeoutMs, QString *error,
-                      int *status = nullptr, QByteArray *setCookie = nullptr,
-                      const std::atomic<bool> *stop = nullptr)
+                      const std::atomic<bool> *cancel = nullptr, int *status = nullptr,
+                      QByteArray *setCookie = nullptr)
 {
     QEventLoop loop;
     QTimer timer;
@@ -357,15 +360,15 @@ QByteArray awaitReply(QNetworkReply *reply, int timeoutMs, QString *error,
     QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     timer.start(timeoutMs);
-    QTimer stopCheck;   // the caller gave up (its owner went): stop waiting
-    if (stop) {
-        QObject::connect(&stopCheck, &QTimer::timeout, &loop, [&loop, stop] {
-            if (stop->load())
+    QTimer cancelCheck;   // the caller gave up (its owner went): stop waiting
+    if (cancel) {
+        QObject::connect(&cancelCheck, &QTimer::timeout, &loop, [&loop, cancel] {
+            if (cancel->load())
                 loop.quit();
         });
-        stopCheck.start(50);
+        cancelCheck.start(kCancelCheckMs);
     }
-    if (!stop || !stop->load())
+    if (!cancel || !cancel->load())
         loop.exec();
 
     const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -377,7 +380,7 @@ QByteArray awaitReply(QNetworkReply *reply, int timeoutMs, QString *error,
     QByteArray body;
     if (!reply->isFinished()) {
         if (error)
-            *error = stop && stop->load() ? QStringLiteral("cancelled") : QStringLiteral("timed out");
+            *error = cancel && cancel->load() ? QStringLiteral("cancelled") : QStringLiteral("timed out");
         reply->abort();
     } else {
         body = reply->readAll();
@@ -404,7 +407,7 @@ QByteArray cookieValue(const QByteArray &setCookie)
 }
 
 QByteArray sessionCookie(const QUrl &target, QNetworkAccessManager &nam,
-                         int timeoutMs, QString *error)
+                         int timeoutMs, QString *error, const std::atomic<bool> *cancel = nullptr)
 {
     QMutexLocker lock(&authMutex());
     auto it = authEntries().find(authKey(target));
@@ -429,7 +432,7 @@ QByteArray sessionCookie(const QUrl &target, QNetworkAccessManager &nam,
     int status = 0;
     QByteArray setCookie;
     QString loginError;
-    awaitReply(nam.post(request, body), timeoutMs, &loginError, &status, &setCookie);
+    awaitReply(nam.post(request, body), timeoutMs, &loginError, cancel, &status, &setCookie);
     const QByteArray cookie = cookieValue(setCookie);
     if (status != 200 || cookie.isEmpty()) {
         if (error)
@@ -552,13 +555,13 @@ void installMediaAuth()
 }
 
 QByteArray httpGet(const QString &url, int timeoutMs, QString *error,
-                   const std::atomic<bool> *stop)
+                   const std::atomic<bool> *cancel)
 {
     QNetworkAccessManager nam; // thread-local: safe on any worker thread
     if (error)
         error->clear();
     const QUrl target(url);
-    const QByteArray cookie = sessionCookie(target, nam, timeoutMs, error);
+    const QByteArray cookie = sessionCookie(target, nam, timeoutMs, error, cancel);
     if (error && !error->isEmpty())
         return {};
 
@@ -568,7 +571,7 @@ QByteArray httpGet(const QString &url, int timeoutMs, QString *error,
             request.setRawHeader("Cookie", session);
         configureTls(request);
         int status = 0;
-        QByteArray body = awaitReply(nam.get(request), timeoutMs, error, &status, nullptr, stop);
+        QByteArray body = awaitReply(nam.get(request), timeoutMs, error, cancel, &status);
         return qMakePair(body, status);
     };
 
@@ -577,7 +580,7 @@ QByteArray httpGet(const QString &url, int timeoutMs, QString *error,
         clearSession(target);
         if (error)
             error->clear();
-        const QByteArray renewedCookie = sessionCookie(target, nam, timeoutMs, error);
+        const QByteArray renewedCookie = sessionCookie(target, nam, timeoutMs, error, cancel);
         if (error && !error->isEmpty())
             return {};
         result = get(renewedCookie);

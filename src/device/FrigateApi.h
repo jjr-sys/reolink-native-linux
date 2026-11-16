@@ -1,5 +1,4 @@
 #pragma once
-#include <atomic>
 
 #include "protocol/Json.h"
 
@@ -10,6 +9,8 @@
 #include <QList>
 #include <QStringList>
 #include <QVector>
+
+#include <atomic>
 
 // A Frigate server, used by DeviceManager as a third kind of site. Port 8971 uses
 // Frigate's authenticated HTTPS API; port 5000 remains supported for legacy servers.
@@ -125,10 +126,11 @@ QString latestFrameUrl(const QString &host, int port, const QString &camera);
 void setCredentials(const QString &host, int port, const QString &username,
                     const QString &password);
 
-// Blocking GET for worker threads. Empty result with `error` set on failure. When `stop` is
-// given and becomes true, the request is aborted within about 50 ms ("cancelled").
+// Blocking GET for worker threads. Empty result with `error` set on failure. When `cancel`
+// is given and becomes true, the request (or the sign-in before it) is aborted within about
+// 50 ms, with `error` "cancelled".
 QByteArray httpGet(const QString &url, int timeoutMs, QString *error = nullptr,
-                   const std::atomic<bool> *stop = nullptr);
+                   const std::atomic<bool> *cancel = nullptr);
 // The session cookie ("frigate_token=…") for a host whose login was registered with
 // setCredentials, signing in if needed; empty when it has no login (port 5000) or on
 // failure. Blocking, for worker threads with an event loop (QThread).

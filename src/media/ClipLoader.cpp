@@ -4,6 +4,7 @@
 
 #include <QFile>
 #include <QFutureWatcher>
+#include <QThreadPool>
 #include <QtConcurrent>
 
 #include <algorithm>
@@ -29,6 +30,11 @@ QString avError(int code)
 
 // The server may take a while to cut a long clip.
 constexpr int kDownloadTimeoutMs = 90000;
+// The loader's workers: the download running, and one superseded one winding down.
+constexpr int kWorkers = 2;
+// How long a loader that goes waits for its cancelled worker (it stops within ~50 ms; a remux
+// in progress runs to its end: a few MB).
+constexpr int kGoingWaitMs = 2000;
 
 } // namespace
 
@@ -136,21 +142,26 @@ qint64 remuxToIndexedMp4(const QString &src, const QString &dst, QString *error)
 
 ClipLoader::ClipLoader(QObject *parent) : QObject(parent)
 {
-    m_pool.setMaxThreadCount(2);   // a superseded download winds down beside the new one
+    m_pool->setMaxThreadCount(kWorkers);
 }
 
 ClipLoader::~ClipLoader()
 {
-    ++m_generation;
-    stopDownload();
-    m_pool.waitForDone();   // stopped within ~50 ms (a remux in progress: its few MB)
+    supersede();
+    if (!m_pool->waitForDone(kGoingWaitMs)) {
+        // Never block the caller (the app quitting) on it: the worker holds only its own
+        // copies, so its pool is let go and it ends on its own.
+        qWarning("ClipLoader: a cancelled download didn't stop in %d ms; not waiting", kGoingWaitMs);
+        m_pool.release();
+    }
 }
 
-void ClipLoader::stopDownload()
+int ClipLoader::supersede()
 {
-    if (m_stop)
-        m_stop->store(true);
-    m_stop.reset();
+    if (m_cancel)
+        m_cancel->store(true);
+    m_cancel.reset();
+    return ++m_generation;
 }
 
 void ClipLoader::setState(State s)
@@ -161,8 +172,7 @@ void ClipLoader::setState(State s)
 
 void ClipLoader::cancel()
 {
-    ++m_generation;
-    stopDownload();
+    supersede();
     m_localUrl.clear();
     m_durationMs = 0;
     m_error.clear();
@@ -171,8 +181,7 @@ void ClipLoader::cancel()
 
 void ClipLoader::load(const QString &url)
 {
-    const int gen = ++m_generation;
-    stopDownload();
+    const int gen = supersede();
     m_localUrl.clear();
     m_durationMs = 0;
     m_error.clear();
@@ -186,8 +195,8 @@ void ClipLoader::load(const QString &url)
     const QString raw = m_dir.filePath(QStringLiteral("raw-%1.mp4").arg(gen));
     const QString done = m_dir.filePath(QStringLiteral("clip-%1.mp4").arg(gen));
     struct Result { qint64 durationMs = -1; QString error; };
-    auto stop = std::make_shared<std::atomic<bool>>(false);
-    m_stop = stop;
+    auto cancel = std::make_shared<std::atomic<bool>>(false);
+    m_cancel = cancel;
     auto *watcher = new QFutureWatcher<Result>(this);
     connect(watcher, &QFutureWatcher<Result>::finished, this, [this, watcher, gen, raw, done] {
         const Result r = watcher->result();
@@ -206,14 +215,14 @@ void ClipLoader::load(const QString &url)
         m_localUrl = QUrl::fromLocalFile(done);
         setState(State::Ready);
     });
-    watcher->setFuture(QtConcurrent::run(&m_pool, [url, raw, done, stop]() -> Result {
+    watcher->setFuture(QtConcurrent::run(m_pool.get(), [url, raw, done, cancel]() -> Result {
         Result r;
         QString err;
-        const QByteArray body = frigate::httpGet(url, kDownloadTimeoutMs, &err, stop.get());
-        if (stop->load()) {
-            r.error = QStringLiteral("cancelled");
+        if (cancel->load())   // superseded while it queued: nothing to fetch
             return r;
-        }
+        const QByteArray body = frigate::httpGet(url, kDownloadTimeoutMs, &err, cancel.get());
+        if (cancel->load())   // no remux for an answer nobody wants
+            return r;
         if (body.isEmpty()) {
             r.error = err.isEmpty() ? QObject::tr("the server sent an empty clip") : err;
             return r;
