@@ -12,7 +12,8 @@ import "TransportActions.js" as TransportActions
 // the event through Playback's engine at 1×; a Frigate camera plays Frigate's own clip
 // from 15 s before. The event's snapshot stays up until the first picture. At +30 s it
 // stops (freeing the recorder's connection, keeping the last picture) with Keep playing
-// and Open in Playback. Sound starts muted. EventClip holds the window maths.
+// and Open in Playback. Sound starts muted. EventClip holds the window maths and the player's
+// state (its phase, playhead, give-up times and speed group); this file binds the engines to it.
 // A fisheye camera's circle (the recording, or the snapshot before it) is shown in the
 // camera's view with a Playback pane's controls: hover icons, right-click View, drag to aim,
 // scroll to zoom, double-click to put a turned view back (fisheye-and-framing step 10).
@@ -59,228 +60,81 @@ Item {
     property string _title: ""
     property string _thumbnail: ""
     property real _eventId: -1
-    // "idle", "starting", "playing", "ended" (stopped at the window's end), "failed"
-    property string phase: "idle"
-    property real _openedAt: 0      // the epoch the stream was opened at
-    property real _requestedMs: 0
-    property real _firstFrameMs: 0
-    property bool _hadPicture: false   // this event showed a picture (a reconnect keeps it up)
+    property real _requestedMs: 0   // when the open was asked for (the first-picture log)
 
-    EventClip { id: clip; devices: Devices }
-    // The clip's speed and direction (ticket 12): one ladder both ways, as Playback's.
-    PlaybackGroup {
-        id: group
-        reverseAvailable: !clip.frigate
+    // EventClip holds the window, the phase, the playhead and the speed group (architecture
+    // review #2, candidate 2): this file tells it what happened and does what it asks.
+    EventClip {
+        id: clip
+        devices: Devices
+        frameEpochMs: player.frameEpochMs
+        mediaPositionMs: media.position
+        onOpenWanted: (at) => {
+            root._requestedMs = Date.now();
+            if (clip.frigate) {
+                loader.load(clip.clipUrl);
+                return;
+            }
+            session.deviceRow = Devices.rowOfHostChannel(clip.hostId, clip.channel);
+            // The feed's event is the timeline's verdict: covered. The session's route follows
+            // hd, speed and direction (sub stream, HD, reverse windows).
+            const out = session.playAt(at, true);
+            if (out === PlaybackSession.NoSource || out === PlaybackSession.Gap)
+                clip.openFailed();
+        }
+        onStopAllWanted: { loader.cancel(); media.stop(); session.stop(); player.stop(); }
+        onStopStreamWanted: { session.stop(); player.stop(); }
+        onPauseMediaWanted: media.pause()
+        onSeekMediaWanted: (ms) => { media.position = ms; media.play(); }
+        onRetryHdWanted: session.clearLinkSlow()
+        onNotice: (which) => notice.show(which === EventClip.StartOfClip
+            ? qsTr("Start of the clip — Open in Playback for earlier")
+            : qsTr("The recorder didn't send this part — try again or Open in Playback"))
     }
-    readonly property PlaybackGroup speedGroup: group
-
-    readonly property string _startText: qsTr("Start of the clip — Open in Playback for earlier")
-
-    // Where the picture is, in wall-clock seconds. A recorder's playhead (_clock) starts where
-    // the stream was opened and runs with the picture at the group's speed and direction; off
-    // 1× forward it follows the time tag of the frame on screen (a fresh one, not the frame
-    // from before a reopen), as Playback's does. A speed change never rewrites it.
-    property real _epochAtOpenMs: 0
-    property real _clock: 0
-    property real _tickWall: 0
-    readonly property bool _frameTimed: !clip.frigate && group.offNormal && player.frameEpochMs > 0
-                                        && player.frameEpochMs !== _epochAtOpenMs
-    readonly property real position: clip.frigate ? clip.from + media.position / 1000 : _clock
-    Timer {
+    // The clip's speed and direction (ticket 12): one ladder both ways, as Playback's.
+    readonly property PlaybackGroup speedGroup: clip.group
+    readonly property bool paused: clip.paused
+    readonly property bool playing: clip.phase === EventClip.Playing
+    readonly property real position: clip.position
+    Timer {   // the wall clock, while the clip needs it (give-up, a recorder's playhead)
         interval: 200
         repeat: true
-        running: root.phase === "playing" && !clip.frigate
-        onRunningChanged: root._tickWall = Date.now()
-        onTriggered: {
-            const now = Date.now();
-            const dt = (now - root._tickWall) / 1000;
-            root._tickWall = now;
-            root._clock = root._frameTimed ? player.frameEpochMs / 1000
-                                           : root._clock + dt * group.speed * group.direction;
-        }
-    }
-    onPositionChanged: {
-        if (phase !== "playing" || !clip.edgeReached(position, clip.frigate ? 1 : group.direction))
-            return;
-        if (!clip.frigate && group.direction < 0)
-            _stopAtStart(_startText);
-        else
-            _reachEnd();
-    }
-    // A recorder that doesn't answer is retried; give up on a picture after a while
-    // (a Frigate clip is cut on request, so it gets longer; a recorder's reverse or fast
-    // windows take longer to arrive than its 1× stream). With a picture already up, a reopen
-    // that doesn't come pauses on it instead of failing the event.
-    Timer {
-        running: root.phase === "starting"
-        interval: clip.frigate ? 20000 : group.offNormal ? 30000 : 10000
-        onTriggered: {
-            const at = root._openedAt;
-            root._stopStreams();
-            if (root._hadPicture) {
-                root._pausedAt = at;
-                root.phase = "paused";
-                notice.show(qsTr("The recorder didn't send this part — try again or Open in Playback"));
-            } else {
-                root.phase = "failed";
-            }
-        }
+        running: clip.ticking
+        onTriggered: clip.tick(Date.now())
     }
 
     // Play an event: { hostId, channel, timestamp, thumbnail, title, eventId }.
     function play(ev) {
-        phase = "idle";   // first: the old position must not end the new window
-        _hadPicture = false;
-        _stopStreams();
         _title = ev.title;
         _thumbnail = ev.thumbnail || "";
         _eventId = ev.eventId;
-        group.playForward();   // a new event plays at 1× forward
-        session.clearLinkSlow(); // and tries HD again
-        clip.setEvent(ev.hostId, ev.channel, ev.timestamp);
-        _open(clip.from);
+        clip.play(ev.hostId, ev.channel, ev.timestamp);
     }
     function close() {
-        _stopStreams();
-        clip.clear();
+        clip.close();
         _eventId = -1;
-        phase = "idle";
         closed();
     }
     // Leaving the page or hiding the window: stop, and free the recorder.
     function stop() { if (clip.active) close(); }
-
-    function _open(at) {
-        phase = "starting";
-        _firstFrameMs = 0;
-        _requestedMs = Date.now();
-        _openedAt = at;
-        _clock = at;
-        _epochAtOpenMs = player.frameEpochMs;
-        if (clip.frigate) {
-            loader.load(clip.clipUrl);
-            return;
-        }
-        session.deviceRow = Devices.rowOfHostChannel(clip.hostId, clip.channel);
-        const covered = true; // the feed's event is the timeline's verdict
-        // The session's route follows hd, speed and direction (sub stream, HD, reverse windows).
-        const out = session.playAt(at, covered);
-        if (out === PlaybackSession.NoSource || out === PlaybackSession.Gap)
-            phase = "failed";
-    }
-    function _stopStreams() {
-        loader.cancel();
-        media.stop();
-        session.stop();
-        player.stop();
-    }
-    function _firstPicture() {
-        if (phase !== "starting")
-            return;
-        _firstFrameMs = Date.now();
-        _hadPicture = true;
-        phase = "playing";
-        console.log("clip: first picture after", _firstFrameMs - _requestedMs, "ms; host", clip.hostId,
-                    "channel", clip.channel, clip.frigate ? "frigate" : (root.hd ? "main" : "sub"));
-    }
-    function _reachEnd() {
-        if (!clip.frigate) {
-            session.stop();
-            player.stop();
-        }
-        phase = "ended";
-    }
-    function keepPlaying() {
-        const from = root.position;
-        clip.keepPlaying();
-        _open(clip.frigate ? clip.from : from);
-    }
+    function keepPlaying() { clip.keepPlaying(); }
     function setHd(on) {
         if (root.hd === on)
             return;
-        const at = root.position;
         root.hd = on;
-        // Reopen, not seek: a running stream moved in place would stay on the sub stream.
-        if (clip.active && !clip.frigate && (phase === "playing" || phase === "starting")) {
-            session.stop();
-            player.stop();
-            _open(at);
-        }
+        clip.hdChanged();
     }
-    // The pane bar: pause and play on where it stopped (a recorder's stream is closed while
-    // paused, freeing the recorder; the last picture stays); seek to a moment in the window.
-    property real _pausedAt: 0
-    readonly property bool paused: phase === "paused" || phase === "ended"
-    function togglePause() {
-        if (phase === "playing") {
-            _pausedAt = root.position;
-            if (clip.frigate) {
-                media.pause();
-            } else {
-                session.stop();
-                player.stop();
-            }
-            phase = "paused";
-        } else if (phase === "paused") {
-            seekTo(_pausedAt);
-        } else if (phase === "ended") {
-            seekTo(clip.from);   // from the window's start again
-        }
-    }
-    function seekTo(at) {
-        if (!clip.active)
+    // The pane bar and the keys (TransportActions): pause, seek, skip, the speed buttons.
+    function togglePause() { clip.togglePause(); }
+    function seekTo(at) { clip.seekTo(at); }
+    function skip(secs) { clip.skip(secs); }
+    function speedAction(fn) { fn(); clip.speedChanged(); }
+    function _streamStopped() { clip.streamStopped(player.state === StreamPlayer.Stopped); }
+    function _firstPicture() {
+        if (!clip.firstPicture(Date.now()))
             return;
-        at = clip.skipFrom(at, 0);
-        session.clearLinkSlow();   // a play the user asks for tries HD again
-        _lastReopenAt = -1;
-        // Backwards from the window's start: nothing to play, stay there.
-        if (!clip.frigate && group.direction < 0 && clip.edgeReached(at, -1)) {
-            _stopAtStart(_startText);
-            return;
-        }
-        if (clip.frigate) {
-            media.position = Math.max(0, (at - clip.from) * 1000);
-            media.play();
-            phase = "playing";
-            return;
-        }
-        session.stop();
-        player.stop();
-        _open(at);
-    }
-    function skip(secs) { seekTo(clip.skipFrom(phase === "paused" ? _pausedAt : root.position, secs)); }
-    // The speed buttons: change the group's speed and direction; a paused or ended clip plays
-    // on from where it is (an ended one backwards from its end, forwards from its start).
-    // A running recorder stream reopens by itself (PlaybackSession::reopenNeeded).
-    function speedAction(fn) {
-        fn();
-        if (phase === "paused")
-            seekTo(_pausedAt);
-        else if (phase === "ended")
-            seekTo(group.direction < 0 ? root.position : clip.from);
-    }
-    // Backwards at the window's start, or nothing earlier in the recording: pause there.
-    function _stopAtStart(why) {
-        _pausedAt = Math.max(clip.from, root.position);
-        session.stop();
-        player.stop();
-        phase = "paused";
-        notice.show(why);
-    }
-    // A recorder's stream ends at each window (backwards) or recording file (forwards): open it
-    // again where it got to, once per place (EventClip::reopenAfterEnd); else the edge.
-    property real _lastReopenAt: -1
-    function _streamEnded() {
-        if (phase !== "playing" || clip.frigate || player.state !== StreamPlayer.Stopped)
-            return;
-        const at = clip.reopenAfterEnd(root.position, group.direction, _lastReopenAt);
-        if (at < 0) {
-            if (group.direction < 0) _stopAtStart(_startText);
-            else _reachEnd();
-            return;
-        }
-        _open(at);
-        _lastReopenAt = at;
+        console.log("clip: first picture after", Date.now() - _requestedMs, "ms; host", clip.hostId,
+                    "channel", clip.channel, clip.frigate ? "frigate" : (root.hd ? "main" : "sub"));
     }
     // The page's keys while a clip is up: J « / K ❚❚ / L » / ← → ±10 s (as Live and Playback).
     function key(k) {
@@ -289,11 +143,10 @@ Item {
         const id = TransportActions.keyId(k);
         if (id === "" || (k === "J" && clip.frigate))
             return false;
-        return TransportActions.apply(id, group, root);
+        return TransportActions.apply(id, clip.group, root);
     }
     function _openInPlayback() {
-        const at = Math.floor(phase === "paused" ? _pausedAt
-                              : phase === "playing" || phase === "ended" ? root.position : clip.timestamp);
+        const at = Math.floor(clip.handOffAt());
         const h = clip.hostId, c = clip.channel;
         close();
         openInPlayback(h, c, at);
@@ -310,24 +163,24 @@ Item {
         devices: Devices
         player: player
         hd: root.hd
-        speed: group.speed
-        direction: group.direction
+        speed: clip.group.speed
+        direction: clip.group.direction
         // A change of direction (or of route at a new speed) while open reopens at the picture.
-        onReopenNeeded: if (root.phase === "playing" || root.phase === "starting") root._open(root.position)
+        onReopenNeeded: clip.reopenNeeded()
     }
     StreamPlayer {
         id: player
         videoSink: video.videoSink
         playback: true
         retryOnError: true
-        speed: group.speed
+        speed: clip.group.speed
         // HD reverse holds groups at the picture's size on screen (live-replay ticket 06).
         holdPaneSize: Qt.size(Math.round(picture.width * Screen.devicePixelRatio),
                               Math.round(picture.height * Screen.devicePixelRatio))
         holdFisheye: root.fisheyeLens
         onLinkTooSlowChanged: if (linkTooSlow) session.linkSlow = true
         // Sound plays at 1× forward only (as Playback).
-        muted: !root.soundOn || !root.visible || group.offNormal
+        muted: !root.soundOn || !root.visible || clip.group.offNormal
         // A refused or dropped stream is retried (the NVR is connection-limited) and starts
         // again from where it was opened: back to "starting" so the clock restarts with the
         // picture. The start time limit gives up and closes the stream.
@@ -336,12 +189,11 @@ Item {
         onStateChanged: {
             if (state === StreamPlayer.Streaming) {
                 root._firstPicture();
-            } else if (state === StreamPlayer.Connecting && root.phase === "playing") {
-                root._firstFrameMs = 0;
-                root.phase = "starting";
+            } else if (state === StreamPlayer.Connecting) {
+                clip.streamReconnecting();
             } else if (state === StreamPlayer.Stopped) {
                 // Deferred: an ordered stop() also posts Stopped, and moves the phase first.
-                Qt.callLater(root._streamEnded);
+                Qt.callLater(root._streamStopped);
             }
         }
     }
@@ -351,8 +203,8 @@ Item {
             if (state === ClipLoader.Ready) {
                 media.source = localUrl;
                 media.play();
-            } else if (state === ClipLoader.Error && root.phase === "starting") {
-                root.phase = "failed";
+            } else if (state === ClipLoader.Error) {
+                clip.loadFailed();
             }
         }
     }
@@ -360,22 +212,12 @@ Item {
         id: media
         videoOutput: mediaVideo
         // Any speed forwards on the downloaded file (ticket 12); sound at 1× only.
-        playbackRate: group.direction > 0 ? group.speed : 1
-        audioOutput: AudioOutput { muted: !root.soundOn || group.offNormal }
+        playbackRate: clip.group.direction > 0 ? clip.group.speed : 1
+        audioOutput: AudioOutput { muted: !root.soundOn || clip.group.offNormal }
         onPositionChanged: if (position > 0) root._firstPicture()
-        onMediaStatusChanged: {
-            if (mediaStatus !== MediaPlayer.EndOfMedia || root.phase !== "playing")
-                return;
-            // Kept playing: the next minute, while it is in the past; else the end.
-            if (clip.openEnded && clip.to <= Date.now() / 1000 - 5) {
-                clip.keepPlaying();
-                root._open(clip.from);
-            } else {
-                root._reachEnd();
-            }
-        }
+        onMediaStatusChanged: if (mediaStatus === MediaPlayer.EndOfMedia) clip.mediaEnded(Date.now() / 1000)
     }
-    Component.onDestruction: _stopStreams()
+    Component.onDestruction: { loader.cancel(); media.stop(); session.stop(); player.stop(); }
 
     // ---- Layout --------------------------------------------------------------------------
     Rectangle { anchors.fill: parent; color: Theme.surface }
@@ -435,22 +277,20 @@ Item {
                 anchors.fill: parent
                 // Dewarping samples the whole frame as a texture, so it must fill the item.
                 fillMode: root.dewarp ? VideoOutput.Stretch : VideoOutput.PreserveAspectFit
-                visible: !clip.frigate && (root.phase === "playing" || root.phase === "ended"
-                                           || root.phase === "paused"
-                                           || (root.phase === "starting" && root._hadPicture))
+                visible: !clip.frigate && (clip.phase === EventClip.Playing || clip.paused
+                                           || (clip.phase === EventClip.Starting && clip.hadPicture))
             }
             VideoOutput {
                 id: mediaVideo
                 anchors.fill: parent
                 fillMode: VideoOutput.PreserveAspectFit
-                visible: clip.frigate && (root.phase === "playing" || root.phase === "ended"
-                                          || root.phase === "paused")
+                visible: clip.frigate && (clip.phase === EventClip.Playing || clip.paused)
             }
             // The snapshot until the first picture: no black flash.
             Image {
                 id: eventSnapshot
                 anchors.fill: parent
-                visible: (root.phase === "starting" && !root._hadPicture) || root.phase === "failed"
+                visible: (clip.phase === EventClip.Starting && !clip.hadPicture) || clip.phase === EventClip.Failed
                 source: root._thumbnail.length > 0 ? "file://" + root._thumbnail : ""
                 // Stretched for the view, which turns on as soon as the picture has loaded.
                 fillMode: root.dewarp ? Image.Stretch : Image.PreserveAspectFit
@@ -475,7 +315,7 @@ Item {
                 id: aimArea
                 anchors.fill: parent
                 // Not under the end / failure overlay, whose buttons take the clicks.
-                enabled: fisheyeLoader.item !== null && root.phase !== "ended" && root.phase !== "failed"
+                enabled: fisheyeLoader.item !== null && clip.phase !== EventClip.Ended && clip.phase !== EventClip.Failed
                 cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
                 property real lastX: 0
                 property real lastY: 0
@@ -549,8 +389,8 @@ Item {
                 z: 5
                 pageKind: "events"
                 camera: clip.frigate ? "frigate" : "recorder"
-                speedGroup: group
-                paused: root.paused
+                speedGroup: clip.group
+                paused: clip.paused
                 shown: pictureHover.hovered
                 toolList: [{ id: "newer", glyph: "↑", tip: qsTr("Newer event (↑)") },
                            { id: "older", glyph: "↓", tip: qsTr("Older event (↓)") },
@@ -558,22 +398,22 @@ Item {
                 hdShown: !clip.frigate
                 hdOn: root.hd
                 // HD holds up to 4× while the link keeps up (PlaybackSession::chooseRoute).
-                hdText: root.hd && !group.sdAtSpeed && !session.hdHeldBack ? "HD" : "SD"
+                hdText: root.hd && !clip.group.sdAtSpeed && !session.hdHeldBack ? "HD" : "SD"
                 hdTip: !root.hd ? qsTr("Full resolution (main stream)")
-                     : group.sdAtSpeed ? qsTr("HD chosen · SD above 4×: switch to SD")
+                     : clip.group.sdAtSpeed ? qsTr("HD chosen · SD above 4×: switch to SD")
                      : session.hdHeldBack ? qsTr("HD chosen · SD: the link is too slow · switch to SD")
                      : qsTr("Switch to SD (sub stream)")
                 soundShown: true
                 soundOn: root.soundOn
                 soundTip: root.soundOn ? qsTr("Mute") : qsTr("Sound on")
                 segments: clip.openEnded ? [] : [{ from: 0, to: 1 }]
-                head: clip.openEnded ? -1 : clip.progress(root.phase === "paused" ? root._pausedAt : root.position)
+                head: clip.openEnded ? -1 : clip.progress(clip.shownPosition)
                 headColour: Theme.accent
                 ticks: clip.openEnded ? [] : [clip.progress(clip.timestamp)]
                 labelAt: (pos) => root.offsetText(clip.timeAt(pos) - clip.timestamp)
-                seekable: !clip.openEnded && root.phase !== "failed"
+                seekable: !clip.openEnded && clip.phase !== EventClip.Failed
                 timeText: {
-                    var at = root.phase === "paused" ? root._pausedAt : root.position;
+                    var at = clip.shownPosition;
                     return Qt.formatTime(new Date(at * 1000), "hh:mm:ss") + "  <b>"
                         + root.offsetText(at - clip.timestamp) + "</b>"
                         + (clip.openEnded ? "" : "  /  " + root.offsetText(clip.to - clip.timestamp));
@@ -582,7 +422,7 @@ Item {
                     switch (id) {
                     case "hd": root.setHd(!root.hd); break;
                     case "sound": root.soundOn = !root.soundOn; break;
-                    default: TransportActions.apply(id, group, root); break;
+                    default: TransportActions.apply(id, clip.group, root); break;
                     }
                 }
                 onTool: (id) => {
@@ -593,7 +433,7 @@ Item {
                 onSeekReleased: (pos) => root.seekTo(clip.timeAt(pos))
             }
             Rectangle {
-                visible: root.phase === "starting"
+                visible: clip.phase === EventClip.Starting
                 anchors.left: parent.left
                 anchors.bottom: parent.bottom
                 anchors.margins: 8
@@ -611,7 +451,7 @@ Item {
             }
             // Stopped at the end of the window, or nothing to play.
             Rectangle {
-                visible: root.phase === "ended" || root.phase === "failed"
+                visible: clip.phase === EventClip.Ended || clip.phase === EventClip.Failed
                 anchors.fill: parent
                 color: "#80000000"
                 Column {
@@ -619,7 +459,7 @@ Item {
                     spacing: 10
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        visible: root.phase === "failed"
+                        visible: clip.phase === EventClip.Failed
                         text: qsTr("Couldn't play this event")
                         color: "white"
                         font.pixelSize: 13
@@ -628,7 +468,7 @@ Item {
                         anchors.horizontalCenter: parent.horizontalCenter
                         spacing: 8
                         Repeater {
-                            model: root.phase === "ended"
+                            model: clip.phase === EventClip.Ended
                                    ? [{ label: qsTr("Keep playing"), act: "keep" },
                                       { label: qsTr("Open in Playback"), act: "open" }]
                                    : [{ label: qsTr("Open in Playback"), act: "open" }]

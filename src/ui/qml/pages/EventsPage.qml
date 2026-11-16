@@ -1205,7 +1205,7 @@ Item {
     }
     // RL_EVENTS_KEYS test hook (main.cpp): keys to the clip once it plays ("SD" turns HD off).
     Timer {
-        running: typeof eventsKeys !== "undefined" && eventsKeys !== "" && clipPlayer.phase === "playing" && !sent
+        running: typeof eventsKeys !== "undefined" && eventsKeys !== "" && clipPlayer.playing && !sent
         interval: 4000
         property bool sent: false
         onTriggered: {
