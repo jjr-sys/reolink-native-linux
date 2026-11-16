@@ -412,6 +412,25 @@ private slots:
         QCOMPARE(r.c.from(), qint64(1150));
     }
 
+    // A new Frigate clip starts at its window's start, before its file reports a position:
+    // the last file's playhead must not carry over (it read 45 s ahead while loading).
+    void aNewFrigateClipReadsItsStartWhileLoading()
+    {
+        Rig r(true);
+        r.c.play(3, 1, 1000);   // 985 .. 1030
+        r.c.firstPicture(0);
+        r.c.setMediaPositionMs(45000);   // ended at 1030
+        r.c.keepPlaying();               // 1030 .. 1090, loading
+        QCOMPARE(r.c.position(), 1030.0);
+        QCOMPARE(r.c.shownPosition(), 1030.0);
+        r.c.firstPicture(0);
+        r.c.setMediaPositionMs(60000);
+        r.c.mediaEnded(1090 + 5);        // the next minute, on its own
+        QCOMPARE(r.c.position(), 1090.0);
+        r.c.play(3, 1, 2000);            // another event: 1985 ..
+        QCOMPARE(r.c.position(), 1985.0);
+    }
+
     // A recorder's Keep playing opens where the picture is, with no end.
     void keepPlayingARecorderOpensWhereThePictureIs()
     {

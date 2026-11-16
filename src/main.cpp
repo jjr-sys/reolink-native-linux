@@ -260,6 +260,8 @@ int main(int argc, char *argv[])
         QStringLiteral("eventsAutoPlay"), qEnvironmentVariableIsSet("RL_EVENTS_PLAY"));
     // RL_EVENTS_KEYS="J,J,K": with RL_EVENTS_PLAY, those keys go to the clip player 4 s after
     // its first picture (live-replay ticket 12): for checking speeds and reverse headless.
+    // "+N" waits N seconds between keys, "KEEP" presses Keep playing, "SD" turns HD off; the
+    // clip's phase and position are then logged each second.
     engine.rootContext()->setContextProperty(
         QStringLiteral("eventsKeys"), qEnvironmentVariable("RL_EVENTS_KEYS"));
     // RL_SETTINGS_CATEGORY=<key> opens Settings on a section (e.g. "highlights", "mosaics").

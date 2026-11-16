@@ -1203,17 +1203,45 @@ Item {
         property bool played: false
         onTriggered: { played = true; page.playRow(feed.stepEvent(-1, 1)); }
     }
-    // RL_EVENTS_KEYS test hook (main.cpp): keys to the clip once it plays ("SD" turns HD off).
+    // RL_EVENTS_KEYS test hook (main.cpp): steps to the clip, from 4 s after it first plays.
+    // A step is a key, "SD" (HD off), "KEEP" (Keep playing) or "+N" (wait N seconds); the
+    // clip's phase and position are logged each second from then on.
     Timer {
-        running: typeof eventsKeys !== "undefined" && eventsKeys !== "" && clipPlayer.playing && !sent
+        id: keysHook
+        running: typeof eventsKeys !== "undefined" && eventsKeys !== "" && clipPlayer.playing && !started
         interval: 4000
-        property bool sent: false
+        property bool started: false
+        property var steps: []
+        function log(what) {
+            console.log("events keys:", what, "→", clipPlayer.speedGroup.label(clipPlayer.paused),
+                        "position", clipPlayer.position.toFixed(1));
+        }
+        function next() {
+            while (steps.length > 0) {
+                const s = steps.shift();
+                if (s.startsWith("+")) {
+                    keysWait.interval = Number(s.slice(1)) * 1000;
+                    keysWait.start();
+                    return;
+                }
+                if (s === "SD")
+                    clipPlayer.setHd(false);
+                else if (s === "KEEP")
+                    clipPlayer.keepPlaying();
+                else
+                    clipPlayer.key(s);
+                log(s);
+            }
+        }
         onTriggered: {
-            sent = true;
-            eventsKeys.split(",").forEach(k => k.trim() === "SD" ? clipPlayer.setHd(false) : clipPlayer.key(k.trim()));
-            console.log("events keys:", eventsKeys, "→", clipPlayer.speedGroup.label(clipPlayer.paused));
+            started = true;
+            steps = eventsKeys.split(",").map(k => k.trim());
+            keysLog.start();
+            next();
         }
     }
+    Timer { id: keysWait; onTriggered: keysHook.next() }
+    Timer { id: keysLog; interval: 1000; repeat: true; onTriggered: keysHook.log("tick") }
     // Play a feed row in the player, and keep it in view.
     function playRow(row) {
         const r = feed.rowAt(row);

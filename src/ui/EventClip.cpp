@@ -134,6 +134,9 @@ void EventClip::open(double at)
 {
     m_openedAt = at;
     m_clock = at;
+    // Frigate loads its file from the start: the last file's playhead must not carry over.
+    if (frigate())
+        m_mediaPositionMs = 0;
     m_epochAtOpenMs = m_frameEpochMs;
     setPhase(Starting);
     emit positionChanged();
