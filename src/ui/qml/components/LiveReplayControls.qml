@@ -237,26 +237,22 @@ Item {
         return true;
     }
 
-    // ---- In step with the others (ticket 15b, as Playback's keepReverseInStep) -------------
+    // ---- In step with the others (ticket 15b; the rule is LiveReplay::needsRestart) --------
     // A pane whose frames don't move the playhead plays on at its own pace; where it has
     // footage at the playhead and isn't playing (its recording ended, or it just joined or was
-    // shown), or has drifted more than 5 s, it starts again at the playhead.
-    property real _stepWall: 0
+    // shown), or has drifted more than 5 s × speed, it starts again at the playhead.
+    property real _stepWall: -1
     function keepInStep() {
         var p = pane.item;
-        if (!p || replay.paused || p.frozen || p.stillMode || Date.now() - _stepWall < 3000
-                || replay.frameDriver() === cameraKey)
+        if (!p)
             return;
+        var now = Date.now();
+        if (!replay.needsRestart(cameraKey, p.busy, p.frozen, p.stillMode,
+                                 p.frameSecs >= 0 ? p.dayEpoch + p.frameSecs : -1, _stepWall, now))
+            return;
+        _stepWall = now;
         var at = replay.playhead;
-        if (!replay.covers(cameraKey, at))
-            return;
-        // 5 s of recording time at 1×, more at speed (a fast stream's frames run ahead in bursts).
-        var off = p.frameSecs >= 0
-                  && Math.abs(p.dayEpoch + p.frameSecs - at) > 5 * Math.max(1, group.speed);
-        if (!p.busy || off) {
-            _stepWall = Date.now();
-            p.playAtSecs(at - replay.dayEpoch, at);
-        }
+        p.playAtSecs(at - replay.dayEpoch, at);
     }
     Timer {
         interval: 1000

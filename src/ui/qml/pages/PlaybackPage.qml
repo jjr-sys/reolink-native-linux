@@ -186,18 +186,20 @@ Item {
     // Each selected camera's segments for the selected day ("hostId:channel" -> list), set
     // as its recorder answers. A camera not answered yet has no entry.
     property var segsByKey: ({})
-    property var _asked: ({})       // key -> { at: ms of the last search, n: searches } for this day
+    // The day's rules (architecture review #2, candidate 1): which camera leads, where a play
+    // lands and carries on, the playhead's clock, the searches, and keeping panes in step.
+    PlaybackDay {
+        id: day
+        paneOrder: selection.paneOrder
+        selectedKey: page.selectedKey
+        directKeys: group.directKeys
+    }
     // A recorder that has just connected may answer its first search empty: an empty day is
-    // asked again (at most 3 times, 10 s apart) as the device list changes.
+    // asked again (PlaybackDay::wantSearch) as the device list changes.
     function search(key, force) {
         var row = rowsByKey()[key];
-        if (row === undefined)
+        if (row === undefined || !day.wantSearch(key, Date.now(), force))
             return;
-        var now = Date.now(), a = _asked[key] || { at: 0, n: 0 };
-        var known = segsByKey[key] !== undefined;
-        if (!force && ((known && (segsByKey[key].length > 0 || a.n >= 3)) || now - a.at < 10000))
-            return;
-        _asked[key] = { at: now, n: a.n + 1 };
         if (typeof mockRecordings !== "undefined" && mockRecordings) {
             Qt.callLater(() => page.mockAnswer(key, row));
             return;
@@ -207,7 +209,7 @@ Item {
     // Ask for every selected camera's day (the searches queue per recorder).
     function refresh() {
         segsByKey = ({});
-        _asked = ({});
+        day.clear();
         selection.keys.forEach(k => search(k, true));
         recomputeTimeline();
     }
@@ -360,19 +362,14 @@ Item {
             }
         // Backwards from where the camera that leads has nothing: from the end of its
         // previous recording, or paused when there is none that day (ticket 12).
-        if (group.direction < 0) {
-            var lead = reverseLeadKey();
-            if (lead !== "" && !coveredAt(lead, sec)) {
-                var prev = previousEnd(lead, sec);
-                if (prev < 0) {
-                    playheadSecs = sec;
-                    stopAllPanes();
-                    statusText.text = qsTr("Nothing earlier that day");
-                    return;
-                }
-                sec = prev;
-            }
+        var landed = day.landing(sec, group.direction);
+        if (landed < 0) {
+            playheadSecs = sec;
+            stopAllPanes();
+            statusText.text = qsTr("Nothing earlier that day");
+            return;
         }
+        sec = landed;
         stills.cancelAll();
         stillRest.stop();
         playheadSecs = sec;
@@ -394,114 +391,58 @@ Item {
             var now = Date.now();
             var dt = (now - page._tickWall) / 1000;
             page._tickWall = now;
-            var f = group.offNormal ? page.frameDriverSecs() : -1;
-            if (group.direction < 0)
-                page.keepReverseInStep();
-            if (f >= 0) {
-                page.playheadSecs = Math.max(0, Math.min(86399, f));
+            var panes = page.paneStates();
+            page.keepInStep(panes);
+            var f = group.offNormal ? day.frameDriverSecs(panes, page.playheadSecs) : -1;
+            page.playheadSecs = day.advance(page.playheadSecs, dt, group.speed, group.direction, f);
+        }
+    }
+    // The lead camera's stream ran out (backwards at its recording's start, or HD fast forward
+    // with no footage ahead): every pane goes on from the lead's previous recording's end / next
+    // one's start, or stops when there is none that day (PlaybackDay::carryOn).
+    function onReverseEnded(key) { carryOn(key, -1); }
+    function onForwardEnded(key) { carryOn(key, 1); }
+    function carryOn(key, dir) {
+        if (group.direction !== dir)
+            return;
+        var at = day.carryOn(key, dir, playheadSecs);
+        if (at === PlaybackDay.Ignore)
+            return;
+        if (at === PlaybackDay.Nothing) {
+            stopAllPanes();
+            statusText.text = dir < 0 ? qsTr("Nothing earlier that day") : qsTr("Nothing later that day");
+            return;
+        }
+        for (var i = 0; i < paneRepeater.count; i++) {
+            var p = paneRepeater.itemAt(i);
+            if (p) p.freeze();
+        }
+        playAt(at, true);
+    }
+    // The panes as PlaybackDay takes them, in pane order.
+    function paneStates() {
+        var out = [];
+        selection.paneOrder.forEach(k => {
+            var p = paneOf(k);
+            if (p)
+                out.push({ key: k, shown: p.visible, frozen: p.frozen, still: p.stillMode, busy: p.busy,
+                           frameSecs: p.frameSecs, lastRestartMs: p._restartWall });
+        });
+        return out;
+    }
+    // Panes that don't drive the playhead play at their own pace: one that stopped (its
+    // recording ended) starts again where the playhead has its footage, and one that drifted
+    // more than 5 s × speed starts again at the playhead (PaneSync, as Live replay's panes).
+    function keepInStep(panes) {
+        var driver = day.frameDriver(panes, playheadSecs);
+        var now = Date.now();
+        panes.forEach(st => {
+            if (!day.needsRestart(st, playheadSecs, group.speed, group.offNormal, driver, now))
                 return;
-            }
-            if (page.playheadSecs < 86399)
-                page.playheadSecs = Math.max(0, Math.min(86399, page.playheadSecs + dt * group.speed * group.direction));
-        }
-    }
-    // Backwards, the selected camera's recordings decide where to jump (the first Reolink
-    // pane's when the selected one is Frigate): ticket 12.
-    function reverseLeadKey() {
-        if (selectedKey !== "" && !isDirectKey(selectedKey))
-            return selectedKey;
-        var order = selection.paneOrder;
-        for (var i = 0; i < order.length; i++)
-            if (!isDirectKey(order[i]))
-                return order[i];
-        return "";
-    }
-    function coveredAt(key, sec) {
-        var segs = segsByKey[key] || [];
-        for (var i = 0; i < segs.length; i++)
-            if (sec >= segs[i].start && sec <= segs[i].end)
-                return true;
-        return false;
-    }
-    // The end of the last recording finishing before `sec` (-1: none that day).
-    function previousEnd(key, sec) {
-        var segs = segsByKey[key] || [];
-        var best = -1;
-        for (var i = 0; i < segs.length; i++)
-            if (segs[i].end < sec - 0.5 && segs[i].end > best)
-                best = segs[i].end;
-        return best;
-    }
-    // A pane's reverse run reached the start of its recording. The leading camera's takes
-    // every pane to the end of its previous recording, or pauses when there is none.
-    function onReverseEnded(key) {
-        if (group.direction >= 0 || key !== reverseLeadKey())
-            return;
-        var prev = previousEnd(key, playheadSecs);
-        if (prev < 0) {
-            stopAllPanes();
-            statusText.text = qsTr("Nothing earlier that day");
-            return;
-        }
-        for (var i = 0; i < paneRepeater.count; i++) {
-            var p = paneRepeater.itemAt(i);
-            if (p) p.freeze();
-        }
-        playAt(prev, true);
-    }
-    function nextStart(key, sec) {
-        var segs = segsByKey[key] || [];
-        var best = -1;
-        for (var i = 0; i < segs.length; i++)
-            if (segs[i].start > sec + 0.5 && (best < 0 || segs[i].start < best))
-                best = segs[i].start;
-        return best;
-    }
-    // HD fast forward ran out of footage ahead (live-replay ticket 09). The leading camera's takes
-    // every pane to the start of its next recording, or stops when there is none that day.
-    function onForwardEnded(key) {
-        if (group.direction <= 0 || key !== reverseLeadKey())
-            return;
-        var next = nextStart(key, playheadSecs);
-        if (next < 0) {
-            stopAllPanes();
-            statusText.text = qsTr("Nothing later that day");
-            return;
-        }
-        for (var i = 0; i < paneRepeater.count; i++) {
-            var p = paneRepeater.itemAt(i);
-            if (p) p.freeze();
-        }
-        playAt(next, true);
-    }
-    // Backwards, panes that aren't leading play at their own pace: one that stopped at the
-    // start of its recording starts again when the playhead reaches earlier footage of it,
-    // and one more than 5 s from the playhead starts again at the playhead.
-    function keepReverseInStep() {
-        var lead = paneOf(reverseLeadKey());
-        for (var i = 0; i < paneRepeater.count; i++) {
-            var p = paneRepeater.itemAt(i);
-            if (!p || p === lead || !p.visible || p.frozen || p.stillMode
-                || !p.covered(playheadSecs) || Date.now() - p._reverseRestartWall < 3000)
-                continue;
-            var off = p.frameSecs >= 0 && Math.abs(p.frameSecs - playheadSecs) > 5;
-            if (!p.busy || off) {
-                p._reverseRestartWall = Date.now();
-                p.playAtSecs(playheadSecs, epochAt(playheadSecs));
-            }
-        }
-    }
-    function frameDriverSecs() {
-        var sel = paneOf(selectedKey);
-        if (sel && sel.visible && !sel.frozen && sel.frameSecs >= 0)
-            return sel.frameSecs;
-        var order = selection.paneOrder;
-        for (var i = 0; i < order.length; i++) {
-            var p = paneOf(order[i]);
-            if (p && p.visible && !p.frozen && p.frameSecs >= 0)
-                return p.frameSecs;
-        }
-        return -1;
+            var p = paneOf(st.key);
+            p._restartWall = now;
+            p.playAtSecs(playheadSecs, epochAt(playheadSecs));
+        });
     }
     onActiveChanged: active ? Qt.callLater(stillsWhereMissing) : stopAllPanes()
 
@@ -679,6 +620,7 @@ Item {
         var key = cameraKey(row);
         if (!key || !selection.contains(key))
             return;
+        day.setSegments(key, segments);
         var s = Object.assign({}, segsByKey);
         s[key] = segments;
         segsByKey = s;   // reassigned so pane bindings re-read it

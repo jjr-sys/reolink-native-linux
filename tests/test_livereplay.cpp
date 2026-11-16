@@ -979,6 +979,31 @@ private slots:
         r.setShown(QStringLiteral("5:0"), false);
         QVERIFY(!r.anyShown());
     }
+    // A pane that isn't driving starts again at the playhead where it has footage and isn't
+    // playing, or has drifted more than 5 s × speed (PaneSync, shared with Playback); never the
+    // driver, never while paused, not within 3 s of its last restart.
+    void aPaneOutOfStepStartsAgainAtThePlayhead()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 7200}});
+        r.start(QStringLiteral("5:0"));
+        r.join(QStringLiteral("1:6"));
+        rec.answerAll();
+        r.dayFound(QStringLiteral("1:6"), 2026, 11, 15, segs({{3600, 7200}}), {});
+        const double t = at(2026, 11, 15, 1, 30);
+        r.playFrom(t, 1);
+        const QString k = QStringLiteral("1:6");
+        QVERIFY(r.needsRestart(k, false, false, false, -1, -1, 100000));       // not playing
+        QVERIFY(!r.needsRestart(k, true, false, false, t + 4, -1, 100000));    // in step
+        QVERIFY(r.needsRestart(k, true, false, false, t + 6, -1, 100000));     // 6 s out
+        QVERIFY(!r.needsRestart(k, false, false, false, -1, 98000, 100000));   // just restarted
+        QVERIFY(!r.needsRestart(k, false, true, false, -1, -1, 100000));       // frozen
+        QVERIFY(!r.needsRestart(QStringLiteral("5:0"), false, false, false, -1, -1, 100000));
+        r.setPaused(true);
+        QVERIFY(!r.needsRestart(k, false, false, false, -1, -1, 100000));
+    }
     // start() on a camera already in the replay makes it the lead; it doesn't restart from now.
     void startOnAJoinedCameraLeadsInstead()
     {

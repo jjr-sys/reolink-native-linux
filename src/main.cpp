@@ -31,6 +31,7 @@
 #include "ui/EventDateBar.h"
 #include "ui/CameraNoise.h"
 #include "ui/EventClip.h"
+#include "ui/PlaybackDay.h"
 #include "ui/EventFeed.h"
 #include "ui/FrameShape.h"
 #include "ui/PaneBarRules.h"
@@ -225,6 +226,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::EventDateBar>("ReolinkApp.Core", 1, 0, "EventDateBar");
     qmlRegisterType<rl::CameraNoise>("ReolinkApp.Core", 1, 0, "CameraNoise");
     qmlRegisterType<rl::EventClip>("ReolinkApp.Core", 1, 0, "EventClip");
+    qmlRegisterType<rl::PlaybackDay>("ReolinkApp.Core", 1, 0, "PlaybackDay");
     qmlRegisterType<rl::MosaicLayout>("ReolinkApp.Core", 1, 0, "MosaicLayout");
     qmlRegisterType<rl::StillQueue>("ReolinkApp.Core", 1, 0, "StillQueue");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "FrameShape", &frameShape);

@@ -1,5 +1,7 @@
 #include "ui/LiveReplay.h"
 
+#include "ui/PaneSync.h"
+
 #include "core/Log.h"
 
 #include <QDateTime>
@@ -290,15 +292,34 @@ void LiveReplay::leadChanged()
 // the first replaying camera that has (Playback's frameDriverSecs).
 QString LiveReplay::frameDriver() const
 {
-    auto playing = [this](const QString &k) {
-        return m_books.value(k).shown && covers(k, m_playhead);
-    };
-    if (playing(m_lead))
-        return m_lead;
-    for (const QString &k : m_keys)
-        if (k != m_lead && playing(k))
-            return k;
-    return m_lead;
+    // PaneSync's rule (shared with Playback); with none playing, the lead's.
+    QList<panesync::Pane> panes;
+    for (const QString &k : m_keys) {
+        panesync::Pane p;
+        p.key = k;
+        p.shown = m_books.value(k).shown;
+        p.covered = covers(k, m_playhead);
+        panes.append(p);
+    }
+    const QString key = panesync::frameDriver(m_lead, panes);
+    return key.isEmpty() ? m_lead : key;
+}
+
+bool LiveReplay::needsRestart(const QString &key, bool busy, bool frozen, bool still,
+                              double frameEpoch, double lastRestartMs, double nowMs) const
+{
+    if (!replaying() || m_paused || !m_books.contains(key))
+        return false;
+    panesync::Pane p;
+    p.key = key;
+    p.shown = m_books.value(key).shown;
+    p.frozen = frozen;
+    p.still = still;
+    p.busy = busy;
+    p.covered = covers(key, m_playhead);
+    p.frameSecs = frameEpoch;
+    p.lastRestartMs = lastRestartMs;
+    return panesync::needsRestart(p, m_playhead, m_group->speed(), frameDriver() == key, nowMs);
 }
 
 void LiveReplay::setShown(const QString &cameraKey, bool shown)
