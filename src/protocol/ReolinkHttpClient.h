@@ -35,6 +35,7 @@ public:
 
     // Sends a batch of commands (api::command(...)), handling login transparently.
     api::BatchResult call(const Json &commands) override;
+    api::BatchResult call(const Json &commands, const std::atomic<bool> *cancel) override;
 
     // A command the device answers slowly (NvrDownload cuts the clip before replying:
     // about 1.6 s per minute of footage). Not held behind the one-at-a-time lock, so it

@@ -15,6 +15,12 @@ namespace rl {
 
 namespace {
 constexpr int kFrigateTimeoutMs = 20000;   // each of Frigate's two requests
+// Searches at once: a few cameras' days (Playback's selection, Live replay's set); a recorder
+// queues its own.
+constexpr int kWorkers = 4;
+// How long the module going waits for its cancelled searches (a Frigate one stops within
+// ~50 ms; a Reolink one at once, or when the request before it on that recorder ends).
+constexpr int kGoingWaitMs = 2000;
 } // namespace
 
 QVariantList daySegments(const QVector<DayFile> &files, const QDate &date)
@@ -36,11 +42,11 @@ QVariantList daySegments(const QVector<DayFile> &files, const QDate &date)
 
 DaySearch reolinkDaySearch(std::shared_ptr<ReolinkTransport> transport, int channel)
 {
-    return [transport, channel](const QDate &date, const std::atomic<bool> *) {
+    return [transport, channel](const QDate &date, const std::atomic<bool> *cancel) {
         DayAnswer a;
         const api::BatchResult batch = transport->call(Json::array({api::searchBody(
             channel, QDateTime(date, QTime(0, 0, 0)), QDateTime(date, QTime(23, 59, 59)),
-            QStringLiteral("sub"))}));
+            QStringLiteral("sub"))}), cancel);
         if (!batch.transportOk || batch.results.isEmpty() || !batch.results.first().ok) {
             a.error = batch.error.isEmpty() ? QObject::tr("search failed") : batch.error;
             return a;
@@ -82,14 +88,6 @@ DaySearch frigateDaySearch(const QString &host, int port, const QString &camera)
         return a;
     };
 }
-
-namespace {
-// Searches at once: a few cameras' days (Playback's selection, Live replay's set); a recorder
-// queues its own.
-constexpr int kWorkers = 4;
-// How long the module going waits for its cancelled searches (they stop within ~50 ms).
-constexpr int kGoingWaitMs = 2000;
-} // namespace
 
 RecorderDays::RecorderDays(Sources sources, QObject *parent)
     : QObject(parent), m_sources(std::move(sources)), m_pool(std::make_unique<QThreadPool>())

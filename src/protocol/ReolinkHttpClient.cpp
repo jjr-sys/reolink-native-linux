@@ -375,6 +375,11 @@ api::BatchResult ReolinkHttpClient::call(const Json &commands)
     return callImpl(commands, 0, /*serial=*/true, nullptr);
 }
 
+api::BatchResult ReolinkHttpClient::call(const Json &commands, const std::atomic<bool> *cancel)
+{
+    return callImpl(commands, 0, /*serial=*/true, cancel);
+}
+
 api::BatchResult ReolinkHttpClient::callSlow(const Json &commands, long timeoutSec,
                                              const std::atomic<bool> *cancel)
 {

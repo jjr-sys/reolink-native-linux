@@ -2,6 +2,8 @@
 
 #include "ReolinkApi.h"
 
+#include <atomic>
+
 namespace rl {
 
 // The seam between what the app asks a Reolink host over HTTP-CGI and the wire. The
@@ -22,6 +24,13 @@ public:
     enum class FailKind { None, Transport, Auth, Locked, Protocol };
 
     virtual api::BatchResult call(const Json &commands) = 0;
+    // The same, stopping early when `cancel` (may be null) is set; a transport that can't
+    // stop early answers in full.
+    virtual api::BatchResult call(const Json &commands, const std::atomic<bool> *cancel)
+    {
+        (void)cancel;
+        return call(commands);
+    }
     virtual FailKind lastFailKind() = 0;
 
     // A single command; returns the lone CommandResult.

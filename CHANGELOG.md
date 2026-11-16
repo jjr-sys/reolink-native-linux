@@ -210,6 +210,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
   the in-step and frame-driver rules into `PaneSync`, shared with Live replay. The Events clip
   player's phases, give-up times and clock moved into `EventClip`. The recorder HTTP-FLV
   playback path, unreachable since playback went native, was removed with its file snapping.
+  A camera's day of recordings comes from one `RecorderDays` module for Playback and Live
+  replay, keyed by camera and dated, so an answer can't land on another day or camera; it
+  stops its searches when the app quits.
 
 - **Quad view sees the whole circle.** Its four views are now 120° wide and tilted 44°
   from straight down, covering from the floor under the camera out to the rim with no

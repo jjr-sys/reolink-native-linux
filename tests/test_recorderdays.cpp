@@ -102,6 +102,18 @@ private slots:
         QCOMPARE(reolinkDaySearch(http, 3)(d, nullptr).error, QStringLiteral("no route to host"));
     }
 
+    // A Reolink search hands the transport its cancel flag (the module going stops it, as a
+    // Frigate one; the real client aborts its wait on it).
+    void aReolinkSearchCanBeCancelled()
+    {
+        auto http = std::make_shared<testing::ScriptedHttp>();
+        std::atomic<bool> cancel{true};
+        const DayAnswer a = reolinkDaySearch(http, 3)(QDate(2026, 7, 9), &cancel);
+        QCOMPARE(http->sent, QStringList({QStringLiteral("Search")}));
+        QCOMPARE(http->lastCancel, &cancel);
+        QVERIFY(!a.error.isEmpty());   // cancelled: no answer to give
+    }
+
     // A Frigate camera's day: its recordings over the local day (merged where they touch) and
     // the month's days with footage from the summary.
     void aFrigateDayIsItsRecordingsAndSummary()

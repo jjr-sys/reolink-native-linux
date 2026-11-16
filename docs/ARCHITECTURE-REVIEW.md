@@ -353,7 +353,7 @@ rules Playback and `LiveReplay` share.
 6. Small differences noted by review: the wall-clock playhead now moves backwards from 23:59:59
    (it stuck there); EventClip's give-up count starts at the first 200 ms tick of a start.
 
-### 3c: RecorderDays, one camera's day of recordings (`9a508dc` and step b)
+### 3c: RecorderDays, one camera's day of recordings (`9a508dc`, `1eb48de`, review fixes)
 
 **Module.** `RecorderDays` (`src/device/RecorderDays.{h,cpp}`): `search(key, y, m, d)` answers
 `dayFound(key, y, m, d, segments, monthDays)` / `dayFailed(key, y, m, d, error)`. Vendors are
@@ -373,9 +373,19 @@ owns it (`Devices.days`); the four old searches and five old signals are gone.
    Frigate's adapter is tested against a local stand-in server, including cancel.
 4. Its own pool (4 workers); going cancels and waits at most 2 s (as `ClipLoader`, ticket 05).
 5. Stream opening stays in `DeviceManager` (DON'T, as decided).
-6. Behaviour unchanged on screen: Playback (two recorders + Frigate) and Live replay (from
+6. Merging touching recordings stays in the Frigate adapter (`frigate::mergeRecordings`), as
+   before: a Reolink recorder's files are its own and are drawn as they come.
+7. Both adapters take the cancel flag: Frigate's requests stop within ~50 ms; a Reolink search
+   passes it to `ReolinkTransport::call(commands, cancel)` (new overload, default ignores it),
+   which the HTTP client honours, though one queued behind another request to the same
+   recorder waits for it (up to 15 s; the tray Quit's 3 s exit covers that).
+8. Live replay never asks for a Frigate camera's day (the page answers `dayFailed`), as the
+   old `searchReplayDay` refused it.
+9. Behaviour unchanged on screen: Playback (two recorders + Frigate) and Live replay (from
    now, joined) log and draw as before. Found while checking, older than this work: a Frigate
    camera's Playback day stays empty when Playback opens at start (ticket 07).
+
+Revert: the review-fix commit, then `1eb48de`, then `9a508dc` (each builds and passes alone).
 
 ### Not built
 

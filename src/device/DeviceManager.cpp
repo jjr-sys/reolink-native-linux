@@ -1457,6 +1457,20 @@ void DeviceManager::captureEventThumbnail(qint64 hostId, int channel, qint64 eve
     }));
 }
 
+int DeviceManager::rowOfCameraKey(const QString &key) const
+{
+    const QStringList hc = key.split(QLatin1Char(':'));
+    bool okH = false, okC = false;
+    const qint64 hostId = hc.value(0).toLongLong(&okH);
+    const int channel = hc.value(1).toInt(&okC);
+    if (hc.size() != 2 || !okH || !okC)
+        return -1;
+    for (int i = 0; i < m_entries.size(); ++i)
+        if (m_entries.at(i).rec.id == hostId && m_entries.at(i).channel == channel)
+            return i;
+    return -1;
+}
+
 QSize DeviceManager::declaredSize(int row, bool mainStream) const
 {
     if (row < 0 || row >= m_entries.size())

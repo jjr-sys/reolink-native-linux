@@ -28,8 +28,6 @@ class TestPlaybackDay : public QObject
 {
     Q_OBJECT
 private slots:
-    // The selected camera leads; a Frigate one (1× forward only, no reverse) passes it to the
-    // first recorder camera in pane order. None: no lead.
     // A day's answer (wayfinder/architecture ticket 01) is taken only for a pane's camera and
     // the day shown: a search still out for the day before, or another camera's (a Live
     // replay search), is left alone.
@@ -48,6 +46,8 @@ private slots:
         QVERIFY(!d.takes(QStringLiteral("1:6"), 2026, 11, 16));
     }
 
+    // The selected camera leads; a Frigate one (1× forward only, no reverse) passes it to the
+    // first recorder camera in pane order. None: no lead.
     void theSelectedRecorderCameraLeads()
     {
         PlaybackDay d;

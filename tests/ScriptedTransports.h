@@ -24,6 +24,7 @@ public:
     FailKind failKind = FailKind::None;
     QStringList sent;      // every command name, in the order it was sent
     QVector<Json> sentParams;
+    const std::atomic<bool> *lastCancel = nullptr;   // the flag the last cancellable call had
 
     api::BatchResult call(const Json &commands) override
     {
@@ -50,6 +51,18 @@ public:
         return b;
     }
     FailKind lastFailKind() override { return failKind; }
+    // As the real client: a set flag ends the call unanswered.
+    api::BatchResult call(const Json &commands, const std::atomic<bool> *cancel) override
+    {
+        lastCancel = cancel;
+        api::BatchResult b = call(commands);
+        if (cancel && cancel->load()) {
+            b.transportOk = false;
+            b.results.clear();
+            b.error = QStringLiteral("cancelled");
+        }
+        return b;
+    }
 };
 
 // One shared script behind every session an opener hands out, so a test sees the sum of
