@@ -102,6 +102,41 @@ private slots:
         QCOMPARE(stored.first().type, QStringLiteral("person"));
     }
 
+    // Review #2, 4a: Frigate's history keeps a second type seen beside the first (bursts are
+    // per camera and type), and a live Frigate event is filed at the time Frigate saw it, so a
+    // later history sync finds it instead of filing it again.
+    void frigateHistoryKeepsEachTypeAndFindsLiveRows()
+    {
+        QTemporaryDir dir;
+        Database db(dir.filePath("t.db"), QStringLiteral("sw_types"));
+        QVERIFY(db.open());
+        CredentialStore credentials;
+        DeviceManager devices(&db, &credentials);
+        EventManager events(&db, &devices);
+        const qint64 now = QDateTime::currentSecsSinceEpoch();
+        // Seen live while the app ran, reported late (after a Frigate outage).
+        devices.reportDetection(9, 2, QStringLiteral("person"), QStringLiteral("Drive"), now - 40);
+        QVector<EventRecord> stored = db.recentEvents(10, {}, {9});
+        QCOMPARE(stored.size(), 1);
+        QCOMPARE(stored.first().timestamp, now - 40);
+        // A time from a server clock ahead of ours is filed as now, never in the future.
+        devices.reportDetection(9, 3, QStringLiteral("person"), QStringLiteral("Gate"), now + 600);
+        QVERIFY(db.recentEvents(10, {}, {9}).first().timestamp <= QDateTime::currentSecsSinceEpoch());
+
+        const QVector<frigate::Event> history = {   // newest first
+            {QStringLiteral("e3"), QStringLiteral("drive"), QStringLiteral("person"), double(now - 40)},
+            {QStringLiteral("e2"), QStringLiteral("drive"), QStringLiteral("car"), double(now - 595)},
+            {QStringLiteral("e1"), QStringLiteral("drive"), QStringLiteral("person"), double(now - 600)},
+        };
+        events.applyFrigateHistory(9, {{QStringLiteral("drive"), 2}}, history);
+        stored = db.recentEvents(10, {}, {9});
+        QStringList seen;
+        for (const EventRecord &r : stored)
+            if (r.channel == 2)
+                seen << QStringLiteral("%1@%2").arg(r.type).arg(now - r.timestamp);
+        QCOMPARE(seen.join(","), QStringLiteral("person@40,vehicle@595,person@600"));
+    }
+
     void switchingOffReportsThenDeletesOnlyThatPair()
     {
         QTemporaryDir dir;

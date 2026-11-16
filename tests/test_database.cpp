@@ -298,10 +298,13 @@ private slots:
         QVERIFY(db.hostHasEvents(1));
         QVERIFY(!db.hostHasEvents(2));
 
-        QVERIFY(db.eventNear(1, 4, 1020, 30).has_value());
-        QCOMPARE(db.eventNear(1, 4, 1020, 30)->id, id);
-        QVERIFY(!db.eventNear(1, 4, 1030, 30).has_value()); // window is exclusive
-        QVERIFY(!db.eventNear(1, 5, 1000, 30).has_value());
+        const QString person = QStringLiteral("person");
+        QVERIFY(db.eventNear(1, 4, person, 1020, 30).has_value());
+        QCOMPARE(db.eventNear(1, 4, person, 1020, 30)->id, id);
+        QVERIFY(!db.eventNear(1, 4, person, 1030, 30).has_value()); // window is exclusive
+        QVERIFY(!db.eventNear(1, 5, person, 1000, 30).has_value());
+        // Bursts are per type: a car beside the person is its own event (review #2, 4a).
+        QVERIFY(!db.eventNear(1, 4, QStringLiteral("vehicle"), 1020, 30).has_value());
 
         // Setting a thumbnail says whether the row is still there.
         QVERIFY(db.setEventThumbnail(id, "/t/a.jpg"));

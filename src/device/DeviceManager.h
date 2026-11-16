@@ -98,7 +98,9 @@ public:
     EventSwitches *eventSwitches() const { return m_eventSwitches; }
     // The one door every detection goes through on its way to the inbox, the
     // notifications and the Live highlights: a switched-off pair stops here.
-    void reportDetection(qint64 hostId, int channel, const QString &type, const QString &camera);
+    // `at`: when the source saw it (epoch seconds; 0 = now).
+    void reportDetection(qint64 hostId, int channel, const QString &type, const QString &camera,
+                         qint64 at = 0);
 
     // Camera/NVR by IP or hostname. Validates asynchronously; the row appears
     // immediately with status "connecting…".
@@ -376,7 +378,8 @@ signals:
     void bcConfigLoaded(int row, int cmdId, const QVariantMap &values);
     void recScheduleLoaded(int row, const QVariantMap &values);
     // Emitted on each detection 0->1 transition (feeds the event inbox).
-    void detectionEvent(qint64 hostId, int channel, const QString &type, const QString &camera);
+    void detectionEvent(qint64 hostId, int channel, const QString &type, const QString &camera,
+                        qint64 at);
     // A quiet event-thumbnail capture finished (path is a local JPEG).
     void eventThumbnailReady(qint64 eventId, const QString &path);
     // A camera (channel >= 0) or a whole host (channel == -1) changed

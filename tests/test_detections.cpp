@@ -181,6 +181,9 @@ private slots:
         QCOMPARE(out[0].camera, QStringLiteral("front"));
         QCOMPARE(out[0].channel, 0);
         QCOMPARE(out[1].channel, 1);
+        // Each carries when Frigate saw it, not when the poll ran (review #2, 4a).
+        QCOMPARE(out[0].at, qint64(1090));
+        QCOMPARE(out[1].at, qint64(1100));
         QCOMPARE(h.frigatePlan().after, 1100.0);
     }
     void watermarkNeverGoesBackwards()
@@ -217,7 +220,7 @@ private slots:
         HostDetections h;
         QCOMPARE(h.onFrigateLive("front", "person", 1000, kCams).size(), 1);
         QCOMPARE(h.onFrigateLive("back", "person", 1001, kCams).size(), 1);
-        QCOMPARE(h.onFrigateLive("front", "car", 1002, kCams).size(), 1);
+        QCOMPARE(h.onFrigateLive("front", "car", 1002, kCams).value(0).at, qint64(1002));
         QCOMPARE(h.onFrigateLive("front", "dog", 1003, kCams).size(), 1);
         QCOMPARE(h.onFrigateLive("front", "person", 1004, kCams).size(), 0);
     }

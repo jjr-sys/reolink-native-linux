@@ -67,7 +67,7 @@ QVector<Detection> HostDetections::onFrigatePoll(const FrigatePoll &plan,
         if (ev.start <= plan.after || type.isEmpty() || !channelOf.contains(ev.camera))
             continue;
         if (raiseBurst(ev.camera, type, ev.start))
-            out.append({channelOf.value(ev.camera), type, ev.camera});
+            out.append({channelOf.value(ev.camera), type, ev.camera, qint64(ev.start)});
     }
     m_frigateWatermark = frigate::newWatermark(plan.after, events);
     return out;
@@ -82,7 +82,7 @@ QVector<Detection> HostDetections::onFrigateLive(const QString &camera, const QS
         return {};
     if (!raiseBurst(camera, type, start))
         return {};
-    return {{channelOf.value(camera), type, camera}};
+    return {{channelOf.value(camera), type, camera, qint64(start)}};
 }
 
 } // namespace rl::device

@@ -126,7 +126,8 @@ signals:
     void eventActivated(qint64 hostId, int channel, qint64 timestamp);
 
 private slots:
-    void onDetection(qint64 hostId, int channel, const QString &type, const QString &camera);
+    void onDetection(qint64 hostId, int channel, const QString &type, const QString &camera,
+                     qint64 at);
     void onThumbnailReady(qint64 eventId, const QString &path);
     void onConnectivity(qint64 hostId, int channel, const QString &name, bool online,
                         const QVector<rl::device::CameraRef> &changed);

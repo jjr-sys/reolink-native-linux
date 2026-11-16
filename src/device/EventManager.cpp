@@ -205,19 +205,23 @@ QHash<int, QByteArray> EventManager::roleNames() const
 }
 
 void EventManager::onDetection(qint64 hostId, int channel, const QString &type,
-                               const QString &camera)
+                               const QString &camera, qint64 at)
 {
     EventRecord rec;
     rec.hostId = hostId;
     rec.channel = channel;
-    rec.timestamp = QDateTime::currentSecsSinceEpoch();
+    // When the source saw it (Frigate's start: a poll after an outage reports late), never
+    // ahead of our clock.
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    rec.timestamp = at > 0 ? qMin(at, now) : now;
     rec.type = type;
     rec.camera = camera;
     fileEvent(rec);
+    if (rec.id <= 0)
+        return; // not stored: nothing to picture, count or announce
     // Grab a frame from the camera for the inbox thumbnail (quiet; the row
     // updates in place when it lands).
-    if (rec.id > 0)
-        m_devices->captureEventThumbnail(hostId, channel, rec.id);
+    m_devices->captureEventThumbnail(hostId, channel, rec.id);
     ++m_unread;
     emit unreadChanged();
 
@@ -603,7 +607,7 @@ void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> 
         // the live poller having already caught it — but if that existing row is
         // still missing its thumbnail (e.g. it was filed before this sync could
         // fetch one), pick that up now rather than leaving it blank forever.
-        const auto near = m_db->eventNear(hostId, channel, ts, qint64(frigate::kBurstGapSecs));
+        const auto near = m_db->eventNear(hostId, channel, type, ts, qint64(frigate::kBurstGapSecs));
         if (near && device::sameBurstWindow(near->timestamp, ts)) {
             if (near->thumbnail.isEmpty())
                 newThumbs.append({near->id, ev.id});

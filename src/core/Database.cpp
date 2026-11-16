@@ -379,15 +379,16 @@ bool Database::hostHasEvents(qint64 hostId) const
     return q.exec() && q.next();
 }
 
-std::optional<EventRecord> Database::eventNear(qint64 hostId, int channel, qint64 ts,
-                                               qint64 windowSecs) const
+std::optional<EventRecord> Database::eventNear(qint64 hostId, int channel, const QString &type,
+                                               qint64 ts, qint64 windowSecs) const
 {
     QSqlQuery q(db());
     q.prepare(QString::fromLatin1(kEventColumns)
-              + QStringLiteral(" WHERE host_id = :h AND channel = :c AND ts > :lo AND ts < :hi"
-                               " ORDER BY ABS(ts - :ts) LIMIT 1"));
+              + QStringLiteral(" WHERE host_id = :h AND channel = :c AND type = :t"
+                               " AND ts > :lo AND ts < :hi ORDER BY ABS(ts - :ts) LIMIT 1"));
     q.bindValue(QStringLiteral(":h"), hostId);
     q.bindValue(QStringLiteral(":c"), channel);
+    q.bindValue(QStringLiteral(":t"), type);
     q.bindValue(QStringLiteral(":lo"), ts - windowSecs);
     q.bindValue(QStringLiteral(":hi"), ts + windowSecs);
     q.bindValue(QStringLiteral(":ts"), ts);

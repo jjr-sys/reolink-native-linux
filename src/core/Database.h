@@ -106,9 +106,10 @@ public:
     QHash<QString, int> eventCountsBetween(qint64 hostId, int channel, qint64 from, qint64 to) const;
     QHash<qint64, QHash<QString, int>> eventCountsByHost(qint64 from, qint64 to) const;
     bool hostHasEvents(qint64 hostId) const;
-    // The event on this camera nearest `ts`, if one is less than `windowSecs` away.
-    std::optional<EventRecord> eventNear(qint64 hostId, int channel, qint64 ts,
-                                         qint64 windowSecs) const;
+    // The event of this type on this camera nearest `ts`, if one is less than `windowSecs`
+    // away (bursts are per camera and type).
+    std::optional<EventRecord> eventNear(qint64 hostId, int channel, const QString &type,
+                                         qint64 ts, qint64 windowSecs) const;
     // The camera names a host's events are filed under, and renaming them in place.
     QStringList eventCameras(qint64 hostId) const;
     // Every camera's name on its newest stored detection (Status rows carry the

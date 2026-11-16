@@ -417,15 +417,16 @@ void DeviceManager::emitDetections(qint64 hostId, const QVector<device::Detectio
         reportDetection(hostId, d.channel, d.type,
                         frigateHost ? displayName(d.camera, device::kindToString(
                                                                 device::Kind::Frigate))
-                                    : d.camera);
+                                    : d.camera,
+                        d.at);
 }
 
 void DeviceManager::reportDetection(qint64 hostId, int channel, const QString &type,
-                                    const QString &camera)
+                                    const QString &camera, qint64 at)
 {
     if (m_eventSwitches->isOff(hostId, channel, type))
         return;
-    emit detectionEvent(hostId, channel, type, camera);
+    emit detectionEvent(hostId, channel, type, camera, at);
 }
 
 void DeviceManager::ensurePushListener(const Entry &e)

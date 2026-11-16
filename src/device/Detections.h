@@ -20,6 +20,7 @@ struct Detection
     int channel = 0;
     QString type;   // "motion" | "person" | "vehicle" | "pet" | "visitor"
     QString camera; // as the source named it (Frigate: the raw config key)
+    qint64 at = 0;  // when the source saw it, epoch seconds (Frigate's event start); 0 = now
 };
 
 // Frigate opens a new event for each object it tracks, so one person crossing the yard
