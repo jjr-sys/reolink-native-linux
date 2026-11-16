@@ -139,6 +139,38 @@ private slots:
         QCOMPARE(seen.join(","), QStringLiteral("person@40,vehicle@595,person@600"));
     }
 
+    // wayfinder/architecture ticket 02: a Frigate event the history sync filed, then reported
+    // live (still in progress, or late after an outage, at Frigate's own time), is the same
+    // event: no second row, no unread. A Reolink detection (no source time: "now") files
+    // as before, and a live Frigate event outside the burst window is a new one.
+    void aLiveReportOfAnEventHistoryFiledIsTheSameEvent()
+    {
+        QTemporaryDir dir;
+        Database db(dir.filePath("t.db"), QStringLiteral("sw_hist_live"));
+        QVERIFY(db.open());
+        CredentialStore credentials;
+        DeviceManager devices(&db, &credentials);
+        EventManager events(&db, &devices);
+        const qint64 now = QDateTime::currentSecsSinceEpoch();
+        events.applyFrigateHistory(9, {{QStringLiteral("drive"), 2}},
+            {{QStringLiteral("e1"), QStringLiteral("drive"), QStringLiteral("person"), double(now - 60)}});
+        QCOMPARE(db.recentEvents(10, {}, {9}).size(), 1);
+        const int unread = events.unread();
+
+        devices.reportDetection(9, 2, QStringLiteral("person"), QStringLiteral("Drive"), now - 57);
+        QCOMPARE(db.recentEvents(10, {}, {9}).size(), 1);
+        QCOMPARE(events.unread(), unread);
+
+        devices.reportDetection(9, 2, QStringLiteral("person"), QStringLiteral("Drive"), now - 10);
+        QCOMPARE(db.recentEvents(10, {}, {9}).size(), 2);   // 50 s on: a new event
+        QCOMPARE(events.unread(), unread + 1);
+
+        // Reolink: two detections in a row, no source time, both filed (as before).
+        devices.reportDetection(7, 1, QStringLiteral("person"), QStringLiteral("Gate"));
+        devices.reportDetection(7, 1, QStringLiteral("person"), QStringLiteral("Gate"));
+        QCOMPARE(db.recentEvents(10, {}, {7}).size(), 2);
+    }
+
     // An event that couldn't be stored is not counted as unread (nor pictured or announced).
     void anEventThatWasntStoredIsntCounted()
     {

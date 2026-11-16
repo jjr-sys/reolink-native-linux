@@ -264,6 +264,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Fixed
 
+- **A Frigate event listed twice.** An event the app picked up from Frigate's history (at
+  start, or after an outage) and then heard about live was filed again: two rows, an extra
+  unread count and a second desktop notice. It is now recognised as the same event.
+
 - **Quitting during a Frigate clip download.** Closing the app while an Events clip from
   Frigate was downloading (for example just after Keep playing) could leave it hanging for up
   to 90 s, or crash it. The download now stops at once when the clip player goes, or when

@@ -216,6 +216,15 @@ void EventManager::onDetection(qint64 hostId, int channel, const QString &type,
     rec.timestamp = at > 0 ? qMin(at, now) : now;
     rec.type = type;
     rec.camera = camera;
+    // At the source's own time (Frigate), the history sync may have filed it already: the
+    // same event, not a new one (wayfinder/architecture ticket 02). Detections at "now"
+    // (Reolink) have no history to meet and file as they come.
+    if (at > 0) {
+        const auto near = m_db->eventNear(hostId, channel, type, rec.timestamp,
+                                          qint64(frigate::kBurstGapSecs));
+        if (near && device::sameBurstWindow(near->timestamp, rec.timestamp))
+            return;
+    }
     fileEvent(rec);
     if (rec.id <= 0)
         return; // not stored: nothing to picture, count or announce
