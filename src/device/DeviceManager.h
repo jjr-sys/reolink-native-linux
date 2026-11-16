@@ -279,7 +279,7 @@ public:
     // Live replay from the buffer: whether it holds the moment (ms since the epoch); its
     // footage as [{start, end}] epoch seconds (for Live replay's strip and segments); and
     // playing it from the moment into `player`, backwards or forwards (media/BufferReplay.h).
-    bool liveBufferHas(int row, qint64 epochMs) const;
+    bool liveBufferHas(int row, qint64 epochMs, int direction) const;
     Q_INVOKABLE QVariantList liveBufferSpans(int row) const;
     void startLiveBufferPlayback(int row, qint64 epochMs, int direction, StreamPlayer *player);
     // Seek the active Baichuan playback (same row) to a new instant in place — no
@@ -477,7 +477,7 @@ private:
     QFutureSynchronizer<void> m_pending; // drains in-flight validations at teardown
 
     QTimer m_pollTimer;
-    LiveBufferPool m_liveBuffers;
+    std::shared_ptr<LiveBufferPool> m_liveBuffers = std::make_shared<LiveBufferPool>();
     QTimer m_liveBufferLog;   // a line a minute: what each live buffer holds
     // Frigate hosts: the cameras the last validation listed, and when the poll last re-read
     // the list (epoch secs), so a camera added or removed on the server shows up by itself.

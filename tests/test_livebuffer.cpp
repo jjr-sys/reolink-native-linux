@@ -128,9 +128,37 @@ private slots:
         QVERIFY(b.runAt(50000).frames.isEmpty());
     }
 
+    // A camera that stopped streaming (its pane hidden) keeps nothing older than 5 minutes ago.
+    void aStoppedBufferIsTrimmedByTheClock()
+    {
+        LiveBuffer b;
+        feed(b, 0, 20, 2);
+        b.trimBefore(10500);
+        QCOMPARE(b.oldestMs(), qint64(10000));   // the group holding 10.5 s stays whole
+        b.trimBefore(100000);
+        QVERIFY(b.empty());
+    }
+
+    // Whether a run plays from a moment, either way, without copying it: in a run, in a short
+    // break after one (backwards: from that run), or before one (forwards: from its start).
+    void hasRunAtAnswersBothWays()
+    {
+        LiveBuffer b;
+        feed(b, 0, 10, 1, false);
+        feed(b, 12000, 5, 1, true);   // a 2.1 s break: SD 0 .. 9.9, HD 12 .. 16.9
+        QVERIFY(b.hasRunAt(5000, -1));
+        QVERIFY(b.hasRunAt(11000, -1));      // in the break: the SD run behind it
+        QVERIFY(b.hasRunAt(11000, 1));       // forwards: the HD run ahead
+        QVERIFY(!b.hasRunAt(20000, 1));
+        QVERIFY(!b.hasRunAt(-3000, -1));
+        // Forwards from the break plays the HD run from its start.
+        QCOMPARE(b.framesFrom(11000, true).first().epochMs, qint64(12000));
+    }
+
     void thePoolDropsTheOldestGroupsAcrossBuffersOverItsCap()
     {
-        LiveBufferPool pool(30000);   // bytes
+        auto poolPtr = std::make_shared<LiveBufferPool>(30000);   // bytes
+        LiveBufferPool &pool = *poolPtr;
         auto a = pool.buffer(QStringLiteral("5:0"));
         auto c = pool.buffer(QStringLiteral("1:6"));
         QCOMPARE(pool.buffer(QStringLiteral("5:0")), a);   // one per camera
@@ -251,11 +279,15 @@ private slots:
 
     void thePoolNeverEmptiesABufferBelowOneGroup()
     {
-        LiveBufferPool pool(500);
-        auto a = pool.buffer(QStringLiteral("5:0"));
+        auto pool = std::make_shared<LiveBufferPool>(500);
+        auto a = pool->buffer(QStringLiteral("5:0"));
         feed(*a, 0, 3);   // 3 groups of 1 000 B
         QVERIFY(!a->empty());
         QCOMPARE(a->oldestMs(), qint64(2000));
+        // A buffer outliving its pool (a player still running at shutdown) just stops capping.
+        pool.reset();
+        feed(*a, 3000, 1);
+        QCOMPARE(a->newestMs(), qint64(3900));
     }
 };
 

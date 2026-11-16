@@ -7,6 +7,7 @@
 #include <QMutex>
 #include <QString>
 
+#include <atomic>
 #include <memory>
 
 namespace rl {
@@ -32,12 +33,15 @@ public:
     static constexpr qint64 kSpanMs = 5 * 60 * 1000;
     static constexpr qint64 kGapMs = 5000;
 
-    explicit LiveBuffer(LiveBufferPool *pool = nullptr) : m_pool(pool) {}
+    explicit LiveBuffer(std::weak_ptr<LiveBufferPool> pool = {}) : m_pool(std::move(pool)) {}
 
     // A frame of the live stream (`main`: the HD main stream). Its epochMs must be set.
     void push(const reverse::Frame &f, bool main);
     // The stream stopped: the next frame starts a new run (from its keyframe).
     void breakRun();
+    // Drop what is older than `ms` (whole groups; the group holding it stays): a buffer whose
+    // camera stopped streaming still keeps only its last 5 minutes.
+    void trimBefore(qint64 ms);
 
     bool empty() const;
     qint64 oldestMs() const;   // -1 when empty
@@ -65,9 +69,13 @@ public:
         QList<reverse::Frame> frames;
     };
     Run runAt(qint64 ms) const;
-    // Forwards from `ms` within its run: from the keyframe of the group holding it
-    // (fromKeyframe), else the frames after it; empty when no run holds it / nothing after.
+    // Forwards from `ms` within its run: from the keyframe of the group holding it — or, in a
+    // break of less than kGapMs before a run, from that run's start — (fromKeyframe), else the
+    // frames after it; empty when no run holds it / nothing after.
     QList<reverse::Frame> framesFrom(qint64 ms, bool fromKeyframe) const;
+    // Whether a run plays from `ms` going `direction` (as runAt / framesFrom would), without
+    // copying it.
+    bool hasRunAt(qint64 ms, int direction) const;
 
 private:
     friend class LiveBufferPool;
@@ -81,8 +89,10 @@ private:
     qint64 spareOldestMs() const;
     qint64 dropOldest();
 
+    void account(qint64 delta);   // tell the pool (outside the lock)
+
     mutable QMutex m_mutex;
-    LiveBufferPool *m_pool = nullptr;
+    std::weak_ptr<LiveBufferPool> m_pool;   // may go first (a player still running at shutdown)
     QList<Gop> m_gops;          // oldest first
     qint64 m_bytes = 0;
     int m_run = 0;              // the current run's id
@@ -105,7 +115,8 @@ QByteArray withParameterSets(const QByteArray &annexB, const QByteArray &extrada
 
 // Every camera's live buffer, under one byte cap (ticket 08: 600 MB); over it, the oldest
 // group across all buffers goes first, never a buffer's last group.
-class LiveBufferPool
+// Owned by a shared_ptr (its buffers keep a weak one).
+class LiveBufferPool : public std::enable_shared_from_this<LiveBufferPool>
 {
 public:
     static constexpr qint64 kDefaultCap = 600LL * 1000 * 1000;
@@ -115,12 +126,14 @@ public:
     std::shared_ptr<LiveBuffer> buffer(const QString &key);
     std::shared_ptr<LiveBuffer> find(const QString &key) const;
     qint64 bytes() const;
-    // Trim to the cap (each buffer calls it after a push).
-    void enforce();
+    // A buffer grew or shrank by `delta` bytes; over the cap, trim (oldest groups first).
+    void account(qint64 delta);
 
 private:
+    void enforce();
     mutable QMutex m_mutex;
     qint64 m_cap;
+    std::atomic<qint64> m_total{0};
     QHash<QString, std::shared_ptr<LiveBuffer>> m_buffers;
 };
 

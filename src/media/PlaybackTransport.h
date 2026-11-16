@@ -27,9 +27,13 @@ public:
     virtual void openHttp(int row, qint64 epoch, const QString &url) = 0;
     virtual void openBaichuan(int row, qint64 epoch, bool main, NativeWindows windows) = 0;
     virtual void stop() = 0;
-    // The camera's live buffer (wayfinder/live-replay ticket 08b): whether it holds the moment
-    // (ms since the epoch), and playing it from there (direction 1 / -1). None by default.
-    virtual bool bufferHas(int row, qint64 epochMs) const { Q_UNUSED(row); Q_UNUSED(epochMs); return false; }
+    // The camera's live buffer (wayfinder/live-replay ticket 08b): whether it plays from the
+    // moment (ms since the epoch) going `direction` (1 / -1), and playing it. None by default.
+    virtual bool bufferHas(int row, qint64 epochMs, int direction) const
+    {
+        Q_UNUSED(row); Q_UNUSED(epochMs); Q_UNUSED(direction);
+        return false;
+    }
     virtual void openBuffer(int row, qint64 epochMs, int direction) { Q_UNUSED(row); Q_UNUSED(epochMs); Q_UNUSED(direction); }
 };
 

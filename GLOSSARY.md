@@ -13,7 +13,7 @@ A live stream using a fallback transport after its preferred transport fails; th
 _Avoid_: SD (when referring to transport fallback)
 
 **Live replay**:
-One Live View pane stepping back from now into its recorder camera's recording, across days as far back as storage holds, with Playback's controls on the pane bar and its time line as the "time behind live" line; its live stream stops meanwhile. "● Live", leaving Live View, or playing forwards into the recorder's newest footage returns it to live. One pane at a time.
+One Live View pane stepping back from now into its recorder camera's recording, across days as far back as storage holds, with Playback's controls on the pane bar and its time line as the "time behind live" line; it starts from now in the pane's live buffer, and its live stream stays connected meanwhile (not shown) so the buffer keeps filling. "● Live", leaving Live View, or playing forwards into the recorder's newest footage returns it to live. One pane at a time.
 _Avoid_: timeshift, instant replay
 
 **Live buffer**:

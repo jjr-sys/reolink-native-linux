@@ -1771,28 +1771,32 @@ std::shared_ptr<LiveBuffer> DeviceManager::liveBuffer(int row)
     if (row < 0 || row >= m_entries.size() || isDirectAt(row))
         return {};
     const Entry &e = m_entries.at(row);
-    if (!m_liveBufferLog.isActive()) {
+    if (!m_liveBufferLog.isActive()) {   // the first buffer starts the minutely log
         m_liveBufferLog.setInterval(60000);
         connect(&m_liveBufferLog, &QTimer::timeout, this, [this] {
+            const qint64 now = QDateTime::currentMSecsSinceEpoch();
             for (int r = 0; r < m_entries.size(); ++r) {
                 const auto b = findLiveBuffer(r);
-                if (!b || b->empty())
+                if (!b)
                     continue;
-                qCInfo(lcCore).noquote() << "live buffer" << m_entries.at(r).rec.name << "/"
+                b->trimBefore(now - LiveBuffer::kSpanMs);
+                if (b->empty())
+                    continue;
+                qCInfo(lcMedia).noquote() << "live buffer" << m_entries.at(r).rec.name << "/"
                     << m_entries.at(r).chanName << ":" << (b->newestMs() - b->oldestMs()) / 1000
                     << "s in" << b->runs() << "run(s)," << b->bytes() / 1000000 << "MB; all"
-                    << m_liveBuffers.bytes() / 1000000 << "MB";
+                    << m_liveBuffers->bytes() / 1000000 << "MB";
             }
         });
         m_liveBufferLog.start();
     }
-    return m_liveBuffers.buffer(liveBufferKey(e.rec.id, e.channel));
+    return m_liveBuffers->buffer(liveBufferKey(e.rec.id, e.channel));
 }
 
-bool DeviceManager::liveBufferHas(int row, qint64 epochMs) const
+bool DeviceManager::liveBufferHas(int row, qint64 epochMs, int direction) const
 {
     const auto b = findLiveBuffer(row);
-    return b && !b->runAt(epochMs).frames.isEmpty();
+    return b && b->hasRunAt(epochMs, direction);
 }
 
 QVariantList DeviceManager::liveBufferSpans(int row) const
@@ -1801,6 +1805,8 @@ QVariantList DeviceManager::liveBufferSpans(int row) const
     const auto b = findLiveBuffer(row);
     if (!b)
         return out;
+    // A camera that stopped streaming keeps only its last 5 minutes too.
+    b->trimBefore(QDateTime::currentMSecsSinceEpoch() - LiveBuffer::kSpanMs);
     for (const LiveBuffer::Span &s : b->spans())
         out << QVariantMap{{QStringLiteral("start"), s.startMs / 1000.0},
                            {QStringLiteral("end"), s.endMs / 1000.0}};
@@ -1810,11 +1816,11 @@ QVariantList DeviceManager::liveBufferSpans(int row) const
 void DeviceManager::startLiveBufferPlayback(int row, qint64 epochMs, int direction, StreamPlayer *player)
 {
     const auto b = findLiveBuffer(row);
-    if (!b || !player || row >= m_entries.size())
+    if (!b || !player)
         return;
     const Entry &e = m_entries.at(row);
     auto source = std::make_shared<BufferReplay>(b, epochMs, direction, player->speedCell());
-    qCInfo(lcCore).noquote() << "live buffer playback" << e.rec.name << "/" << e.chanName
+    qCInfo(lcMedia).noquote() << "live buffer playback" << e.rec.name << "/" << e.chanName
         << (source->main() ? "main" : "sub") << (direction < 0 ? "backwards from" : "from")
         << QDateTime::fromMSecsSinceEpoch(epochMs).toString(Qt::ISODateWithMs);
     player->setExpectedSize(source->main() ? e.mainSize : e.subSize);
@@ -1832,7 +1838,7 @@ std::shared_ptr<LiveBuffer> DeviceManager::findLiveBuffer(int row) const
     if (row < 0 || row >= m_entries.size())
         return {};
     const Entry &e = m_entries.at(row);
-    return m_liveBuffers.find(liveBufferKey(e.rec.id, e.channel));
+    return m_liveBuffers->find(liveBufferKey(e.rec.id, e.channel));
 }
 
 bool DeviceManager::seekBaichuanPlayback(int row, qint64 startEpoch)

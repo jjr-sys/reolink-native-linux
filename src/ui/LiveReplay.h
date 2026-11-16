@@ -139,6 +139,11 @@ private:
     enum class Ahead { NewestFootage, Live };
     static constexpr double kPending = -2;
     static constexpr double kNone = -1;
+    // The live buffer (ticket 08b): ◀ "from now" starts at its newest frame when that is
+    // within this of now (frames reach this machine up to ≈8 s after their camera time,
+    // ticket 08a); forwards this close to its newest frame is now (back to live).
+    static constexpr double kBufferNowSlackSecs = 15;
+    static constexpr double kLiveEdgeSecs = 3;
 
     void reset();
     void want(const QDate &day, bool urgent);
@@ -174,6 +179,7 @@ private:
 
     QHash<QDate, QList<Span>> m_days;  // searched days: recordings, epoch seconds
     QList<Span> m_buffer;              // the live buffer's runs, epoch seconds
+    bool m_landedInBuffer = false;     // the last play opened in the buffer
     QHash<int, QList<int>> m_months;   // year*100+month -> days with recordings
     QHash<QDate, int> m_failures;      // failed searches per day
     QList<QDate> m_queue;

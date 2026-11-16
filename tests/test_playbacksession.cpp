@@ -44,7 +44,7 @@ public:
     qint64 bufferFrom = -1, bufferTo = -1;
     struct BufferOpen { int row; qint64 epochMs; int direction; };
     QVector<BufferOpen> bufferOpens;
-    bool bufferHas(int, qint64 epochMs) const override
+    bool bufferHas(int, qint64 epochMs, int) const override
     {
         return epochMs >= bufferFrom && epochMs <= bufferTo;
     }

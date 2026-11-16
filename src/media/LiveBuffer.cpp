@@ -2,10 +2,19 @@
 
 namespace rl {
 
+void LiveBuffer::account(qint64 delta)
+{
+    if (delta == 0)
+        return;
+    if (const auto pool = m_pool.lock())
+        pool->account(delta);
+}
+
 void LiveBuffer::push(const reverse::Frame &f, bool main)
 {
     if (f.epochMs < 0)
         return;
+    qint64 delta = 0;
     {
         QMutexLocker lock(&m_mutex);
         // A new run: another stream (quality, codec), or the camera's clock jumped.
@@ -28,16 +37,34 @@ void LiveBuffer::push(const reverse::Frame &f, bool main)
         g.frames.append(f);
         g.bytes += f.annexB.size();
         m_bytes += f.annexB.size();
+        delta += f.annexB.size();
         m_lastMs = f.epochMs;
         // Five minutes back from the newest frame, in whole groups.
         const qint64 floor = f.epochMs - kSpanMs;
         while (m_gops.size() > 1 && m_gops.at(1).frames.first().epochMs <= floor) {
             m_bytes -= m_gops.first().bytes;
+            delta -= m_gops.first().bytes;
             m_gops.removeFirst();
         }
     }
-    if (m_pool)
-        m_pool->enforce();
+    account(delta);
+}
+
+void LiveBuffer::trimBefore(qint64 ms)
+{
+    qint64 delta = 0;
+    {
+        QMutexLocker lock(&m_mutex);
+        while (!m_gops.isEmpty()) {
+            const bool nextStartsBefore = m_gops.size() > 1 && m_gops.at(1).frames.first().epochMs <= ms;
+            if (!nextStartsBefore && m_gops.first().frames.last().epochMs >= ms)
+                break;
+            m_bytes -= m_gops.first().bytes;
+            delta -= m_gops.first().bytes;
+            m_gops.removeFirst();
+        }
+    }
+    account(delta);
 }
 
 void LiveBuffer::breakRun()
@@ -99,6 +126,7 @@ template <typename Gops> int gopAt(const Gops &gops, qint64 ms)
 }
 } // namespace
 
+namespace {
 // gopAt, or in a break of less than kGapMs after a run, that run's last group.
 template <typename Gops> int gopAtOrJustAfter(const Gops &gops, qint64 ms)
 {
@@ -113,6 +141,27 @@ template <typename Gops> int gopAtOrJustAfter(const Gops &gops, qint64 ms)
         return runEnds && ms - g.frames.last().epochMs < LiveBuffer::kGapMs ? j : -1;
     }
     return -1;
+}
+
+// gopAt, or in a break of less than kGapMs before a run, that run's first group.
+template <typename Gops> int gopAtOrJustBefore(const Gops &gops, qint64 ms)
+{
+    const int i = gopAt(gops, ms);
+    if (i >= 0)
+        return i;
+    for (int j = 0; j < gops.size(); ++j) {
+        const qint64 start = gops.at(j).frames.first().epochMs;
+        if (start > ms)
+            return start - ms < LiveBuffer::kGapMs ? j : -1;
+    }
+    return -1;
+}
+} // namespace
+
+bool LiveBuffer::hasRunAt(qint64 ms, int direction) const
+{
+    QMutexLocker lock(&m_mutex);
+    return (direction < 0 ? gopAtOrJustAfter(m_gops, ms) : gopAtOrJustBefore(m_gops, ms)) >= 0;
 }
 
 bool LiveBuffer::covers(qint64 ms) const
@@ -150,7 +199,7 @@ QList<reverse::Frame> LiveBuffer::framesFrom(qint64 ms, bool fromKeyframe) const
 {
     QMutexLocker lock(&m_mutex);
     QList<reverse::Frame> out;
-    const int at = gopAt(m_gops, ms);
+    const int at = fromKeyframe ? gopAtOrJustBefore(m_gops, ms) : gopAt(m_gops, ms);
     if (at < 0)
         return out;
     const int run = m_gops.at(at).run;
@@ -183,7 +232,7 @@ qint64 LiveBuffer::spareOldestMs() const
 
 qint64 LiveBuffer::dropOldest()
 {
-    QMutexLocker lock(&m_mutex);
+    QMutexLocker lock(&m_mutex);   // called by the pool, which keeps its own total
     if (m_gops.size() <= 1)
         return 0;
     const qint64 freed = m_gops.first().bytes;
@@ -243,7 +292,7 @@ std::shared_ptr<LiveBuffer> LiveBufferPool::buffer(const QString &key)
     QMutexLocker lock(&m_mutex);
     auto &b = m_buffers[key];
     if (!b)
-        b = std::make_shared<LiveBuffer>(this);
+        b = std::make_shared<LiveBuffer>(weak_from_this());
     return b;
 }
 
@@ -255,20 +304,19 @@ std::shared_ptr<LiveBuffer> LiveBufferPool::find(const QString &key) const
 
 qint64 LiveBufferPool::bytes() const
 {
-    QMutexLocker lock(&m_mutex);
-    qint64 n = 0;
-    for (const auto &b : m_buffers)
-        n += b->bytes();
-    return n;
+    return m_total.load();
+}
+
+void LiveBufferPool::account(qint64 delta)
+{
+    if (m_total.fetch_add(delta) + delta > m_cap)
+        enforce();
 }
 
 void LiveBufferPool::enforce()
 {
     QMutexLocker lock(&m_mutex);
-    qint64 total = 0;
-    for (const auto &b : m_buffers)
-        total += b->bytes();
-    while (total > m_cap) {
+    while (m_total.load() > m_cap) {
         LiveBuffer *oldest = nullptr;
         qint64 oldestMs = -1;
         for (const auto &b : m_buffers) {
@@ -280,7 +328,7 @@ void LiveBufferPool::enforce()
         }
         if (!oldest)
             return;   // every buffer is down to one group
-        total -= oldest->dropOldest();
+        m_total.fetch_sub(oldest->dropOldest());
     }
 }
 

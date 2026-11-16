@@ -145,6 +145,7 @@ void LiveReplay::reset()
 {
     m_days.clear();
     m_buffer.clear();
+    m_landedInBuffer = false;
     m_months.clear();
     m_failures.clear();
     m_queue.clear();
@@ -319,12 +320,22 @@ bool LiveReplay::mayHave(const QDate &day) const
 
 double LiveReplay::previousEnd(double epoch, QDate *day)
 {
+    // The live buffer's runs are footage too (ticket 08b): an older run before a break.
+    double buffered = kNone;
+    for (const Span &s : m_buffer)
+        if (s.end < epoch - 0.5 && s.end > buffered)
+            buffered = s.end;
     QDate d = dayOf(epoch);
     for (int guard = 0; guard < 4000 && d.isValid(); ++guard, d = d.addDays(-1)) {
+        const bool bufferedToday = buffered >= 0 && dayOf(buffered) == d;
+        if (bufferedToday && !known(d)) {   // no need to wait for the day's search
+            *day = d;
+            return buffered;
+        }
         if (m_oldestFound && (!m_oldestDay.isValid() || d < m_oldestDay))
             return kNone;
         if (known(d)) {
-            double best = kNone;
+            double best = bufferedToday ? buffered : kNone;
             for (const Span &s : m_days.value(d))
                 if (s.end < epoch - 0.5 && s.end > best)
                     best = s.end;
@@ -374,13 +385,15 @@ void LiveReplay::setBufferSpans(const QVariantList &spans)
         if (end > start)
             next.append({start, end});
     }
+    // The newest end moves every second while live fills the buffer: the segments and the
+    // strip are announced when a run comes, goes or starts elsewhere, or an end moves 5 s.
     const bool same = next.size() == m_buffer.size()
         && std::equal(next.begin(), next.end(), m_buffer.begin(), [](const Span &a, const Span &b) {
-               return a.start == b.start && a.end == b.end;
+               return std::abs(a.start - b.start) < 0.5 && std::abs(a.end - b.end) < 5;
            });
+    m_buffer = next;
     if (same)
         return;
-    m_buffer = next;
     emit dayChanged();          // the day's segments
     emit recordingsChanged();   // the strip
 }
@@ -424,7 +437,7 @@ void LiveReplay::resolve(double epoch, int direction, Ahead ahead)
     // so off this machine's), then the buffer, without waiting for any search (ticket 08b).
     if (direction < 0)
         for (const Span &s : m_buffer)
-            if (epoch > s.end && epoch - s.end < 5)
+            if (epoch > s.end && epoch - s.end < kBufferNowSlackSecs)
                 epoch = s.end;
     if (inBuffer(epoch)) {
         land(epoch, dayOf(epoch));
@@ -499,7 +512,7 @@ void LiveReplay::carryOn(int direction)
     if (direction > 0 && !m_buffer.isEmpty()) {
         const Span newest = *std::max_element(m_buffer.begin(), m_buffer.end(),
             [](const Span &a, const Span &b) { return a.end < b.end; });
-        if (m_playhead >= newest.start && newest.end - m_playhead < 3) {
+        if (m_playhead >= newest.start && newest.end - m_playhead < kLiveEdgeSecs) {
             stop();
             return;
         }
@@ -555,6 +568,7 @@ void LiveReplay::land(double epoch, const QDate &day)
     if (epoch >= nextMidnight)
         epoch = nextMidnight - 1;
     m_pending = Pending::None;
+    m_landedInBuffer = inBuffer(epoch);
     opened();
     setPlayhead(epoch, day);
     emit playWanted(epoch);
@@ -577,6 +591,12 @@ void LiveReplay::frameAt(double epoch, double wallMs)
 {
     if (!replaying() || epoch <= 0)
         return;
+    // Forwards in the recorder's footage, reaching the live buffer: play on from the buffer
+    // (ticket 08b), not on to the recorder's stall at its newest footage.
+    if (m_group->direction() > 0 && !m_landedInBuffer && inBuffer(epoch)) {
+        land(epoch, dayOf(epoch));
+        return;
+    }
     if (epoch != m_lastFrame) {
         m_lastFrame = epoch;
         m_lastMoveWall = wallMs;

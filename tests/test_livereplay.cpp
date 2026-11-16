@@ -232,6 +232,64 @@ private slots:
         QCOMPARE(play.last().at(0).toDouble(), kNow - 300);
     }
 
+    // A slow stream (Farm's sub stream arrives up to 8 s after its camera time, ticket 08a):
+    // ◀ from now still starts at the buffer's newest frame, not at the recorder.
+    void backwardsFromNowOnASlowStreamStillStartsInTheBuffer()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 35700}});
+        r.start(QStringLiteral("2:2"));
+        r.setBufferSpans(QVariantList{QVariantMap{{"start", kNow - 200}, {"end", kNow - 9}}});
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.playFrom(kNow, -1);
+        QCOMPARE(play.last().at(0).toDouble(), kNow - 9);
+    }
+
+    // Backwards out of the buffer's newest run into an older one (the SD footage before a
+    // maximise, kept by ticket 08b) — even across a break of several seconds — before the
+    // recorder.
+    void backwardsCarriesOnIntoAnOlderBufferRun()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 35700}});   // to now − 300 s
+        r.start(QStringLiteral("5:0"));
+        rec.answerAll(1);
+        r.setBufferSpans(QVariantList{QVariantMap{{"start", kNow - 200}, {"end", kNow - 60}},
+                                      QVariantMap{{"start", kNow - 52}, {"end", kNow}}});
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.playFrom(kNow, -1);
+        r.frameAt(kNow - 52, 0);
+        r.carryOn(-1);
+        QCOMPARE(play.last().at(0).toDouble(), kNow - 60);   // the older run's newest
+    }
+
+    // Forwards in the recorder's footage, reaching the buffer: the buffer takes over there
+    // (a reopen), rather than the recorder running on to its stall at the newest footage.
+    void forwardsFromTheRecorderSwitchesToTheBufferOnReachingIt()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 35880}});   // to now − 120 s
+        r.start(QStringLiteral("5:0"));
+        rec.answerAll(1);
+        r.setBufferSpans(QVariantList{QVariantMap{{"start", kNow - 150}, {"end", kNow}}});
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.playFrom(kNow - 400, 1);                  // the recorder
+        QCOMPARE(play.count(), 1);
+        r.frameAt(kNow - 200, 0);
+        QCOMPARE(play.count(), 1);
+        r.frameAt(kNow - 150, 0);                   // the buffer's oldest frame
+        QCOMPARE(play.count(), 2);
+        QCOMPARE(play.last().at(0).toDouble(), kNow - 150);
+        r.frameAt(kNow - 140, 0);                   // now playing the buffer: no more reopens
+        QCOMPARE(play.count(), 2);
+    }
+
     // Forwards, the buffer's end is now: playing into it returns the pane to live, rather than
     // reopening at each newest second as live keeps filling it.
     void forwardsAtTheBuffersNewestFrameReturnsToLive()

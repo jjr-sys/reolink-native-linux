@@ -51,9 +51,9 @@ public:
         if (player)
             player->stop();
     }
-    bool bufferHas(int row, qint64 epochMs) const override
+    bool bufferHas(int row, qint64 epochMs, int direction) const override
     {
-        return devices && devices->liveBufferHas(row, epochMs);
+        return devices && devices->liveBufferHas(row, epochMs, direction);
     }
     void openBuffer(int row, qint64 epochMs, int direction) override
     {
@@ -256,7 +256,7 @@ PlaybackSession::Outcome PlaybackSession::playAtImpl(double epochSecs, bool cove
     }
     const qint64 epoch = static_cast<qint64>(epochSecs);
     const qint64 epochMs = static_cast<qint64>(epochSecs * 1000);
-    if (m_useLiveBuffer && m_row >= 0 && m_transport->bufferHas(m_row, epochMs)) {
+    if (m_useLiveBuffer && m_row >= 0 && m_transport->bufferHas(m_row, epochMs, m_direction)) {
         m_nativeOpen = false;   // the next recorder stream opens afresh
         m_transport->openBuffer(m_row, epochMs, m_direction);
         return Outcome::Opened;
