@@ -139,51 +139,8 @@ private slots:
         QCOMPARE(seen.join(","), QStringLiteral("person@40,vehicle@595,person@600"));
     }
 
-    // wayfinder/architecture ticket 02: a Frigate event the history sync filed, then reported
-    // live (still in progress, or late after an outage, at Frigate's own time), is the same
-    // event: no second row, no unread. A Reolink detection (no source time: "now") files
-    // as before, and a live Frigate event outside the burst window is a new one.
-    void aLiveReportOfAnEventHistoryFiledIsTheSameEvent()
-    {
-        QTemporaryDir dir;
-        Database db(dir.filePath("t.db"), QStringLiteral("sw_hist_live"));
-        QVERIFY(db.open());
-        CredentialStore credentials;
-        DeviceManager devices(&db, &credentials);
-        EventManager events(&db, &devices);
-        const qint64 now = QDateTime::currentSecsSinceEpoch();
-        events.applyFrigateHistory(9, {{QStringLiteral("drive"), 2}},
-            {{QStringLiteral("e1"), QStringLiteral("drive"), QStringLiteral("person"), double(now - 60)}});
-        QCOMPARE(db.recentEvents(10, {}, {9}).size(), 1);
-        const int unread = events.unread();
-
-        devices.reportDetection(9, 2, QStringLiteral("person"), QStringLiteral("Drive"), now - 57);
-        QCOMPARE(db.recentEvents(10, {}, {9}).size(), 1);
-        QCOMPARE(events.unread(), unread);
-
-        devices.reportDetection(9, 2, QStringLiteral("person"), QStringLiteral("Drive"), now - 10);
-        QCOMPARE(db.recentEvents(10, {}, {9}).size(), 2);   // 50 s on: a new event
-        QCOMPARE(events.unread(), unread + 1);
-
-        // Frigate's clock ahead of ours: history files it at our now, never in the future, so
-        // the live report (also capped at now) meets it.
-        events.applyFrigateHistory(9, {{QStringLiteral("drive"), 2}},
-            {{QStringLiteral("e9"), QStringLiteral("drive"), QStringLiteral("car"), double(now + 600)}});
-        const QVector<EventRecord> ahead = db.recentEvents(10, {}, {9});
-        QCOMPARE(ahead.size(), 3);
-        QVERIFY(ahead.first().timestamp <= QDateTime::currentSecsSinceEpoch());
-        devices.reportDetection(9, 2, QStringLiteral("vehicle"), QStringLiteral("Drive"), now + 600);
-        QCOMPARE(db.recentEvents(10, {}, {9}).size(), 3);
-
-        // Reolink: two detections in a row, no source time, both filed (as before; the live
-        // gate that makes one row per burst sits before reportDetection and is unchanged).
-        devices.reportDetection(7, 1, QStringLiteral("person"), QStringLiteral("Gate"));
-        devices.reportDetection(7, 1, QStringLiteral("person"), QStringLiteral("Gate"));
-        QCOMPARE(db.recentEvents(10, {}, {7}).size(), 2);
-    }
-
-    // Ticket 03: a history sync's rows go in the list at their place by time (newest first),
-    // not on top, and a sync doesn't count anything unread.
+    // wayfinder/architecture ticket 03: a history sync's rows go in the list at their place
+    // by time (newest first), not on top, and a sync doesn't count anything unread.
     void historyRowsLandAtTheirPlaceInTheList()
     {
         QTemporaryDir dir;
@@ -205,6 +162,12 @@ private slots:
             times << events.data(events.index(i), EventManager::TimestampRole).toLongLong();
         QVERIFY2(times.at(0) >= now && times.at(1) == now - 600 && times.at(2) == now - 3600,
                  qPrintable(QStringLiteral("%1 %2 %3").arg(times.at(0)).arg(times.at(1)).arg(times.at(2))));
+
+        // Ticket 02 (its rule is the Inbox's, test_inbox): the live report of an event the
+        // sync filed is no new row and nothing unread.
+        devices.reportDetection(9, 2, QStringLiteral("person"), QStringLiteral("Drive"), now - 597);
+        QCOMPARE(events.rowCount(), 3);
+        QCOMPARE(events.unread(), unread);
     }
 
     // An event that couldn't be stored is not counted as unread (nor pictured or announced).

@@ -37,6 +37,7 @@ private:
 
 // An existing history row (a DB event) already covers a moment this close to it, so the
 // catch-up must not file it again. Same window as the burst gap.
+inline constexpr qint64 kSameEventSecs = qint64(frigate::kBurstGapSecs);
 bool sameBurstWindow(qint64 existingTimestamp, qint64 candidateTimestamp);
 
 // Where the next Frigate poll starts, captured when the poll is sent.

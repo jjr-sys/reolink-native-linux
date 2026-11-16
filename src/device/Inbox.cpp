@@ -2,7 +2,6 @@
 
 #include "device/Detections.h"
 #include "device/EventSwitches.h"
-#include "device/FrigateApi.h"
 
 #include <QDateTime>
 #include <QFile>
@@ -13,8 +12,8 @@
 namespace rl {
 
 Inbox::Inbox(Database *db, EventSwitches *switches, std::function<qint64()> now,
-             int capPerRecorder, QObject *parent)
-    : QObject(parent), m_db(db), m_switches(switches), m_now(std::move(now)), m_cap(capPerRecorder)
+             int capPerRecorder)
+    : m_db(db), m_switches(switches), m_now(std::move(now)), m_cap(capPerRecorder)
 {
 }
 
@@ -23,31 +22,41 @@ qint64 Inbox::now() const
     return m_now ? m_now() : QDateTime::currentSecsSinceEpoch();
 }
 
+qint64 Inbox::fileTime(const Candidate &c) const
+{
+    // When the source saw it, never ahead of our clock (a server clock that runs fast).
+    const qint64 clock = now();
+    return c.at > 0 ? qMin(qint64(c.at), clock) : clock;
+}
+
+std::optional<Inbox::Verdict> Inbox::refused(const Candidate &c) const
+{
+    if (m_switches && m_switches->isOff(c.hostId, c.channel, c.type))
+        return Verdict::SwitchedOff;
+    const bool motion = EventSwitches::storedType(c.type) == QLatin1String("motion");
+    if (fileTime(c) < now() - (motion ? device::kMotionKeepSecs : device::kOtherKeepSecs))
+        return Verdict::TooOld;
+    return std::nullopt;
+}
+
 Inbox::Filing Inbox::file(const Candidate &c, Source source)
 {
     Filing f;
-    if (m_switches && m_switches->isOff(c.hostId, c.channel, c.type)) {
-        f.verdict = Verdict::SwitchedOff;
+    if (const auto no = refused(c)) {
+        f.verdict = *no;
         return f;
     }
-    // When the source saw it, never ahead of our clock (a server clock that runs fast).
-    const qint64 clock = now();
-    const qint64 at = c.at > 0 ? qMin(qint64(c.at), clock) : clock;
-    const bool motion = EventSwitches::storedType(c.type) == QLatin1String("motion");
-    if (at < clock - (motion ? device::kMotionKeepSecs : device::kOtherKeepSecs)) {
-        f.verdict = Verdict::TooOld;
-        return f;
-    }
+    const qint64 at = fileTime(c);
     // At the source's own time a stored row may already be this event: history rerun, or
     // a live report of what history filed (ticket 02). Detections at "now" (Reolink) have
     // no history to meet and file as they come.
     if (source == Source::History || c.at > 0) {
         const auto near = m_db->eventNear(c.hostId, c.channel, c.type, at,
-                                          qint64(frigate::kBurstGapSecs));
+                                          device::kSameEventSecs);
         if (near && device::sameBurstWindow(near->timestamp, at)) {
             f.verdict = Verdict::SameEvent;
             f.row = *near;
-            f.needsPicture = near->thumbnail.isEmpty();
+            f.needsThumbnail = near->thumbnail.isEmpty();
             return f;
         }
     }
@@ -58,7 +67,7 @@ Inbox::Filing Inbox::file(const Candidate &c, Source source)
     rec.type = c.type;
     rec.camera = c.camera;
     f = store(rec, source == Source::Live);
-    f.needsPicture = f.verdict == Verdict::Stored;
+    f.needsThumbnail = f.verdict == Verdict::Stored;
     return f;
 }
 
@@ -73,8 +82,9 @@ QVector<Inbox::Filing> Inbox::fileHistory(const QVector<Candidate> &batch)
     QVector<Filing> out(batch.size());
     for (int i : order) {
         const Candidate &c = batch.at(i);
-        if (m_switches && m_switches->isOff(c.hostId, c.channel, c.type)) {
-            out[i].verdict = Verdict::SwitchedOff;
+        // Refused before the gate: one that isn't filed mustn't take its burst.
+        if (const auto no = refused(c)) {
+            out[i].verdict = *no;
             continue;
         }
         const QString camera = QString::number(c.hostId) + u':' + QString::number(c.channel);
@@ -129,18 +139,18 @@ void Inbox::enforceCap(qint64 hostId, const QString &type)
         ++it.value();
     if (it.value() <= m_cap)
         return;
-    const QStringList pictures = m_db->trimHostEvents(hostId, m_cap);
+    const QStringList thumbnails = m_db->trimHostEvents(hostId, m_cap);
     it.value() = m_db->countCappedEvents(hostId);
-    dropPictures(pictures);
+    dropThumbnails(thumbnails);
     emit trimmed();
 }
 
 void Inbox::enforceRetention()
 {
-    const QStringList pictures = m_db->purgeExpiredEvents(now(), device::kMotionKeepSecs,
+    const QStringList thumbnails = m_db->purgeExpiredEvents(now(), device::kMotionKeepSecs,
                                                           device::kOtherKeepSecs);
     m_cappedCount.clear();   // recounted on each recorder's next event
-    dropPictures(pictures);
+    dropThumbnails(thumbnails);
     emit trimmed();
 }
 
@@ -152,7 +162,7 @@ void Inbox::recount(qint64 hostId)
         m_cappedCount.remove(hostId);
 }
 
-void Inbox::dropPictures(const QStringList &paths)
+void Inbox::dropThumbnails(const QStringList &paths)
 {
     for (const QString &path : paths)
         QFile::remove(path);

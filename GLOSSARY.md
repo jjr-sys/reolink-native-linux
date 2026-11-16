@@ -177,3 +177,15 @@ _Avoid_: push mode
 **Burst**:
 Several Frigate events for one camera and type that start within 30 seconds of each other; they raise one detection.
 _Avoid_: duplicate
+
+**Inbox**:
+The one way an event reaches the store. A source (live detections, a recorder's history, a connectivity change) hands it a candidate, and it answers with a filing: stored, or why not (switched off, too old, the same event as a stored row, the same burst in a history batch), and whether to announce it. The Events list shows what it stored.
+_Avoid_: event inbox (the Events page and its list model, `EventManager`)
+
+**Same event**:
+A candidate that a stored row of the same camera and type already covers (within a burst's 30 seconds): a history sync run twice, or a live report of what the history filed.
+_Avoid_: duplicate
+
+**Status row**:
+The stored Online or Offline event a connectivity change writes for each camera it touched. Status can't be switched off.
+_Avoid_: health event

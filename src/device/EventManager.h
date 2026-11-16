@@ -19,9 +19,9 @@ namespace rl {
 class DeviceManager;
 class EventSwitches;
 
-// The Events list: files detection, history and status events through the Inbox (which
-// decides what is stored) and exposes the newest of them to QML, with an unread counter
-// and desktop notices. The store keeps its own history (motion 24 h; everything else 30 days under a
+// The event inbox's list: files detection, history and status events through the Inbox
+// (which decides what is stored) and exposes the newest of them to QML, with an unread
+// counter and desktop notices. The store keeps its own history (motion 24 h; everything else 30 days under a
 // per-recorder cap, see EventHistory.h); the list and the per-day lookups query it.
 class EventManager : public QAbstractListModel
 {
@@ -142,10 +142,13 @@ private:
     // The cameras the first switch-offs can name: stored event names, and the DB's channel
     // list (with each channel's event types). Bare streams raise nothing and are left out.
     QVector<device::KnownCamera> knownCameras() const;
-    // Puts a stored row in the list at its place by time (newest first), unless the Inbox
-    // trimmed the store meanwhile: then the list reloads instead.
-    void show(const EventRecord &row);
-    // The Inbox trimmed the store (cap, retention) during a filing: reload once it's done.
+    // A door's filings into the list: stored rows go in at their place by time, the
+    // recorder's columns hear once, and a trim during the filing reloads instead. True when
+    // any row was stored.
+    bool take(qint64 hostId, const QVector<Inbox::Filing> &filed);
+    // Puts a stored row in the list at its place by time (newest first).
+    void insertSorted(const EventRecord &row);
+    // The Inbox trimmed the store (cap, retention): reload once the filing is done.
     void reloadIfTrimmed();
     // One-time cleanup: events stored under a Frigate camera's raw config key
     // ("bosch_camera") before the display-name fix shipped are rewritten in
@@ -176,6 +179,7 @@ private:
     QVector<EventRecord> m_rows;     // the list: newest first
     Inbox m_inbox;                   // what is stored (wayfinder/architecture ticket 03)
     bool m_trimmed = false;          // the Inbox trimmed during the current filing
+    QSet<qint64> m_snapshotsDue;     // rows a Frigate snapshot is on its way to
     QSet<qint64> m_frigateHistoryChecked;
     QVector<EventSwitchKey> m_offeredSwitchOffs; // what the first switch-offs dialog shows // hosts already considered for the one-time catch-up
     int m_unread = 0;

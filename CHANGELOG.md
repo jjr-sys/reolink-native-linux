@@ -205,6 +205,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
   of live) used to do nothing; each now shows the reason for 2 s, the same words as the
   greyed button's tooltip: on the pane (Live, Events) or in Playback's speed line above the
   bottom bar.
+- **A live report of an event without a picture fills it in.** When Frigate's history filed
+  an event whose snapshot never came, the live report of the same event now grabs a frame
+  for it (it used to stay blank).
+- **Internal:** every event reaches the store through one `Inbox` (tested): it decides what
+  is stored (switch-offs, retention, a history batch's bursts, the same event, the cap) and
+  what is announced. The Events list puts a history sync's rows at their place instead of
+  reloading.
 - **Internal:** whether a transport button or key acts (and why not) is decided once, in
   `PaneBarRules::press` (tested); the pane bar, every page's keys and Playback's bottom bar
   ask it. `TransportActions.keyId` moved into it.

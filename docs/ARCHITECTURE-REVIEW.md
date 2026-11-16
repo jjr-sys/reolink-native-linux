@@ -303,8 +303,8 @@ and the `forReplay` split of the day search (Live replay uses it).
 `Database::eventNear` matches type (bursts are per camera and type); `device::Detection::at`
 carries Frigate's start through `reportDetection` / `detectionEvent` (filed at
 `min(at, now)`); unread, snapshot and notification only for a stored row. Not done: the
-history-then-live duplicate (narrow), the Inbox module (LATER: worth it with a third filing
-source), deduplicating the switch-off check (DON'T: one implementation, four consumers; the
+history-then-live duplicate (narrow; ticket 02, fixed), the Inbox module (built: see
+"4b: the Inbox"), deduplicating the switch-off check (DON'T: one implementation, four consumers; the
 source gate protects Highlights).
 
 ### Candidate 2: EventClip is the clip player's state machine (`f87457c`)
@@ -419,6 +419,39 @@ disagree, and a key still acts when its button has collapsed off a narrow pill.
    three callers, and `barRules` repeats `PaneBar.rules`' map by hand.
 
 Revert: the review-fix commit, then `6e78432`, then `3e64cda` (each builds and passes alone).
+
+### 4b: the Inbox, one filing path (`490a4a6`, `ee7ac4d`, review fixes)
+
+**Module.** `Inbox` (`src/device/Inbox.{h,cpp}`), knowing only `Database` and
+`EventSwitches`, with the clock and the cap passed in. `file(candidate, Live|History)` →
+`Filing { verdict, row, announce, needsThumbnail }`; `fileHistory(batch)` (one per camera,
+type and burst, oldest first; filings in the batch's order); `fileStatus(...)` (connectivity);
+`enforceRetention()`, `recount(host)`, signal `trimmed`. `EventManager` keeps the list model,
+unread count, desktop notices and thumbnail fetching; its doors call the Inbox and put stored
+rows in the list at their place by time (`take`, `insertSorted`).
+
+**Decisions** (wayfinder/architecture ticket 03, plus the agreed plan).
+1. Reolink recorder history is treated as coming (the user), so the Inbox is built now.
+2. Verdicts: stored, switched off, too old, same event (a stored row covers it), same burst
+   (a history batch already filed one), not stored. "Same event" and "same burst" are kept
+   apart: one met the store, the other only the batch's gate.
+3. Refusals (switched off, too old) come before a batch's burst gate, so an event that isn't
+   filed doesn't take its burst (found in review; `main` had it right).
+4. The live burst gate stays in `HostDetections`; `DeviceManager::reportDetection`'s early
+   switch-off drop stays (the Inbox checks again: one implementation, `EventSwitches::isOff`).
+5. Rows come back as return values, not a `filed` signal as planned: a history batch can be
+   hundreds of rows and the caller emits `storedChanged` once per batch (now the host's id,
+   not -1; `EventFeed` handles both). A cap or retention trim during a filing reloads once.
+6. The gap ticket 02 left: a live report of a stored row without a thumbnail grabs a camera
+   frame for it, unless Frigate's snapshot for that row is still on its way
+   (`m_snapshotsDue`, so a frame can't overwrite the right picture).
+7. New and harmless: a live event older than its type's retention would be refused (none are).
+   The history batch's gate is keyed by host and channel, not Frigate's camera name.
+8. Checked on screen: with the Frigate host's events removed from a scratch copy of the
+   store, the start-up catch-up filed the same 268 rows over the same span as the build
+   before (pictures fetched; the feed showed them).
+
+Revert: the review-fix commit, then `ee7ac4d`, then `490a4a6`.
 
 ### Not built
 

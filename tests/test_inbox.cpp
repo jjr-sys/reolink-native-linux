@@ -22,13 +22,16 @@ class TestInbox : public QObject
     struct Store {
         QTemporaryDir dir;
         Database db;
+        bool opened = false;
         EventSwitches switches;
         Inbox inbox;
         explicit Store(const char *name, int cap = 1000)
             : db(dir.filePath("t.db"), QString::fromLatin1(name)),
-              switches((db.open(), &db)),
+              switches((opened = db.open(), &db)),
               inbox(&db, &switches, [] { return kNow; }, cap)
         {
+            if (!opened)
+                qFatal("test store didn't open");
         }
         QVector<EventRecord> rows(qint64 host) const { return db.recentEvents(100, {}, {host}); }
     };
@@ -46,7 +49,7 @@ private slots:
         const Inbox::Filing f = s.inbox.file(seen(7, 1, "person"), Source::Live);
         QCOMPARE(f.verdict, Verdict::Stored);
         QVERIFY(f.announce);
-        QVERIFY(f.needsPicture);
+        QVERIFY(f.needsThumbnail);
         QVERIFY(f.row.id > 0);
         QCOMPARE(f.row.timestamp, kNow);   // no source time: now
         QCOMPARE(s.rows(7).size(), 1);
@@ -65,7 +68,7 @@ private slots:
         QVERIFY(s.switches.setOff(7, 1, QStringLiteral("vehicle"), true));
         const Inbox::Filing f = s.inbox.file(seen(7, 1, "vehicle"), Source::Live);
         QCOMPARE(f.verdict, Verdict::SwitchedOff);
-        QVERIFY(!f.announce && !f.needsPicture);
+        QVERIFY(!f.announce && !f.needsThumbnail);
         QCOMPARE(s.rows(7).size(), 0);
         QCOMPARE(s.inbox.file(seen(7, 1, "person"), Source::Live).verdict, Verdict::Stored);
     }
@@ -90,15 +93,25 @@ private slots:
         QCOMPARE(s.inbox.file(seen(7, 1, "person"), Source::Live).verdict, Verdict::Stored);
     }
 
-    // The gap ticket 02 left: the stored row's picture never came, so the live report of
+    // Frigate's clock ahead of ours: history files it at our now, and the live report (also
+    // capped at now) meets it.
+    void aServerClockAheadStillMeetsItsOwnEvent()
+    {
+        Store s("clock_ahead");
+        QCOMPARE(s.inbox.file(seen(9, 2, "vehicle", kNow + 600), Source::History).row.timestamp, kNow);
+        QCOMPARE(s.inbox.file(seen(9, 2, "vehicle", kNow + 600), Source::Live).verdict,
+                 Verdict::SameEvent);
+    }
+
+    // The gap ticket 02 left: the stored row's thumbnail never came, so the live report of
     // the same event asks for one.
-    void theSameEventWithoutAPictureAsksForOne()
+    void theSameEventWithoutAThumbnailAsksForOne()
     {
         Store s("same_picture");
         const Inbox::Filing h = s.inbox.file(seen(9, 2, "person", kNow - 60), Source::History);
-        QVERIFY(s.inbox.file(seen(9, 2, "person", kNow - 58), Source::Live).needsPicture);
+        QVERIFY(s.inbox.file(seen(9, 2, "person", kNow - 58), Source::Live).needsThumbnail);
         s.db.setEventThumbnail(h.row.id, QStringLiteral("/tmp/x.jpg"));
-        QVERIFY(!s.inbox.file(seen(9, 2, "person", kNow - 58), Source::Live).needsPicture);
+        QVERIFY(!s.inbox.file(seen(9, 2, "person", kNow - 58), Source::Live).needsThumbnail);
     }
 
     // ---- History ------------------------------------------------------------------------
@@ -108,7 +121,7 @@ private slots:
         const Inbox::Filing f = s.inbox.file(seen(9, 2, "person", kNow - 600), Source::History);
         QCOMPARE(f.verdict, Verdict::Stored);
         QVERIFY(!f.announce);
-        QVERIFY(f.needsPicture);
+        QVERIFY(f.needsThumbnail);
         QCOMPARE(f.row.timestamp, kNow - 600);
     }
 
@@ -154,6 +167,17 @@ private slots:
         QCOMPARE(s.rows(9).size(), 1);
     }
 
+    // One too old to keep doesn't take its burst: the next one, just inside, is stored.
+    void aTooOldEventDoesntClaimItsBurst()
+    {
+        Store s("hist_old_burst");
+        const qint64 cutoff = kNow - device::kOtherKeepSecs;
+        const QVector<Inbox::Filing> f = s.inbox.fileHistory(
+            {seen(9, 2, "person", cutoff + 5), seen(9, 2, "person", cutoff - 5)});
+        QCOMPARE(f.at(1).verdict, Verdict::TooOld);
+        QCOMPARE(f.at(0).verdict, Verdict::Stored);
+    }
+
     void historySkipsASwitchedOffPair()
     {
         Store s("hist_off");
@@ -174,7 +198,7 @@ private slots:
         QCOMPARE(f.at(0).row.type, QStringLiteral("offline"));
         QVERIFY(f.at(0).announce);
         QVERIFY(!f.at(1).announce);
-        QVERIFY(!f.at(0).needsPicture);
+        QVERIFY(!f.at(0).needsThumbnail);
         QCOMPARE(s.rows(7).size(), 2);
     }
 
@@ -220,7 +244,7 @@ private slots:
         QCOMPARE(s.rows(7).size(), 2);
     }
 
-    void retentionDropsOldRowsAndTheirPictures()
+    void retentionDropsOldRowsAndTheirThumbnails()
     {
         Store s("retention");
         const Inbox::Filing old = s.inbox.file(seen(7, 1, "motion", kNow - 3600), Source::History);

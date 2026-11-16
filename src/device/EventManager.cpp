@@ -1,7 +1,6 @@
 #include "EventManager.h"
 
 #include "DeviceManager.h"
-#include "device/Detections.h"
 #include "device/EventHistory.h"
 #include "device/EventSnapshot.h"
 #include "device/FrigateApi.h"
@@ -18,6 +17,7 @@
 #include <QTimeZone>
 #include <QtConcurrent/QtConcurrent>
 
+#include <algorithm>
 #include <utility>
 
 namespace rl {
@@ -32,7 +32,7 @@ EventManager::EventManager(Database *db, DeviceManager *devices, QObject *parent
         QSettings().value(QStringLiteral("notifications/desktop"), true).toBool();
     normalizeStoredCameraNames();
     m_inbox.enforceRetention();
-    m_trimmed = false;
+    m_trimmed = false;   // the list isn't loaded yet: the reload below is the first
     reload();
 
     // This launch's run, stamped every minute, so a gap (app closed or crashed) can be
@@ -184,14 +184,11 @@ void EventManager::onDetection(qint64 hostId, int channel, const QString &type,
     // `at`: when the source saw it (Frigate's start: a poll after an outage reports late).
     const Inbox::Filing f = m_inbox.file({hostId, channel, type, camera, double(at)},
                                          Inbox::Source::Live);
-    if (f.verdict == Inbox::Verdict::Stored) {
-        show(f.row);
-        emit storedChanged(hostId);
-    }
-    reloadIfTrimmed();
+    take(hostId, {f});
     // Grab a frame from the camera for the row's thumbnail (quiet; the row updates in
-    // place when it lands): a new row, or the same event history filed without one.
-    if (f.needsPicture)
+    // place when it lands): a new row, or the same event history filed without one —
+    // unless Frigate's own snapshot for it is still on its way.
+    if (f.needsThumbnail && !m_snapshotsDue.contains(f.row.id))
         m_devices->captureEventThumbnail(hostId, channel, f.row.id);
     if (!f.announce)
         return; // not stored, or already known: nothing to count or announce
@@ -214,10 +211,24 @@ void EventManager::onDetection(qint64 hostId, int channel, const QString &type,
     }
 }
 
-void EventManager::show(const EventRecord &row)
+bool EventManager::take(qint64 hostId, const QVector<Inbox::Filing> &filed)
 {
-    if (m_trimmed)
-        return;   // the list reloads from the store (reloadIfTrimmed)
+    bool stored = false;
+    for (const Inbox::Filing &f : filed) {
+        if (f.verdict != Inbox::Verdict::Stored)
+            continue;
+        stored = true;
+        if (!m_trimmed)   // else the list reloads from the store below
+            insertSorted(f.row);
+    }
+    if (stored)
+        emit storedChanged(hostId);
+    reloadIfTrimmed();
+    return stored;
+}
+
+void EventManager::insertSorted(const EventRecord &row)
+{
     // Newest first; a history row lands among the older ones.
     const auto at = std::find_if(m_rows.cbegin(), m_rows.cend(), [&row](const EventRecord &r) {
         return r.timestamp <= row.timestamp;
@@ -259,18 +270,9 @@ void EventManager::onConnectivity(qint64 hostId, int channel, const QString &nam
     // Health alert: a camera (channel >= 0) or a whole host dropped or returned. A
     // host's change is filed as Status on each camera that flipped with it. Counted and
     // notified once — a dead camera can't announce itself, so the client has to.
-    bool announce = false, stored = false;
-    for (const Inbox::Filing &f : m_inbox.fileStatus(hostId, channel, name, online, changed)) {
-        if (f.verdict == Inbox::Verdict::Stored) {
-            show(f.row);
-            stored = true;
-        }
-        announce = announce || f.announce;
-    }
-    if (stored)
-        emit storedChanged(hostId);
-    reloadIfTrimmed();
-    if (!announce)
+    const QVector<Inbox::Filing> filed = m_inbox.fileStatus(hostId, channel, name, online, changed);
+    take(hostId, filed);
+    if (std::none_of(filed.cbegin(), filed.cend(), [](const Inbox::Filing &f) { return f.announce; }))
         return;
     ++m_unread;
     emit unreadChanged();
@@ -422,7 +424,7 @@ bool EventManager::switchOffAll(const QVector<EventSwitchKey> &pairs)
         m_inbox.recount(k.hostId);
         deleted = true;
     }
-    Inbox::dropPictures(thumbs);
+    Inbox::dropThumbnails(thumbs);
     if (deleted)
         reload();
     return ok;
@@ -588,24 +590,16 @@ void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> 
                       frigate::displayCameraName(ev.camera), ev.start});
         frigateIds.append(ev.id);
     }
-    bool stored = false;
-    QVector<QPair<qint64, QString>> pictures; // (local db id, Frigate's own event id)
+    QVector<QPair<qint64, QString>> snapshots; // (local db id, Frigate's own event id)
     const QVector<Inbox::Filing> filed = m_inbox.fileHistory(batch);
     for (int i = 0; i < filed.size(); ++i) {
-        const Inbox::Filing &f = filed.at(i);
-        if (f.verdict == Inbox::Verdict::Stored) {
-            show(f.row);
-            stored = true;
-        }
         // A new row, or one already covering this moment (a rerun, or the live poller
-        // caught it) whose picture never came.
-        if (f.needsPicture)
-            pictures.append({f.row.id, frigateIds.at(i)});
+        // caught it) whose thumbnail never came.
+        if (filed.at(i).needsThumbnail && !m_snapshotsDue.contains(filed.at(i).row.id))
+            snapshots.append({filed.at(i).row.id, frigateIds.at(i)});
     }
-    if (stored)
-        emit storedChanged(hostId);
-    reloadIfTrimmed();
-    fetchHistoryThumbnails(hostId, pictures);
+    take(hostId, filed);
+    fetchHistoryThumbnails(hostId, snapshots);
 }
 
 void EventManager::fetchHistoryThumbnails(qint64 hostId, const QVector<QPair<qint64, QString>> &ids)
@@ -615,19 +609,23 @@ void EventManager::fetchHistoryThumbnails(qint64 hostId, const QVector<QPair<qin
     const QVariantMap info = m_devices->hostInfo(hostId);
     const QString host = info.value("addr").toString();
     const int port = info.value("port").toInt();
+    for (const auto &pair : ids)
+        m_snapshotsDue.insert(pair.first);   // a live report of it waits for this one
     m_pending.addFuture(QtConcurrent::run([this, host, port, ids] {
         for (const auto &pair : ids) {
             const qint64 dbId = pair.first;
             const QString &frigateEventId = pair.second;
             const QByteArray jpeg =
                 frigate::httpGet(frigate::snapshotUrl(host, port, frigateEventId), 8000);
-            if (jpeg.isEmpty())
-                continue;
             const QString path = Paths::thumbnailsDir() + QStringLiteral("/event_%1.jpg").arg(dbId);
-            if (!device::storeEventSnapshot(jpeg, path))   // HD, as Reolink's (ticket 11)
-                continue;
+            const bool stored = !jpeg.isEmpty()
+                && device::storeEventSnapshot(jpeg, path);   // HD, as Reolink's (ticket 11)
             QMetaObject::invokeMethod(
-                this, [this, dbId, path] { onThumbnailReady(dbId, path); }, Qt::QueuedConnection);
+                this, [this, dbId, path, stored] {
+                    m_snapshotsDue.remove(dbId);
+                    if (stored)
+                        onThumbnailReady(dbId, path);
+                }, Qt::QueuedConnection);
         }
     }));
 }
