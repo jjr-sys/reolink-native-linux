@@ -275,7 +275,7 @@ at load average 29, passes at load 4); it does not touch this code.
 ## Review #2 (2026-11-16): transport across the video tabs
 
 Branch `arch/transport-deepening`, one commit per item below; each is reversible with
-`git revert` of the named commit (revert in reverse order: 948a0b3 review fixes, 788d34c,
+`git revert` of the named commit (revert in reverse order: 2e9a711 pane bar fixes, 948a0b3 review fixes, 788d34c,
 f87457c, f4df1b9, 2f42811, d95c2ab). Scope came from the hot spots of the last 80 commits. Not built, with reasons, at the
 end.
 
@@ -339,8 +339,12 @@ rules Playback and `LiveReplay` share.
    books, pending plays, the oldest scan and the live buffer; a one-day flag would make its
    interface shallow.
 2. In step: one rule, Live replay's (both ways, 5 s × speed, 3 s gap). **Visible change** for
-   Playback forwards (was backwards only, 5 s flat). Frigate panes are locked off 1×. Revert
-   the commit to restore the old rule.
+   Playback forwards (was backwards only, 5 s flat). Frigate panes are locked off 1×. To go
+   back, change `panesync::needsRestart` (reverting the commit would take PlaybackDay with it).
+   Open question for the on-screen check: forwards, `PlaybackPane._align` already levels a
+   late pane (catch-up 1.5×/0.7×, one reopen past 10 s); a recorder whose first picture comes
+   more than 5 s late may be reopened by this rule instead, repeatedly. If seen, exempt a pane
+   that is aligning (catch-up ≠ 1×) or apply the drift branch backwards only.
 3. Frame driver: the lead camera's pane while shown, not frozen, not locked (Frigate off 1×)
    and covered, else the first such pane; none → the wall clock (Playback) or the lead (Live
    replay, which doesn't know its panes' frozen state). The first cut followed the selected
