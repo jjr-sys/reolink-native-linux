@@ -341,7 +341,7 @@ rules Playback and `LiveReplay` share.
 2. In step: one rule, Live replay's (both ways, 5 s × speed, 3 s gap). **Visible change** for
    Playback forwards (was backwards only, 5 s flat). Frigate panes are locked off 1×. To go
    back, change `panesync::needsRestart` (reverting the commit would take PlaybackDay with it).
-   On-screen checks (real display, three recorders; `cef…` below) settled the open question:
+   On-screen checks (real display, three recorders; `5d7c459`) settled the open question:
    - a pane catching up by itself (`aligning`: catch-up ≠ 1×) is never also restarted, and the
      3 s gap counts from the pane's own last open (`lastOpenMs`), not only this rule's restarts;
    - a driver that isn't playing is started like any pane. The driver is exempt only from
