@@ -36,14 +36,28 @@ Item {
 
     // This pane's camera is one of those replaying (ticket 15a: several in step).
     readonly property bool replaying: !!replay && cameraKey !== "" && replay.cameraKeys.indexOf(cameraKey) >= 0
-    // This pane's camera was replaying (read when the pane's camera changes).
-    property bool wasReplaying: false
-    onReplayingChanged: Qt.callLater(function () { root.wasReplaying = root.replaying; })
+    // The camera this pane was replaying (read when the pane's camera changes: that one leaves).
+    property string replayedKey: ""
+    onReplayingChanged: Qt.callLater(function () { root.replayedKey = root.replaying ? root.cameraKey : ""; })
+    // Several panes replay in step (ticket 15b).
+    readonly property bool together: replaying && replay.cameraKeys.length > 1
     readonly property PlaybackGroup group: replay ? replay.group : null
     readonly property bool playing: replaying && !replay.paused
 
     // ---- Actions (the pane bar and the page's keys) ---------------------------------------
     function user() { if (pane.item) pane.item.clearLinkSlow(); }
+    // Another pane is replaying: this pane's ↺, ◀, J or time line joins it at the playhead
+    // (ticket 15b) rather than starting a replay of its own; at four, a notice. True when the
+    // press was taken that way (joined, or refused).
+    function joinRunning() {
+        if (replaying || !replay || !replay.replaying)
+            return false;
+        if (replay.join(cameraKey))
+            refreshBuffer();
+        else
+            notice.show(qsTr("Up to %1 cameras replay together").arg(4));
+        return true;
+    }
     function begin() {
         if (!replaying) {
             replay.start(cameraKey);
@@ -63,6 +77,8 @@ Item {
     // From live: backwards from now at the speed `step` sets.
     // A change of direction while playing reopens by itself (PlaybackSession::reopenNeeded).
     function back(step) {
+        if (joinRunning())
+            return;
         var live = !replaying, wasPaused = !live && replay.paused;
         begin();
         step();
@@ -98,6 +114,8 @@ Item {
         if (!replaying) {
             if (secs > 0)
                 return;              // nothing ahead of live
+            if (joinRunning())
+                return;
             begin();
             group.playForward();
             user();
@@ -110,6 +128,8 @@ Item {
         replay.skipBy(secs);
     }
     function seekToPos(pos) {
+        if (joinRunning())
+            return;
         begin();
         if (group.direction < 0 && !replaying)
             group.playForward();
@@ -117,7 +137,8 @@ Item {
         if (pane.item) pane.item.freeze();
         replay.playFrom(replay.epochForPos(pos), group.direction);
     }
-    function goLive() { if (replaying) replay.stop(); }
+    // This pane back to live; the others replaying carry on (the last one ends replay).
+    function goLive() { if (replaying) replay.leave(cameraKey); }
     function pause() { if (replaying && !replay.paused) togglePause(); }
     // A speed button: backwards ones start replay from live (back), forwards ones only change
     // a running replay (speed).
@@ -132,6 +153,10 @@ Item {
     // at "now" goes back to live, anywhere else plays from there.
     property bool _trackFromLive: false
     function trackPressed() {
+        if (joinRunning()) {
+            _trackFromLive = false;
+            return;
+        }
         _trackFromLive = !replaying;
         if (_trackFromLive) begin();
     }
@@ -184,6 +209,8 @@ Item {
     function showNotice(t) { notice.show(t); }
     // Play from `secs` behind now going `dir`, after `fast` presses of » (the test hook).
     function playBehind(secs, dir, fast) {
+        if (joinRunning())
+            return;
         begin();
         if (dir < 0) group.playBackward(); else group.playForward();
         for (var i = 0; i < fast; i++) group.stepFast(dir);
@@ -209,11 +236,39 @@ Item {
         return true;
     }
 
+    // ---- In step with the others (ticket 15b, as Playback's keepReverseInStep) -------------
+    // A pane whose frames don't move the playhead plays on at its own pace; where it has
+    // footage at the playhead and isn't playing (its recording ended, or it just joined or was
+    // shown), or has drifted more than 5 s, it starts again at the playhead.
+    property real _stepWall: 0
+    function keepInStep() {
+        var p = pane.item;
+        if (!p || replay.paused || p.frozen || p.stillMode || Date.now() - _stepWall < 3000
+                || replay.frameDriver() === cameraKey)
+            return;
+        var at = replay.playhead;
+        if (!replay.covers(cameraKey, at))
+            return;
+        var off = p.frameSecs >= 0 && Math.abs(p.dayEpoch + p.frameSecs - at) > 5;
+        if (!p.busy || off) {
+            _stepWall = Date.now();
+            p.playAtSecs(at - replay.dayEpoch, at);
+        }
+    }
+    Timer {
+        interval: 1000
+        repeat: true
+        running: root.together && root.visible
+        onTriggered: root.keepInStep()
+    }
+
     // ---- The recording, over the live picture ---------------------------------------
     Loader {
         id: pane
         anchors.fill: parent
-        active: root.replaying
+        // Hidden (another pane maximised), a replaying pane plays nothing; shown again, it
+        // starts at the playhead (onLoaded, keepInStep).
+        active: root.replaying && root.visible
         z: 1
         sourceComponent: PlaybackPane {
             deviceRow: root.deviceRow
@@ -256,6 +311,10 @@ Item {
         function onPaneWanted(key, epoch) {
             if (key === root.cameraKey && pane.item)
                 pane.item.playAtSecs(epoch - root.replay.dayEpoch, epoch);
+        }
+        // Paused from any pane: every replaying pane stops.
+        function onPausedChanged() {
+            if (root.replay.paused && pane.item) pane.item.stopPlayback();
         }
         function onNothingEarlier() {
             root.replay.paused = true;

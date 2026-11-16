@@ -188,11 +188,12 @@ Rectangle {
             boschPicker.close();
     }
     // Another camera on this pane: its replay ends (a model row shift keeps the camera).
-    onCameraKeyChanged: if (replay && replay.replaying && replay.cameraKey !== cameraKey
-                            && replayControls.wasReplaying) replay.stop()
+    onCameraKeyChanged: if (replay && replayControls.replayedKey !== ""
+                            && replayControls.replayedKey !== cameraKey) replay.leave(replayControls.replayedKey)
     onVisibleChanged: {
         if (!visible) talk.stop();
-        if (!visible && replaying) replay.stop();
+        // Hidden (another pane maximised) a replaying pane stays in the replay, playing nothing;
+        // a camera taken out of the selection leaves it (the page).
         if (visible && pageActive && isBoschFeed) BoschTour.refreshSceneMode();
     }
     onPageActiveChanged: {
@@ -730,7 +731,9 @@ Rectangle {
         replayable: !!root.replay && root.replayable && root.hasSource && !root.offline
         selected: root.selected
         audioAllowed: root.audioAllowed && !talk.active
-        hd: root.effectiveMain
+        // HD as live (maximised, or the pane's HD choice); with several panes replaying, a grid
+        // pane plays SD and only a maximised one HD (ticket 15b: memory and recorder links).
+        hd: root.forceMain || (root.effectiveMain && !replayControls.together)
         viewRotation: root.viewRotation
         fisheyeLens: root.fisheyeLens
         fisheyeMode: root.fisheyeMode
@@ -857,6 +860,11 @@ Rectangle {
         }
     }
     function toggleHd() {
+        // Several panes replaying: grid panes play SD (ticket 15b); HD is for a maximised pane.
+        if (replayControls.together && !root.forceMain) {
+            paneNotice.show(qsTr("Several cameras are replaying: maximise this one for HD"));
+            return;
+        }
         var why = !root.qualityMain && !root.forceMain && root.hdRefusal ? root.hdRefusal() : "";
         if (why) {
             paneNotice.show(why);
@@ -877,7 +885,7 @@ Rectangle {
         paused: root.replaying && root.replay.paused
         shown: paneHover.hovered || root.ptzOpen || root.boschPtzOpen || boschPicker.visible
         toolList: root.liveTools
-        hdOn: root.qualityMain
+        hdOn: root.replaying ? replayControls.hd : root.qualityMain
         hdTip: root.qualityMain ? qsTr("Switch to Fluent (SD)") : qsTr("Switch to Clear (HD)")
         // Sound: the selected pane's (live) or the replay's, as Playback (1× forward only).
         soundShown: root.replaying ? replayControls.hasAudio : player.hasAudio

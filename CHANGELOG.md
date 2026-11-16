@@ -28,6 +28,12 @@ While the project is pre-1.0, minor versions may still change behaviour.
   that camera. A doorbell press pauses the replay where it is (the pop-up silences the panes
   anyway); it stays paused afterwards. Alert sounds play as before.
 
+- **Several Live panes replay together.** While one pane replays, ↺ or ◀ (or J) on another joins
+  it at the same moment, up to four: one time line, speed and direction for all, kept in step
+  as Playback's panes are (the maximised, else selected, replaying camera leads). Each pane's
+  "● Live" takes only that pane back; a pane with nothing recorded at that moment says so.
+  While several replay, grid panes play SD and a maximised one HD.
+
 - **One bar on every video pane.** Live View, Playback and the Events clip player now share
   one floating bar at the bottom of each pane (shown on hover): a thin time line on top, then
   ↺ « ◀½ ◀ ❚❚ ▶ ▶½ » ↻, HD, sound, the page's common tools and ⋯ for the rest. Each fast

@@ -86,6 +86,9 @@ public:
     Q_INVOKABLE bool join(const QString &cameraKey);
     Q_INVOKABLE void leave(const QString &cameraKey);
     Q_INVOKABLE bool setLead(const QString &cameraKey);
+    // Whose frames move the playhead: the lead's, or where it has no footage at the playhead,
+    // the first replaying camera that has (Playback's frameDriverSecs).
+    Q_INVOKABLE QString frameDriver() const;
 
     // Play from `epoch`, going `direction` (1 forwards, -1 backwards): there if a recording
     // covers it, else forwards to the next recording's start (or, with nothing ahead before
@@ -198,7 +201,6 @@ private:
     static double oldestOf(const Book &b);
     static bool inBufferOf(const Book &b, double epoch);
     void leadChanged();
-    QString frameDriver() const;
 
     void reset();
     void want(const QString &key, const QDate &day, bool urgent);

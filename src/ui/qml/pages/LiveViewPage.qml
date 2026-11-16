@@ -38,6 +38,8 @@ Item {
         onChanged: {
             if (page.maximizedKey !== "" && !contains(page.maximizedKey))
                 page.maximizedKey = "";
+            // A camera taken out of the selection leaves the replay (ticket 15b).
+            liveReplay.cameraKeys.filter(k => !contains(k)).forEach(k => liveReplay.leave(k));
             page.rebuildMosaic();
         }
         // A change after Clear all ends its Undo: the toast goes with it.
@@ -281,6 +283,19 @@ Item {
         }
         return out;
     }
+    // Several panes replaying (ticket 15b): the maximised one leads, else the selected one, if it
+    // replays (as Playback's selected pane: its footage and frames lead).
+    function followLead() {
+        var k = maximizedKey !== "" ? maximizedKey : selectedKey;
+        if (liveReplay.cameraKeys.indexOf(k) >= 0)
+            liveReplay.setLead(k);
+    }
+    onMaximizedKeyChanged: followLead()
+    onSelectedKeyChanged: followLead()
+    Connections {
+        target: liveReplay
+        function onReplayingChanged() { page.followLead(); }
+    }
     function showLive(key) {
         liveReplay.stop();
         maximizedKey = key;
@@ -304,7 +319,9 @@ Item {
         onTriggered: {
             var parts = liveReplayTest.split(";");
             page.selectedKey = parts[0];
-            page.maximizedKey = parts[0];
+            var joiners = parts.length > 3 && parts[3] !== "" ? parts[3].split(",") : [];
+            if (joiners.length === 0)
+                page.maximizedKey = parts[0];   // with joiners the grid stays (ticket 15b)
             Qt.callLater(function () {
                 var p = page.replayPane();
                 if (!p) return;
@@ -314,11 +331,22 @@ Item {
                     var a = parts[1].split(":");
                     p.replayBehind(Number(a[0]), Number(a[1]), a.length > 2 ? Number(a[2]) : 0);
                 }
-                if (parts.length > 2) {
+                if (parts.length > 2 && Number(parts[2]) > 0) {
                     replayTestLive.interval = Number(parts[2]) * 1000;
                     replayTestLive.start();
                 }
+                replayTestJoin.keys = joiners;
+                if (joiners.length > 0) replayTestJoin.start();
             });
+        }
+    }
+    Timer {
+        id: replayTestJoin
+        property var keys: []
+        interval: 2000
+        onTriggered: {
+            var byKey = page.rowsByKey();
+            keys.forEach(k => { var p = paneRepeater.itemAt(byKey[k]); if (p) p.replayKey("J"); });
         }
     }
     Timer {
