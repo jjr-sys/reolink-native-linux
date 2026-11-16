@@ -240,8 +240,7 @@ ApplicationWindow {
             openClipTimer.start();
         }
         if (TestHooks.mockDoorbell) {
-            // RL_MOCK_DOORBELL=<hostId>:<channel> aims the mock at a real doorbell.
-            // Optionally "@<secs>": ring that long after start (live-replay 14).
+            // RL_MOCK_DOORBELL: aim the mock at a real doorbell (syntax in TestHooks.h).
             var at = String(TestHooks.mockDoorbellTarget).split("@");
             var t = at[0].split(":");
             doorbell.camera = "Front Door";

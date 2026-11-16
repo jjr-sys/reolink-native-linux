@@ -22,9 +22,11 @@ class TestTestHooks : public QObject
     }
 
 private slots:
+    void init() { clearAll(); }
+    void cleanup() { clearAll(); }
+
     void nothingSetMeansEveryHookIsOff()
     {
-        clearAll();
         const TestHooks h;
         QCOMPARE(h.initialPage(), 0);
         QVERIFY(!h.eventsAutoScroll() && !h.eventsAutoPlay() && !h.mockRecordings());
@@ -36,8 +38,14 @@ private slots:
 
     void eachHookReadsItsVariable()
     {
-        clearAll();
         qputenv("RL_INITIAL_PAGE", "2");
+        qputenv("RL_EVENTS_AUTOSCROLL", "1");
+        qputenv("RL_MOCK_RECORDINGS", "1");
+        qputenv("RL_OPEN_CLIP", "1:4");
+        qputenv("RL_PLAYBACK_AUTOPLAY", "1");
+        qputenv("RL_PLAYBACK_STOP_MS", "5000");
+        qputenv("RL_PLAYBACK_HD", "1");
+        qputenv("RL_PLAYBACK_FAST", "2");
         qputenv("RL_EVENTS_PLAY", "1");
         qputenv("RL_EVENTS_KEYS", "J,+1,K");
         qputenv("RL_SETTINGS_CATEGORY", "mosaics");
@@ -57,7 +65,10 @@ private slots:
         QCOMPARE(h.playbackBackSteps(), 3);
         QVERIFY(h.paneBarsShown());
         QCOMPARE(h.liveReplayTest(), QStringLiteral("2:2;J"));
-        clearAll();
+        QVERIFY(h.eventsAutoScroll() && h.mockRecordings() && h.playbackAutoplay() && h.playbackHd());
+        QCOMPARE(h.openClipTarget(), QStringLiteral("1:4"));
+        QCOMPARE(h.playbackStopMs(), 5000);
+        QCOMPARE(h.playbackFastSteps(), 2);
     }
 };
 
