@@ -32,7 +32,9 @@ function apply(id, group, target) {
     return false;
 }
 
-// The page keys as buttons: J « · K ❚❚ · L » · ← ↺ · → ↻ ("" for any other key).
+// The page keys as buttons: J « · K ❚❚ · L » · ← ↺ · → ↻ ("" for any other key). One exception
+// is the caller's: on a Live pane at live, J starts ◀ at 1× (LiveReplayControls.key), as the
+// pane's ◀ does, rather than fast backwards.
 function keyId(k) {
     switch (k) {
     case "J": return "fastBack";

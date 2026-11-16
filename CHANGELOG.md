@@ -264,6 +264,11 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Fixed
 
+- Playback's bottom-bar ⏸ plays on again when paused, as K and a pane's ❚❚ do (it only
+  paused); its tooltip says so.
+- A pane's speed button greyed for a Frigate camera is no longer lit while the other panes play
+  fast.
+
 - **Scrubbing several Playback or Live replay panes reconnected every one of them.** Seek in
   place was kept for one pane at a time (the last one opened), so each pane in turn found it
   taken and reopened its stream on the connection-limited recorder. Each pane's stream now

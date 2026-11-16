@@ -127,6 +127,8 @@ QHash<QString, Button> transport(const State &s, int step)
     out[kFastForward].lit = moving && s.direction > 0 && fast;
     out[kSlowBack].lit = moving && s.direction < 0 && slow;
     out[kSlowForward].lit = moving && s.direction > 0 && slow;
+    for (const QString &id : speeds)
+        out[id].lit = out[id].lit && out[id].enabled;   // a greyed button is never lit
 
     const bool captions = step < NoCaptions;
     for (const QString &id : {kFastBack, kFastForward, kSlowBack, kSlowForward}) {

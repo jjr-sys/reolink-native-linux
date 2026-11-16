@@ -275,8 +275,8 @@ at load average 29, passes at load 4); it does not touch this code.
 ## Review #2 (2026-11-16): transport across the video tabs
 
 Branch `arch/transport-deepening`, one commit per item below; each is reversible with
-`git revert` of the named commit (revert in reverse order: 788d34c, f87457c, f4df1b9, 2f42811,
-d95c2ab). Scope came from the hot spots of the last 80 commits. Not built, with reasons, at the
+`git revert` of the named commit (revert in reverse order: 948a0b3 review fixes, 788d34c,
+f87457c, f4df1b9, 2f42811, d95c2ab). Scope came from the hot spots of the last 80 commits. Not built, with reasons, at the
 end.
 
 ### 3a: seek in place per stream (`d95c2ab`)
@@ -341,13 +341,17 @@ rules Playback and `LiveReplay` share.
 2. In step: one rule, Live replay's (both ways, 5 s × speed, 3 s gap). **Visible change** for
    Playback forwards (was backwards only, 5 s flat). Frigate panes are locked off 1×. Revert
    the commit to restore the old rule.
-3. Frame driver: the lead's pane while shown, not frozen and covered, else the first such
-   pane; none → the wall clock (Playback) or the lead (Live replay). "Has shown a frame" was
+3. Frame driver: the lead camera's pane while shown, not frozen, not locked (Frigate off 1×)
+   and covered, else the first such pane; none → the wall clock (Playback) or the lead (Live
+   replay, which doesn't know its panes' frozen state). The first cut followed the selected
+   pane; the review fixes (`948a0b3`) made it the lead, as the glossary says. "Has shown a frame" was
    left out: it would let a non-lead pane drive before the lead's first picture and change
    tested Live replay behaviour.
 4. Reopens review #1 candidate 3 decision 3 ("coverage stays in QML") for the pane group only;
    `PlaybackSession` still takes `covered` as an argument.
 5. Kept: the `RL_PLAYBACK_*`, `RL_EVENTS_*`, `RL_LIVE_REPLAY` hooks (the smoke harness).
+6. Small differences noted by review: the wall-clock playhead now moves backwards from 23:59:59
+   (it stuck there); EventClip's give-up count starts at the first 200 ms tick of a start.
 
 ### Not built
 

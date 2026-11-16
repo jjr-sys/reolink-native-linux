@@ -95,6 +95,18 @@ private slots:
         QVERIFY(t[kSlowForward].lit);
     }
 
+    // A Frigate pane among recorder panes plays at 1× while the group runs fast: its own bar's
+    // greyed buttons are never lit (review #2, candidate 5's small fixes).
+    void aGreyedButtonIsNeverLit()
+    {
+        State s = playing(Page::Playback, 1, 4.0);
+        s.camera = Camera::Frigate;
+        const auto t = transport(s, Full);
+        QVERIFY(!t[kFastForward].enabled);
+        QVERIFY(!t[kFastForward].lit);
+        QCOMPARE(t[kFastForward].caption, QStringLiteral("fast"));
+    }
+
     void backAtOneTimesLightsTheBackButton()
     {
         const auto t = transport(playing(Page::Replay, -1, 1.0), Full);

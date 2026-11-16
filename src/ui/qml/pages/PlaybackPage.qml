@@ -967,7 +967,6 @@ Item {
                 Layout.preferredHeight: Math.max(leftTools.height, centre.height, rightTools.height)
                 readonly property bool playing: page.streamingPanes > 0
                 readonly property string frigateTip: qsTr("Frigate plays at 1× forward only")
-                readonly property string reverseTip: qsTr("Coming in reverse play")
                 component Ctl: Rectangle {
                     id: ctl
                     property string glyph: ""
@@ -1110,8 +1109,8 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 2
                     readonly property bool locked: group.speedLocked
-                    readonly property bool noReverse: !group.reverseAvailable || locked
-                    readonly property string backTip: locked ? bar.frigateTip : bar.reverseTip
+                    readonly property bool noReverse: locked   // reverse plays on every recorder (ticket 12)
+                    readonly property string backTip: bar.frigateTip
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: { group.speed; group.direction; return group.label(!bar.playing); }
@@ -1143,8 +1142,8 @@ Item {
                         Ctl {
                             big: true; glyph: "⏸"
                             glyphColor: bar.playing ? Theme.text : Theme.accent
-                            tip: bar.playing ? qsTr("Pause (K)") : qsTr("Paused: K plays on at this speed")
-                            onActivated: if (bar.playing) page.stopAllPanes()
+                            tip: bar.playing ? qsTr("Pause (K)") : qsTr("Paused: play on at this speed (K)")
+                            onActivated: page.togglePause()
                         }
                         Ctl {
                             big: true; glyph: "▶"
