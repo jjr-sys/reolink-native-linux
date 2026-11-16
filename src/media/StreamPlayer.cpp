@@ -1,5 +1,6 @@
 #include "StreamPlayer.h"
 #include "core/Backoff.h"
+#include "media/CatchUp.h"
 #include "media/FrameTimeSei.h"
 #include "media/LiveBuffer.h"
 #include "media/ReversePlay.h"
@@ -26,6 +27,8 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <memory>
+#include <vector>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -943,9 +946,17 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             delivered(shown.epochMs, false, false);
         return true;
     };
+    // Frames still to drop unseen: the catch-up packets decoded when a pane's replay ends
+    // (ticket 08d) bring the decoder back to now; only the frames after them are shown.
+    int hideFrames = 0;
     // Drain one decoded frame at a time; shared by the normal and flush paths.
     auto receiveFrames = [&]() {
         while (avcodec_receive_frame(dec, frame) == 0 && !s->abort.load()) {
+            if (hideFrames > 0) {
+                --hideFrames;
+                av_frame_unref(frame);
+                continue;
+            }
             // Don't render frames the decoder knows are damaged (missing slices or
             // references — e.g. Reolink's flawed RTSP output for 8K duo mains).
             // A brief freeze beats a band of macroblock garbage.
@@ -1149,7 +1160,16 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                       saved.isEmpty() ? QStringLiteral("no frames captured") : QString());
     };
 
-    bool awaitKeyframe = false;   // receive-only ended: skip to a keyframe
+    bool awaitKeyframe = false;   // receive-only ended with nothing to catch up from
+    bool decoderFed = false;      // the decoder has had a packet since it was opened / flushed
+    // Receive-only (the pane replays): the packets that bring the decoder back to now when it
+    // ends (ticket 08d), as CatchUp decides.
+    struct PacketFree {
+        void operator()(AVPacket *p) const { av_packet_free(&p); }
+    };
+    std::vector<std::unique_ptr<AVPacket, PacketFree>> held;
+    CatchUp catchUp;
+    bool receivingOnly = false;
     while (!s->abort.load()) {
         if (s->reverse) {
             while (showNext(false)) {}
@@ -1170,6 +1190,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             if (!live && s->loop.load()) {
                 if (av_seek_frame(fmt, videoIndex, 0, AVSEEK_FLAG_BACKWARD) >= 0) {
                     avcodec_flush_buffers(dec);
+                    decoderFed = false;
                     firstPtsUs = AV_NOPTS_VALUE;
                     continue;
                 }
@@ -1210,20 +1231,82 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             recorder.write(packet); // stream-copy before the packet is consumed
         if (s->liveBuffer)
             bufferLive(*s, fmt, stream, packet);
-        // Receiving only (its pane replays): buffered, not decoded; decoding picks up again at
-        // the next keyframe (the frames between can't be decoded without the ones skipped).
+        // Receiving only (its pane replays): buffered, not decoded. The packets since the newest
+        // keyframe are held, so when replay ends the decoder catches up to now unseen instead of
+        // waiting for the next keyframe (ticket 08d: ● Live returns instantly).
+        const bool key = packet->flags & AV_PKT_FLAG_KEY;
         if (s->receiveOnly.load(std::memory_order_relaxed)) {
-            awaitKeyframe = true;
+            if (!receivingOnly) {
+                receivingOnly = true;
+                held.clear();
+                catchUp.begin(decoderFed);
+            }
+            switch (catchUp.onPacket(key)) {
+            case CatchUp::Hold::Restart:
+                held.clear();
+                [[fallthrough]];
+            case CatchUp::Hold::Keep: {
+                std::unique_ptr<AVPacket, PacketFree> kept(av_packet_alloc());
+                if (kept) {
+                    av_packet_move_ref(kept.get(), packet);
+                    held.push_back(std::move(kept));
+                }
+                break;
+            }
+            case CatchUp::Hold::Overflow:
+                held.clear();
+                break;
+            case CatchUp::Hold::Drop:
+                break;
+            }
             av_packet_unref(packet);
             continue;
         }
+        if (receivingOnly) {
+            receivingOnly = false;
+            switch (catchUp.end(key)) {
+            case CatchUp::Resume::Continue:
+                if (key) {
+                    avcodec_flush_buffers(dec);
+                    decoderFed = false;
+                }
+                break;
+            case CatchUp::Resume::AwaitKeyframe:
+                awaitKeyframe = true;
+                break;
+            case CatchUp::Resume::FeedHeld: {
+                const qint64 startUs = av_gettime_relative();
+                if (held.front()->flags & AV_PKT_FLAG_KEY) {
+                    avcodec_flush_buffers(dec);
+                    decoderFed = false;
+                }
+                int fed = 0;
+                for (const auto &p : held) {
+                    if (s->abort.load())
+                        break;
+                    if (avcodec_send_packet(dec, p.get()) >= 0) {
+                        ++fed;
+                        ++hideFrames;
+                        decoderFed = true;
+                    }
+                    receiveFrames();
+                }
+                qCInfo(lcMedia).noquote()
+                    << redacted(source) << "live catch-up:" << fed << "frames in"
+                    << (av_gettime_relative() - startUs) / 1000 << "ms";
+                break;
+            }
+            }
+            held.clear();
+        }
         if (awaitKeyframe) {
-            if (!(packet->flags & AV_PKT_FLAG_KEY)) {
+            if (!key) {
                 av_packet_unref(packet);
                 continue;
             }
             awaitKeyframe = false;
             avcodec_flush_buffers(dec);
+            decoderFed = false;
         }
         const auto pipelineStart = perfDiagnosticsEnabled
             ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -1232,6 +1315,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
         av_packet_unref(packet);
         if (rc < 0 && rc != AVERROR(EAGAIN))
             continue; // tolerate bitstream hiccups on live sources
+        decoderFed = true;
         receiveFrames();
         if (s->reverse) {   // one frame a packet: the average cost of a frame
             const qint64 tookUs = av_gettime_relative() - decodeStartUs;

@@ -297,7 +297,8 @@ int main(int argc, char *argv[])
         QStringLiteral("paneBarsShown"), qEnvironmentVariableIsSet("RL_PANE_BARS"));
     // RL_LIVE_REPLAY="<hostId:channel>;<action>": Live View maximises that camera and, 8 s
     // later, starts Live replay: action "J" (◀ from now) or "<secs behind now>:<1|-1>"
-    // (play from there forwards or backwards), optionally ":<» presses>" (live-replay 07).
+    // (play from there forwards or backwards), optionally ":<» presses>" (live-replay 07);
+    // optionally ";<secs>": ● Live that many seconds after replay starts (live-replay 08d).
     engine.rootContext()->setContextProperty(
         QStringLiteral("liveReplayTest"), qEnvironmentVariable("RL_LIVE_REPLAY"));
     engine.rootContext()->setContextProperty(QStringLiteral("startHidden"),

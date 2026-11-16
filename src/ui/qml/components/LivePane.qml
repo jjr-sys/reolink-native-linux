@@ -129,6 +129,7 @@ Rectangle {
     readonly property bool replaying: replayControls.replaying
     function replayKey(k) { return replayControls.key(k); }
     function replayBehind(secs, dir, fast) { replayControls.playBehind(secs, dir, fast); }
+    function replayGoLive() { replayControls.goLive(); }
 
     // Mosaic panes can be Normal or Large (about 1.5× the area, from the packer).
     property bool showLarge: false

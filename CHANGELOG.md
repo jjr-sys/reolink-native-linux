@@ -18,7 +18,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
   recorder hasn't filed yet (up to 3.5 min on the RLN8). Forwards plays through it back into
   live. A pane that is replaying stays connected to its live stream (not shown), so the
   footage keeps coming and "● Live" picks up at once; maximising a pane keeps the SD footage
-  it was showing before.
+  it was showing before. Back on live the picture is current at once: the player catches up
+  from the frames it received while replaying (unseen, a fraction of a second) instead of
+  waiting up to 4 s for the camera's next keyframe.
 
 - **One bar on every video pane.** Live View, Playback and the Events clip player now share
   one floating bar at the bottom of each pane (shown on hover): a thin time line on top, then

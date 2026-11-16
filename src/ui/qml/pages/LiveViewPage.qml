@@ -277,11 +277,22 @@ Item {
             Qt.callLater(function () {
                 var p = page.replayPane();
                 if (!p) return;
-                if (parts[1] === "J") { p.replayKey("J"); return; }
-                var a = parts[1].split(":");
-                p.replayBehind(Number(a[0]), Number(a[1]), a.length > 2 ? Number(a[2]) : 0);
+                if (parts[1] === "J") {
+                    p.replayKey("J");
+                } else {
+                    var a = parts[1].split(":");
+                    p.replayBehind(Number(a[0]), Number(a[1]), a.length > 2 ? Number(a[2]) : 0);
+                }
+                if (parts.length > 2) {
+                    replayTestLive.interval = Number(parts[2]) * 1000;
+                    replayTestLive.start();
+                }
             });
         }
+    }
+    Timer {
+        id: replayTestLive
+        onTriggered: { var p = page.replayPane(); if (p) p.replayGoLive(); }
     }
     readonly property bool replayKeysOn: active && !(Window.activeFocusItem
                                                      && Window.activeFocusItem.cursorPosition !== undefined)
