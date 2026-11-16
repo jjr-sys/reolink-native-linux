@@ -166,8 +166,10 @@ void LiveReplay::start(const QString &cameraKey)
 {
     if (cameraKey.isEmpty() || cameraKey == m_key)
         return;
-    stop();   // another pane was replaying: it goes back to live first
-    reset();
+    if (m_key.isEmpty())
+        reset();
+    else
+        stop();   // another pane was replaying: it goes back to live first (stop resets)
     m_key = cameraKey;
     const QDate today = dayOf(m_now);
     m_scanMonth = monthId(today);

@@ -20,6 +20,10 @@ _Avoid_: timeshift, instant replay
 A Live pane's last five minutes of its own live stream, kept in memory as received (in the quality the pane shows, stamped with the camera's clock) while it streams and while it replays, so Live replay starts from now and runs back into the recorder's footage, and forwards back into live.
 _Avoid_: timeshift buffer, DVR
 
+**Catch-up**:
+What a replaying pane's live stream does when it returns to live: while replaying, its player is **receive-only** (it keeps receiving, for the live buffer, but doesn't decode or show) and holds the frames since the newest keyframe; on "● Live" it decodes those unseen and shows the newest, so the picture is current at once instead of waiting for the camera's next keyframe.
+_Avoid_: resync, warm-up
+
 **Pane bar**:
 The one floating bar at the bottom of every video pane (Live View, Playback, the Events clip player): a thin time line, the transport, HD, sound, the page's common tools and ⋯ for the rest. Shown on hover.
 _Avoid_: toolbar, rail, pill (in user-facing text)

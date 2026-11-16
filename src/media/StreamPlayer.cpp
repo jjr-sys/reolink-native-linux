@@ -946,14 +946,32 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             delivered(shown.epochMs, false, false);
         return true;
     };
-    // Frames still to drop unseen: the catch-up packets decoded when a pane's replay ends
-    // (ticket 08d) bring the decoder back to now; only the frames after them are shown.
+    // Frames to drop unseen after a catch-up (ticket 08d): the held packets decoded when a
+    // pane's replay ends bring the decoder back to now; only the frames after them are shown —
+    // by pts (frames up to the last held packet's, which also covers frames still in the
+    // decoder from before replay), or, without pts, by count (one a packet fed).
+    qint64 hideThroughPts = AV_NOPTS_VALUE;
     int hideFrames = 0;
+    // hideFrames is also the most to hide by pts (a bound should the pts misbehave).
+    auto hidden = [&](const AVFrame *f) {
+        if (hideFrames <= 0)
+            return false;
+        if (hideThroughPts != AV_NOPTS_VALUE) {
+            if (f->pts != AV_NOPTS_VALUE && f->pts <= hideThroughPts) {
+                --hideFrames;
+                return true;
+            }
+            hideFrames = 0;   // the first newer frame: caught up
+            hideThroughPts = AV_NOPTS_VALUE;
+            return false;
+        }
+        --hideFrames;
+        return true;
+    };
     // Drain one decoded frame at a time; shared by the normal and flush paths.
     auto receiveFrames = [&]() {
         while (avcodec_receive_frame(dec, frame) == 0 && !s->abort.load()) {
-            if (hideFrames > 0) {
-                --hideFrames;
+            if (hidden(frame)) {
                 av_frame_unref(frame);
                 continue;
             }
@@ -1162,6 +1180,13 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
 
     bool awaitKeyframe = false;   // receive-only ended with nothing to catch up from
     bool decoderFed = false;      // the decoder has had a packet since it was opened / flushed
+    // A flush drops the decoder's references and what it had in flight: nothing left to hide.
+    auto flushDecoder = [&]() {
+        avcodec_flush_buffers(dec);
+        decoderFed = false;
+        hideThroughPts = AV_NOPTS_VALUE;
+        hideFrames = 0;
+    };
     // Receive-only (the pane replays): the packets that bring the decoder back to now when it
     // ends (ticket 08d), as CatchUp decides.
     struct PacketFree {
@@ -1189,8 +1214,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             while (showNext(true)) {}
             if (!live && s->loop.load()) {
                 if (av_seek_frame(fmt, videoIndex, 0, AVSEEK_FLAG_BACKWARD) >= 0) {
-                    avcodec_flush_buffers(dec);
-                    decoderFed = false;
+                    flushDecoder();
                     firstPtsUs = AV_NOPTS_VALUE;
                     continue;
                 }
@@ -1239,7 +1263,8 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
             if (!receivingOnly) {
                 receivingOnly = true;
                 held.clear();
-                catchUp.begin(decoderFed);
+                // A decoder still waiting for a keyframe can't continue: hold from one.
+                catchUp.begin(decoderFed && !awaitKeyframe);
             }
             switch (catchUp.onPacket(key)) {
             case CatchUp::Hold::Restart:
@@ -1264,11 +1289,14 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
         }
         if (receivingOnly) {
             receivingOnly = false;
-            switch (catchUp.end(key)) {
+            CatchUp::Resume resume = catchUp.end(key);
+            if (resume == CatchUp::Resume::FeedHeld && held.empty())
+                resume = CatchUp::Resume::AwaitKeyframe;   // the packets couldn't be kept
+            switch (resume) {
             case CatchUp::Resume::Continue:
                 if (key) {
-                    avcodec_flush_buffers(dec);
-                    decoderFed = false;
+                    flushDecoder();
+                    awaitKeyframe = false;
                 }
                 break;
             case CatchUp::Resume::AwaitKeyframe:
@@ -1276,24 +1304,35 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                 break;
             case CatchUp::Resume::FeedHeld: {
                 const qint64 startUs = av_gettime_relative();
-                if (held.front()->flags & AV_PKT_FLAG_KEY) {
-                    avcodec_flush_buffers(dec);
-                    decoderFed = false;
-                }
+                if (held.front()->flags & AV_PKT_FLAG_KEY)
+                    flushDecoder();
+                awaitKeyframe = false;   // the held packets start from a keyframe or carry on
+                // Hide through the last held packet. By pts this also hides frames from before
+                // replay still in the decoder (they come out first; a margin of 16 for them).
+                hideThroughPts = held.back()->pts;
+                const bool byPts = hideThroughPts != AV_NOPTS_VALUE;
+                hideFrames = int(held.size()) + (byPts ? 16 : 0);
                 int fed = 0;
                 for (const auto &p : held) {
                     if (s->abort.load())
                         break;
-                    if (avcodec_send_packet(dec, p.get()) >= 0) {
+                    int sent = avcodec_send_packet(dec, p.get());
+                    if (sent == AVERROR(EAGAIN)) {   // full: take its frames, then send again
+                        receiveFrames();
+                        sent = avcodec_send_packet(dec, p.get());
+                    }
+                    if (sent >= 0) {
                         ++fed;
-                        ++hideFrames;
                         decoderFed = true;
+                    } else if (!byPts) {
+                        --hideFrames;   // no frame will come of it
                     }
                     receiveFrames();
                 }
                 qCInfo(lcMedia).noquote()
                     << redacted(source) << "live catch-up:" << fed << "frames in"
-                    << (av_gettime_relative() - startUs) / 1000 << "ms";
+                    << (av_gettime_relative() - startUs) / 1000 << "ms"
+                    << (byPts ? "(hidden by pts)" : "(hidden by count)");
                 break;
             }
             }
@@ -1305,8 +1344,7 @@ bool runSession(const std::shared_ptr<Session> &s, bool *streamingOut)
                 continue;
             }
             awaitKeyframe = false;
-            avcodec_flush_buffers(dec);
-            decoderFed = false;
+            flushDecoder();
         }
         const auto pipelineStart = perfDiagnosticsEnabled
             ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
