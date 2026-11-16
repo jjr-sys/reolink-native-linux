@@ -156,6 +156,110 @@ private slots:
         QCOMPARE(r.dayEpoch(), at(2026, 11, 15, 0));
         QCOMPARE(r.daySegments().size(), 2);
     }
+    // ---- the live buffer (ticket 08b) ----
+    // With the pane's live buffer, ◀ from now starts at once at the buffer's newest frame (the
+    // camera's clock may run a little ahead of or behind this machine's), no search needed.
+    void backwardsFromNowStartsInTheLiveBuffer()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 35900}});   // the recorder's newest: 09:58:20
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.start(QStringLiteral("5:0"));
+        r.setBufferSpans(QVariantList{QVariantMap{{"start", kNow - 240}, {"end", kNow - 1}}});
+        r.playFrom(kNow, -1);
+        QCOMPARE(play.count(), 1);                  // no waiting for today's search
+        QCOMPARE(play.last().at(0).toDouble(), kNow - 1);
+        QVERIFY(r.inBuffer(r.playhead()));
+        // A camera clock ahead of this machine's: from now, still the buffer.
+        r.setBufferSpans(QVariantList{QVariantMap{{"start", kNow - 240}, {"end", kNow + 0.8}}});
+        r.playFrom(kNow, -1);
+        QCOMPARE(play.last().at(0).toDouble(), kNow);
+    }
+
+    // The buffer counts as footage: on the bar's strip and in the day's segments (so the pane
+    // doesn't call it a gap); backwards from its oldest frame the recorder's footage follows,
+    // where it overlaps straight on, else from the recorder's newest.
+    void backwardsFromTheBuffersOldestCarriesOnIntoTheRecorder()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 35900}});   // to 09:58:20 = now − 100 s
+        r.start(QStringLiteral("5:0"));
+        rec.answerAll(1);
+        r.setBufferSpans(QVariantList{QVariantMap{{"start", kNow - 60}, {"end", kNow}}});
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.playFrom(kNow, -1);
+        QVERIFY(r.covered(kNow - 30));
+        QCOMPARE(r.daySegments().size(), 2);
+        QCOMPARE(r.strip().size(), 2);
+        r.frameAt(kNow - 60, 0);
+        r.carryOn(-1);                               // the buffer's oldest frame: a gap behind it
+        QCOMPARE(play.last().at(0).toDouble(), kNow - 100);   // the recorder's newest footage
+        QVERIFY(!r.inBuffer(r.playhead()));
+        // Overlapping (RLN36: the recorder is only seconds behind): straight on.
+        r.setBufferSpans(QVariantList{QVariantMap{{"start", kNow - 120}, {"end", kNow}}});
+        r.playFrom(kNow, -1);
+        r.frameAt(kNow - 120, 0);
+        r.carryOn(-1);
+        QCOMPARE(play.last().at(0).toDouble(), kNow - 121);
+    }
+
+    // Forwards from before the buffer with nothing recorded between: on into the buffer (the
+    // RLN8 keeps the newest minutes from its search), not back to the recorder's last 10 s.
+    void forwardsIntoTheBufferFromAGapBeforeIt()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 35700}});   // to now − 300 s
+        r.start(QStringLiteral("5:0"));
+        rec.answerAll(1);
+        r.setBufferSpans(QVariantList{QVariantMap{{"start", kNow - 200}, {"end", kNow}}});
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.playFrom(kNow - 250, 1);
+        QCOMPARE(play.last().at(0).toDouble(), kNow - 200);
+        // ...and from the recorder's end, carrying on.
+        r.playFrom(kNow - 310, 1);
+        r.frameAt(kNow - 300, 0);
+        r.carryOn(1);
+        QCOMPARE(play.last().at(0).toDouble(), kNow - 200);
+        // Backwards from the buffer's start with a gap behind: the recorder's end.
+        r.frameAt(kNow - 200, 0);
+        r.carryOn(-1);
+        QCOMPARE(play.last().at(0).toDouble(), kNow - 300);
+    }
+
+    // Forwards, the buffer's end is now: playing into it returns the pane to live, rather than
+    // reopening at each newest second as live keeps filling it.
+    void forwardsAtTheBuffersNewestFrameReturnsToLive()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 35900}});
+        r.start(QStringLiteral("5:0"));
+        rec.answerAll(1);
+        r.setBufferSpans(QVariantList{QVariantMap{{"start", kNow - 60}, {"end", kNow - 0.4}}});
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.playFrom(kNow - 30, 1);
+        QCOMPARE(play.count(), 1);
+        r.frameAt(kNow - 1.2, 0);                    // the stream ended near the newest frame
+        r.carryOn(1);
+        QVERIFY(!r.replaying());
+        // Further back in the buffer, a stream that ended carries on in it.
+        r.start(QStringLiteral("5:0"));
+        rec.answerAll();
+        r.setBufferSpans(QVariantList{QVariantMap{{"start", kNow - 60}, {"end", kNow - 0.4}}});
+        r.playFrom(kNow - 30, 1);
+        r.frameAt(kNow - 20, 0);
+        r.carryOn(1);
+        QVERIFY(r.replaying());
+        QCOMPARE(play.last().at(0).toDouble(), kNow - 19);
+    }
+
     // Inside a recording: there. In a gap: forwards to the next recording, backwards to the
     // end of the previous one.
     void aPlayInAGapSnapsToFootage()

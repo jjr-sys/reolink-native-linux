@@ -276,6 +276,12 @@ public:
     // (Frigate, bare streams). All buffers share LiveBufferPool's cap.
     std::shared_ptr<LiveBuffer> liveBuffer(int row);
     std::shared_ptr<LiveBuffer> findLiveBuffer(int row) const;
+    // Live replay from the buffer: whether it holds the moment (ms since the epoch); its
+    // footage as [{start, end}] epoch seconds (for Live replay's strip and segments); and
+    // playing it from the moment into `player`, backwards or forwards (media/BufferReplay.h).
+    bool liveBufferHas(int row, qint64 epochMs) const;
+    Q_INVOKABLE QVariantList liveBufferSpans(int row) const;
+    void startLiveBufferPlayback(int row, qint64 epochMs, int direction, StreamPlayer *player);
     // Seek the active Baichuan playback (same row) to a new instant in place — no
     // reconnect. Returns false if there's no live session for `row` (caller should
     // then startBaichuanPlayback instead).

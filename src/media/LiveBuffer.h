@@ -48,14 +48,26 @@ public:
     bool covers(qint64 ms) const;
     bool mainAt(qint64 ms) const;
 
-    // The run holding `ms`: its frames in decode order, from its oldest group to the group
-    // holding `ms` (whole); empty when no run holds it. For reverse play from `ms`.
+    // The buffer's footage as spans, oldest first: runs less than kGapMs apart (a quality
+    // change while it streams) make one span.
+    struct Span {
+        qint64 startMs = 0;
+        qint64 endMs = 0;
+    };
+    QList<Span> spans() const;
+
+    // The run holding `ms` (or, in a break of less than kGapMs after a run, that run): its
+    // frames in decode order, from its oldest group to the group holding `ms` (whole); empty
+    // when there is none. For reverse play from `ms`.
     struct Run {
         bool main = false;
         qint64 startMs = -1;          // its oldest frame
         QList<reverse::Frame> frames;
     };
     Run runAt(qint64 ms) const;
+    // Forwards from `ms` within its run: from the keyframe of the group holding it
+    // (fromKeyframe), else the frames after it; empty when no run holds it / nothing after.
+    QList<reverse::Frame> framesFrom(qint64 ms, bool fromKeyframe) const;
 
 private:
     friend class LiveBufferPool;

@@ -253,6 +253,8 @@ Rectangle {
     // Full-resolution main stream over native Baichuan. The page decides: the selected
     // pane's HD choice, under the Site budget.
     property bool hdActive: false
+    // Live replay: play the camera's live buffer where it holds the moment (live-replay 08b).
+    property bool useLiveBuffer: false
     // Epoch at 00:00 of the selected day, so the pane can turn playhead
     // seconds into wall-clock time without reaching into the page.
     property real dayEpoch: 0
@@ -268,6 +270,7 @@ Rectangle {
         hd: root.hdActive && !root.stillMode
         speed: root.speed
         direction: root.stillMode ? 1 : root.direction
+        useLiveBuffer: root.useLiveBuffer
         onReopenNeeded: root.playAtSecs(root.playheadSecs, root.epochOf(root.playheadSecs))
     }
 

@@ -77,6 +77,9 @@ QList<LiveReplay::Span> LiveReplay::spansOn(const QDate &day) const
     for (const Span &s : m_days.value(day.addDays(1)))
         if (s.start < to)
             out.append({s.start, qMin(s.end, to)});
+    for (const Span &s : m_buffer)   // the live buffer counts as footage (ticket 08b)
+        if (s.end >= from && s.start < to)
+            out.append({s.start, qMin(s.end, to)});
     for (Span &s : out)
         s.start = qMax(s.start, from);
     std::sort(out.begin(), out.end(), [](const Span &a, const Span &b) { return a.start < b.start; });
@@ -120,11 +123,13 @@ QVariantList LiveReplay::strip() const
 {
     QList<std::pair<double, double>> spans;
     const double ob = oldestBehind();
+    QList<Span> all = m_buffer;
     for (auto it = m_days.cbegin(); it != m_days.cend(); ++it)
-        for (const Span &s : it.value())
-            if (s.start < m_now)
-                spans.append({posForBehind(m_now - qMin(s.end, m_now), ob),
-                              posForBehind(m_now - s.start, ob)});
+        all += it.value();
+    for (const Span &s : all)
+        if (s.start < m_now)
+            spans.append({posForBehind(m_now - qMin(s.end, m_now), ob),
+                          posForBehind(m_now - s.start, ob)});
     std::sort(spans.begin(), spans.end());
     QVariantList out;
     for (const auto &[from, to] : spans) {
@@ -139,6 +144,7 @@ QVariantList LiveReplay::strip() const
 void LiveReplay::reset()
 {
     m_days.clear();
+    m_buffer.clear();
     m_months.clear();
     m_failures.clear();
     m_queue.clear();
@@ -343,6 +349,9 @@ double LiveReplay::nextStart(double epoch, QDate *day)
             for (const Span &s : m_days.value(d))
                 if (s.start > epoch + 0.5 && s.start < m_now && (best < 0 || s.start < best))
                     best = s.start;
+            for (const Span &s : m_buffer)   // the live buffer is footage too (ticket 08b)
+                if (dayOf(s.start) == d && s.start > epoch + 0.5 && (best < 0 || s.start < best))
+                    best = s.start;
             if (best >= 0) {
                 *day = dayOf(best);           // a file over midnight starts the day before
                 return best;
@@ -353,6 +362,35 @@ double LiveReplay::nextStart(double epoch, QDate *day)
         }
     }
     return kNone;
+}
+
+void LiveReplay::setBufferSpans(const QVariantList &spans)
+{
+    QList<Span> next;
+    for (const QVariant &v : spans) {
+        const QVariantMap m = v.toMap();
+        const double start = m.value(QStringLiteral("start")).toDouble();
+        const double end = m.value(QStringLiteral("end")).toDouble();
+        if (end > start)
+            next.append({start, end});
+    }
+    const bool same = next.size() == m_buffer.size()
+        && std::equal(next.begin(), next.end(), m_buffer.begin(), [](const Span &a, const Span &b) {
+               return a.start == b.start && a.end == b.end;
+           });
+    if (same)
+        return;
+    m_buffer = next;
+    emit dayChanged();          // the day's segments
+    emit recordingsChanged();   // the strip
+}
+
+bool LiveReplay::inBuffer(double epoch) const
+{
+    for (const Span &s : m_buffer)
+        if (epoch >= s.start && epoch <= s.end)
+            return true;
+    return false;
 }
 
 bool LiveReplay::covered(double epoch) const
@@ -382,6 +420,16 @@ void LiveReplay::skipBy(double secs)
 void LiveReplay::resolve(double epoch, int direction, Ahead ahead)
 {
     m_pending = Pending::None;
+    // Backwards from now: the buffer's newest frame (the camera's clock runs up to a second or
+    // so off this machine's), then the buffer, without waiting for any search (ticket 08b).
+    if (direction < 0)
+        for (const Span &s : m_buffer)
+            if (epoch > s.end && epoch - s.end < 5)
+                epoch = s.end;
+    if (inBuffer(epoch)) {
+        land(epoch, dayOf(epoch));
+        return;
+    }
     const QDate d = dayOf(epoch);
     auto wait = [&] {
         m_pending = Pending::Play;
@@ -446,6 +494,16 @@ void LiveReplay::carryOn(int direction)
     if (!replaying())
         return;
     m_pending = Pending::None;
+    // Forwards at the live buffer's newest frame: that is now, so back to live (ticket 08b) —
+    // not a reopen at each newest second while live keeps filling it.
+    if (direction > 0 && !m_buffer.isEmpty()) {
+        const Span newest = *std::max_element(m_buffer.begin(), m_buffer.end(),
+            [](const Span &a, const Span &b) { return a.end < b.end; });
+        if (m_playhead >= newest.start && newest.end - m_playhead < 3) {
+            stop();
+            return;
+        }
+    }
     // Footage goes on past where the stream stopped (a file over midnight; a run that stopped
     // at the start of its day): carry straight on from the next second. Not twice at the same
     // place the same way (a run the recorder refused there): then the next recording.

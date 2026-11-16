@@ -99,6 +99,22 @@ template <typename Gops> int gopAt(const Gops &gops, qint64 ms)
 }
 } // namespace
 
+// gopAt, or in a break of less than kGapMs after a run, that run's last group.
+template <typename Gops> int gopAtOrJustAfter(const Gops &gops, qint64 ms)
+{
+    const int i = gopAt(gops, ms);
+    if (i >= 0)
+        return i;
+    for (int j = int(gops.size()) - 1; j >= 0; --j) {
+        const auto &g = gops.at(j);
+        if (g.frames.first().epochMs > ms)
+            continue;
+        const bool runEnds = j + 1 >= gops.size() || gops.at(j + 1).run != g.run;
+        return runEnds && ms - g.frames.last().epochMs < LiveBuffer::kGapMs ? j : -1;
+    }
+    return -1;
+}
+
 bool LiveBuffer::covers(qint64 ms) const
 {
     QMutexLocker lock(&m_mutex);
@@ -116,7 +132,7 @@ LiveBuffer::Run LiveBuffer::runAt(qint64 ms) const
 {
     QMutexLocker lock(&m_mutex);
     Run out;
-    const int at = gopAt(m_gops, ms);
+    const int at = gopAtOrJustAfter(m_gops, ms);
     if (at < 0)
         return out;
     const int run = m_gops.at(at).run;
@@ -127,6 +143,35 @@ LiveBuffer::Run LiveBuffer::runAt(qint64 ms) const
     out.startMs = m_gops.at(first).frames.first().epochMs;
     for (int i = first; i <= at; ++i)
         out.frames += m_gops.at(i).frames;   // implicitly shared bytes: a cheap copy
+    return out;
+}
+
+QList<reverse::Frame> LiveBuffer::framesFrom(qint64 ms, bool fromKeyframe) const
+{
+    QMutexLocker lock(&m_mutex);
+    QList<reverse::Frame> out;
+    const int at = gopAt(m_gops, ms);
+    if (at < 0)
+        return out;
+    const int run = m_gops.at(at).run;
+    for (int i = at; i < m_gops.size() && m_gops.at(i).run == run; ++i)
+        for (const reverse::Frame &f : m_gops.at(i).frames)
+            if (fromKeyframe ? true : f.epochMs > ms)
+                out.append(f);
+    return out;
+}
+
+QList<LiveBuffer::Span> LiveBuffer::spans() const
+{
+    QMutexLocker lock(&m_mutex);
+    QList<Span> out;
+    for (const Gop &g : m_gops) {
+        const qint64 a = g.frames.first().epochMs, b = g.frames.last().epochMs;
+        if (!out.isEmpty() && a - out.last().endMs < kGapMs)
+            out.last().endMs = qMax(out.last().endMs, b);
+        else
+            out.append({a, b});
+    }
     return out;
 }
 

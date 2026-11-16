@@ -1,4 +1,6 @@
 #include "media/LiveBuffer.h"
+#include "media/BufferReplay.h"
+#include "media/FrameTimeSei.h"
 
 #include <QtTest>
 
@@ -141,6 +143,81 @@ private slots:
         QCOMPARE(a->oldestMs(), qint64(5000));
         QCOMPARE(c->oldestMs(), qint64(5000));
         QCOMPARE(pool.find(QStringLiteral("9:9")), std::shared_ptr<LiveBuffer>());
+    }
+
+    void itListsItsRunsAsSpans()
+    {
+        LiveBuffer b;
+        feed(b, 0, 10, 1, false);
+        feed(b, 10000, 10, 1, true);
+        b.breakRun();
+        feed(b, 60000, 5);
+        const QList<LiveBuffer::Span> spans = b.spans();
+        QCOMPARE(spans.size(), 2);   // SD then HD back to back are one span; the gap splits
+        QCOMPARE(spans.at(0).startMs, qint64(0));
+        QCOMPARE(spans.at(0).endMs, qint64(19900));
+        QCOMPARE(spans.at(1).startMs, qint64(60000));
+        QCOMPARE(spans.at(1).endMs, qint64(64900));
+        // A moment in the short break between two runs plays from the run before it.
+        QVERIFY(!b.covers(9950));
+        QCOMPARE(b.runAt(9950).frames.last().epochMs, qint64(9900));
+    }
+
+    // ---- Playing the buffer (ticket 08b) -----------------------------------------------
+    // Backwards from a moment: its run's groups newest first, each in decode order, cut at the
+    // moment; every frame tagged with its time; the end of the run is the end of the stream.
+    void bufferReplayBackwardsSendsNewestGroupFirst()
+    {
+        auto b = std::make_shared<LiveBuffer>();
+        feed(*b, 10000, 3);           // groups at 10, 11, 12 s
+        BufferReplay r(b, 11500, -1);
+        QList<qint64> times;
+        for (QByteArray au = r.next(); !au.isEmpty(); au = r.next())
+            times << frametime::find(au, BcMediaParser::Codec::H264);
+        QCOMPARE(times.size(), 16);   // 11.0 .. 11.5, then 10.0 .. 10.9
+        QCOMPARE(times.first(), qint64(11000));
+        QCOMPARE(times.at(5), qint64(11500));
+        QCOMPARE(times.at(6), qint64(10000));
+        QCOMPARE(times.last(), qint64(10900));
+        QVERIFY(r.next().isEmpty());
+        QVERIFY(!r.main());
+    }
+
+    void bufferReplayBackwardsAtTopSpeedSendsKeyframesOnly()
+    {
+        auto b = std::make_shared<LiveBuffer>();
+        feed(*b, 10000, 3);
+        auto speed = std::make_shared<std::atomic<double>>(16.0);
+        BufferReplay r(b, 12900, -1, speed);
+        int n = 0;
+        for (QByteArray au = r.next(); !au.isEmpty(); au = r.next())
+            ++n;
+        QCOMPARE(n, 3);
+    }
+
+    // Forwards from a moment: from its group's keyframe, in order, on to the newest frame —
+    // including frames that arrive while it plays; the run's end (or now) ends the stream.
+    void bufferReplayForwardsRunsToTheNewestFrame()
+    {
+        auto b = std::make_shared<LiveBuffer>();
+        feed(*b, 10000, 2);           // 10.0 .. 11.9
+        BufferReplay r(b, 10500, 1);
+        QCOMPARE(frametime::find(r.next(), BcMediaParser::Codec::H264), qint64(10000));
+        for (int i = 1; i < 20; ++i)
+            QVERIFY(!r.next().isEmpty());     // to 11.9
+        feed(*b, 12000, 1);           // live goes on meanwhile
+        int more = 0;
+        for (QByteArray au = r.next(); !au.isEmpty(); au = r.next())
+            ++more;
+        QCOMPARE(more, 10);
+    }
+
+    void bufferReplayOutsideTheBufferSendsNothing()
+    {
+        auto b = std::make_shared<LiveBuffer>();
+        feed(*b, 10000, 2);
+        QVERIFY(BufferReplay(b, 5000, -1).next().isEmpty());
+        QVERIFY(BufferReplay(b, 50000, 1).next().isEmpty());
     }
 
     // ---- Stamping frames in the player (ticket 08a: every live stream has the camera's clock)

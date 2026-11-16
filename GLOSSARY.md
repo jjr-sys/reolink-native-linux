@@ -16,6 +16,10 @@ _Avoid_: SD (when referring to transport fallback)
 One Live View pane stepping back from now into its recorder camera's recording, across days as far back as storage holds, with Playback's controls on the pane bar and its time line as the "time behind live" line; its live stream stops meanwhile. "● Live", leaving Live View, or playing forwards into the recorder's newest footage returns it to live. One pane at a time.
 _Avoid_: timeshift, instant replay
 
+**Live buffer**:
+A Live pane's last five minutes of its own live stream, kept in memory as received (in the quality the pane shows, stamped with the camera's clock) while it streams and while it replays, so Live replay starts from now and runs back into the recorder's footage, and forwards back into live.
+_Avoid_: timeshift buffer, DVR
+
 **Pane bar**:
 The one floating bar at the bottom of every video pane (Live View, Playback, the Events clip player): a thin time line, the transport, HD, sound, the page's common tools and ⋯ for the rest. Shown on hover.
 _Avoid_: toolbar, rail, pill (in user-facing text)

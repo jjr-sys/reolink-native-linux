@@ -40,6 +40,18 @@ public:
                       row, epoch, {}});
     }
     void stop() override { ++stops; isStreaming = false; }
+    // The live buffer (live-replay ticket 08b): what it holds, ms since the epoch.
+    qint64 bufferFrom = -1, bufferTo = -1;
+    struct BufferOpen { int row; qint64 epochMs; int direction; };
+    QVector<BufferOpen> bufferOpens;
+    bool bufferHas(int, qint64 epochMs) const override
+    {
+        return epochMs >= bufferFrom && epochMs <= bufferTo;
+    }
+    void openBuffer(int row, qint64 epochMs, int direction) override
+    {
+        bufferOpens.append({row, epochMs, direction});
+    }
 };
 
 struct Fixture {
@@ -75,6 +87,57 @@ private slots:
     {
         QVERIFY(!snapToRecordingFile(Files{{1000, 1100}}, 999).found);
         QVERIFY(!snapToRecordingFile(Files{}, 5).found);
+    }
+
+    // ---- the live buffer (live-replay ticket 08b) ----
+    // A Live pane's replay plays its live buffer where the buffer holds the moment, both ways,
+    // HD or not; elsewhere the recorder as before. Playback's panes never use it.
+    void theLiveBufferPlaysWhereItHoldsTheMoment()
+    {
+        Fixture f;
+        f.s.setUseLiveBuffer(true);
+        f.t->bufferFrom = 1000000;
+        f.t->bufferTo = 1060000;
+        f.s.setDirection(-1);
+        QCOMPARE(f.s.playAt(1059.5), Outcome::Opened);
+        QCOMPARE(f.t->bufferOpens.size(), 1);
+        QCOMPARE(f.t->bufferOpens.last().epochMs, qint64(1059500));
+        QCOMPARE(f.t->bufferOpens.last().direction, -1);
+        QVERIFY(f.t->opens.isEmpty());
+        f.s.setDirection(1);
+        f.s.playAt(1030);
+        QCOMPARE(f.t->bufferOpens.last().direction, 1);
+        // Before the buffer: the recorder.
+        f.s.setDirection(-1);
+        f.s.playAt(999);
+        QCOMPARE(f.t->bufferOpens.size(), 2);
+        QCOMPARE(f.t->opens.size(), 1);
+        QCOMPARE(f.t->opens.last().route, Route::BaichuanReverse);
+    }
+
+    void withoutTheLiveBufferTheRecorderPlays()
+    {
+        Fixture f;
+        f.t->bufferFrom = 1000000;
+        f.t->bufferTo = 1060000;
+        f.s.playAt(1030);
+        QVERIFY(f.t->bufferOpens.isEmpty());
+        QCOMPARE(f.t->opens.size(), 1);
+    }
+
+    // After the buffer, a recorder stream at the same moment opens afresh (no seek in place of
+    // a stream that isn't running).
+    void theRecorderAfterTheBufferOpensAfresh()
+    {
+        Fixture f;
+        f.s.setUseLiveBuffer(true);
+        f.t->bufferFrom = 1000000;
+        f.t->bufferTo = 1060000;
+        f.s.playAt(1030);
+        f.t->isStreaming = true;
+        f.s.playAt(990);
+        QCOMPARE(f.t->seeks, 0);
+        QCOMPARE(f.t->opens.size(), 1);
     }
 
     // ---- transport choice ----

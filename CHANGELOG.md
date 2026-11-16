@@ -10,6 +10,16 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **Live replay starts from now.** Each Live pane of a Reolink recorder camera keeps the last
+  five minutes of its own live stream in memory (in the quality it shows; about 250 MB for an
+  HD pane, 10 MB for SD; 600 MB for all panes at most), stamped with the camera's clock. ◀
+  now starts at once from the moment on screen and plays that footage backwards, carrying on
+  into the recorder's footage where it ends, so there is no jump back over the minutes the
+  recorder hasn't filed yet (up to 3.5 min on the RLN8). Forwards plays through it back into
+  live. A pane that is replaying stays connected to its live stream (not shown), so the
+  footage keeps coming and "● Live" picks up at once; maximising a pane keeps the SD footage
+  it was showing before.
+
 - **One bar on every video pane.** Live View, Playback and the Events clip player now share
   one floating bar at the bottom of each pane (shown on hover): a thin time line on top, then
   ↺ « ◀½ ◀ ❚❚ ▶ ▶½ » ↻, HD, sound, the page's common tools and ⋯ for the rest. Each fast

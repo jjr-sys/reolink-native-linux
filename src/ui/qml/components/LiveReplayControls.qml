@@ -37,9 +37,20 @@ Item {
     // ---- Actions (the pane bar and the page's keys) ---------------------------------------
     function user() { if (pane.item) pane.item.clearLinkSlow(); }
     function begin() {
-        if (!replaying)
+        if (!replaying) {
             replay.start(cameraKey);
+            refreshBuffer();   // before the first play: ◀ from now starts in the buffer
+        }
         replay.paused = false;
+    }
+    // The camera's live buffer as footage for the replay (live-replay ticket 08b): at the
+    // start and each second while replaying (it keeps filling: live stays connected).
+    function refreshBuffer() { if (replay && replaying) replay.setBufferSpans(Devices.liveBufferSpans(deviceRow)); }
+    Timer {
+        interval: 1000
+        repeat: true
+        running: root.replaying
+        onTriggered: root.refreshBuffer()
     }
     // From live: backwards from now at the speed `step` sets.
     // A change of direction while playing reopens by itself (PlaybackSession::reopenNeeded).
@@ -225,6 +236,7 @@ Item {
                        ? root.group.label(root.replay.paused) : ""
             onFrameSecsChanged: if (frameSecs >= 0) root.replay.frameAt(dayEpoch + frameSecs, Date.now())
             reportForwardEnd: true
+            useLiveBuffer: true
             onReverseEnded: root.replay.carryOn(-1)
             onForwardEnded: root.replay.carryOn(1)
             onClicked: root.clicked()

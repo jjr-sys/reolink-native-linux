@@ -103,6 +103,7 @@ add_library(reolink_core STATIC
     src/media/FrameTimeSei.h src/media/FrameTimeSei.cpp
     src/media/ReversePlay.h src/media/ReversePlay.cpp
     src/media/LiveBuffer.h src/media/LiveBuffer.cpp
+    src/media/BufferReplay.h src/media/BufferReplay.cpp
 )
 # This is a fork (jjr-sys/reolink-native-linux) of TodesengelX/reolink-native-linux.
 # One source of truth for the version and the fork identity: PROJECT_VERSION above,

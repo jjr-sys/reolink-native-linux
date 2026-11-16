@@ -1,5 +1,6 @@
 #include <QElapsedTimer>
 #include "DeviceManager.h"
+#include "media/BufferReplay.h"
 #include "RecordingFileSnap.h"
 
 #include "core/Log.h"
@@ -1786,6 +1787,44 @@ std::shared_ptr<LiveBuffer> DeviceManager::liveBuffer(int row)
         m_liveBufferLog.start();
     }
     return m_liveBuffers.buffer(liveBufferKey(e.rec.id, e.channel));
+}
+
+bool DeviceManager::liveBufferHas(int row, qint64 epochMs) const
+{
+    const auto b = findLiveBuffer(row);
+    return b && !b->runAt(epochMs).frames.isEmpty();
+}
+
+QVariantList DeviceManager::liveBufferSpans(int row) const
+{
+    QVariantList out;
+    const auto b = findLiveBuffer(row);
+    if (!b)
+        return out;
+    for (const LiveBuffer::Span &s : b->spans())
+        out << QVariantMap{{QStringLiteral("start"), s.startMs / 1000.0},
+                           {QStringLiteral("end"), s.endMs / 1000.0}};
+    return out;
+}
+
+void DeviceManager::startLiveBufferPlayback(int row, qint64 epochMs, int direction, StreamPlayer *player)
+{
+    const auto b = findLiveBuffer(row);
+    if (!b || !player || row >= m_entries.size())
+        return;
+    const Entry &e = m_entries.at(row);
+    auto source = std::make_shared<BufferReplay>(b, epochMs, direction, player->speedCell());
+    qCInfo(lcCore).noquote() << "live buffer playback" << e.rec.name << "/" << e.chanName
+        << (source->main() ? "main" : "sub") << (direction < 0 ? "backwards from" : "from")
+        << QDateTime::fromMSecsSinceEpoch(epochMs).toString(Qt::ISODateWithMs);
+    player->setExpectedSize(source->main() ? e.mainSize : e.subSize);
+    player->setReversePlayback(direction < 0);
+    player->setForwardWindows(direction > 0);   // paced by the frames' times (ForwardPacer)
+    player->setPacketSource(
+        [source](unsigned char *buf, int size) { return source->read(buf, size); },
+        source->codec() == BcMediaParser::Codec::H265 ? QStringLiteral("hevc") : QStringLiteral("h264"),
+        [source] { source->stop(); });
+    player->start();
 }
 
 std::shared_ptr<LiveBuffer> DeviceManager::findLiveBuffer(int row) const

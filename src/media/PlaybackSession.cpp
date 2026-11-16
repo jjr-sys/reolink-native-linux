@@ -51,6 +51,17 @@ public:
         if (player)
             player->stop();
     }
+    bool bufferHas(int row, qint64 epochMs) const override
+    {
+        return devices && devices->liveBufferHas(row, epochMs);
+    }
+    void openBuffer(int row, qint64 epochMs, int direction) override
+    {
+        if (!devices || !player)
+            return;
+        player->setLoop(false);
+        devices->startLiveBufferPlayback(row, epochMs, direction, player);
+    }
 };
 
 namespace {
@@ -179,6 +190,14 @@ void PlaybackSession::setDirection(int direction)
     });
 }
 
+void PlaybackSession::setUseLiveBuffer(bool on)
+{
+    if (m_useLiveBuffer == on)
+        return;
+    m_useLiveBuffer = on;
+    emit useLiveBufferChanged();
+}
+
 void PlaybackSession::clearLinkSlow()
 {
     if (!m_linkSlow)
@@ -236,6 +255,12 @@ PlaybackSession::Outcome PlaybackSession::playAtImpl(double epochSecs, bool cove
         return Outcome::Gap;
     }
     const qint64 epoch = static_cast<qint64>(epochSecs);
+    const qint64 epochMs = static_cast<qint64>(epochSecs * 1000);
+    if (m_useLiveBuffer && m_row >= 0 && m_transport->bufferHas(m_row, epochMs)) {
+        m_nativeOpen = false;   // the next recorder stream opens afresh
+        m_transport->openBuffer(m_row, epochMs, m_direction);
+        return Outcome::Opened;
+    }
     const Route r = route();
     if (r == Route::Http) {
         m_nativeOpen = false;

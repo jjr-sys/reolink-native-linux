@@ -28,6 +28,9 @@ class PlaybackSession : public QObject
     Q_PROPERTY(rl::PlaybackSession::Route route READ route NOTIFY routeChanged)
     // linkSlow is holding HD back right now ("SD · too slow" on the HD chip).
     Q_PROPERTY(bool hdHeldBack READ hdHeldBack NOTIFY hdHeldBackChanged)
+    // A Live pane's replay (wayfinder/live-replay ticket 08b): play the camera's live buffer
+    // where it holds the moment, the recorder elsewhere.
+    Q_PROPERTY(bool useLiveBuffer READ useLiveBuffer WRITE setUseLiveBuffer NOTIFY useLiveBufferChanged)
 
 public:
     enum class Route { Http, BaichuanMain, BaichuanSub, BaichuanReverse, BaichuanReverseMain,
@@ -73,6 +76,8 @@ public:
     bool linkSlow() const { return m_linkSlow; }
     void setLinkSlow(bool slow);
     Q_INVOKABLE void clearLinkSlow();
+    bool useLiveBuffer() const { return m_useLiveBuffer; }
+    void setUseLiveBuffer(bool on);
     bool hdHeldBack() const { return m_hdHeldBack; }
 
     // Play the wall-clock moment `epoch`. `covered` is the caller's timeline verdict
@@ -94,6 +99,7 @@ signals:
     void linkSlowChanged();
     void routeChanged();
     void hdHeldBackChanged();
+    void useLiveBufferChanged();
     // The transport for the current moment changed while playing: replay it.
     void reopenNeeded();
 
@@ -120,6 +126,7 @@ private:
     int m_direction = 1;
     bool m_linkSlow = false;
     bool m_hdHeldBack = false;
+    bool m_useLiveBuffer = false;
 };
 
 } // namespace rl

@@ -27,6 +27,8 @@ namespace rl {
 //    across days; nothing earlier than the oldest; forwards with nothing ahead, back to live.
 //  - The "time behind live" slider's stretched scale and the strip of known recordings on it.
 //  - Back to live where recorder-paced forward play stalls at the newest footage.
+//  - The pane's live buffer (ticket 08b): its spans count as footage, so ◀ from now starts in
+//    it at once and carries on into the recorder's footage from its oldest frame.
 class LiveReplay : public QObject
 {
     Q_OBJECT
@@ -83,6 +85,10 @@ public:
     // back to live.
     Q_INVOKABLE void skipBy(double secs);
     Q_INVOKABLE bool covered(double epoch) const;
+    // The replaying camera's live buffer: its runs as {start, end} epoch seconds (the page
+    // updates it each second); counted as footage. inBuffer: whether it holds `epoch`.
+    Q_INVOKABLE void setBufferSpans(const QVariantList &spans);
+    Q_INVOKABLE bool inBuffer(double epoch) const;
 
     // A day's search answered: its recordings (seconds into the day) and the days of its month
     // with recordings. A failed search may be asked again.
@@ -167,6 +173,7 @@ private:
     bool m_paused = false;
 
     QHash<QDate, QList<Span>> m_days;  // searched days: recordings, epoch seconds
+    QList<Span> m_buffer;              // the live buffer's runs, epoch seconds
     QHash<int, QList<int>> m_months;   // year*100+month -> days with recordings
     QHash<QDate, int> m_failures;      // failed searches per day
     QList<QDate> m_queue;
