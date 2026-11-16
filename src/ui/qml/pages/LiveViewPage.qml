@@ -320,6 +320,8 @@ Item {
         target: liveReplay
         function onReplayingChanged() { page.followLead(); }
     }
+    // A highlight chip's tap (ticket 14): back to live — every replaying pane — on that camera,
+    // maximised.
     function showLive(key) {
         liveReplay.stop();
         maximizedKey = key;
@@ -565,6 +567,42 @@ Item {
                     text: qsTr("Edit rules…")
                     onTriggered: page.editHighlightRulesRequested()
                 }
+            }
+        },
+
+        // "● All live" while several panes replay (live-replay ticket 15c): every one back to live.
+        Rectangle {
+            visible: liveReplay.cameraKeys.length > 1
+            width: allLiveLabel.implicitWidth + 20
+            height: 26
+            radius: Theme.radius
+            color: allLiveArea.containsMouse ? Theme.surfaceAlt : Theme.surface
+            border.color: Theme.border
+            Text {
+                id: allLiveLabel
+                anchors.centerIn: parent
+                text: qsTr("● All live")
+                color: Theme.danger
+                font.pixelSize: 12
+                font.bold: true
+            }
+            MouseArea {
+                id: allLiveArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: liveReplay.stop()
+            }
+            ToolTip {
+                visible: allLiveArea.containsMouse
+                delay: 500
+                x: (parent.width - width) / 2
+                y: parent.height + 6
+                contentItem: Text {
+                    text: qsTr("Every replaying pane back to live (%1 replaying)").arg(liveReplay.cameraKeys.length)
+                    color: Theme.text; font.pixelSize: 11
+                }
+                background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
             }
         }
         ]
