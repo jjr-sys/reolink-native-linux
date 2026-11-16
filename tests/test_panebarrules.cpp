@@ -210,6 +210,98 @@ private slots:
         }
     }
 
+    // ---- A press: a button or a key, and whether it acts (ticket architecture/04) ----------
+    void theKeysAreTheirButtons()
+    {
+        const State s = playing(Page::Replay, 1, 1.0);
+        QCOMPARE(press(s, QStringLiteral("J")).id, kFastBack);
+        QCOMPARE(press(s, QStringLiteral("K")).id, kPause);
+        QCOMPARE(press(s, QStringLiteral("L")).id, kFastForward);
+        QCOMPARE(press(s, QStringLiteral("Left")).id, kSkipBack);
+        QCOMPARE(press(s, QStringLiteral("Right")).id, kSkipForward);
+        for (const QString &k : {"J", "K", "L", "Left", "Right"})
+            QVERIFY2(press(s, k).refusal.isEmpty(), qPrintable(k));
+    }
+
+    void aButtonIdPressesItself()
+    {
+        const Press p = press(playing(Page::Playback, 1, 1.0), kSlowBack);
+        QCOMPARE(p.id, kSlowBack);
+        QVERIFY(p.refusal.isEmpty());
+    }
+
+    void anyOtherKeyIsNotTheTransports()
+    {
+        const Press p = press(playing(Page::Replay, 1, 1.0), QStringLiteral("X"));
+        QVERIFY(p.id.isEmpty());
+        QVERIFY(p.refusal.isEmpty());
+    }
+
+    // At live J starts ◀ at 1× (as the pane's ◀ does), ← starts 10 s back; the rest have
+    // nothing ahead of them and say so.
+    void atLiveJStartsBackAndTheForwardKeysSayWhyNot()
+    {
+        const State s = playing(Page::Live, 1, 1.0);
+        QCOMPARE(press(s, QStringLiteral("J")).id, kBack);
+        QCOMPARE(press(s, QStringLiteral("Left")).id, kSkipBack);
+        for (const QString &k : {"K", "L", "Right"}) {
+            const Press p = press(s, k);
+            QVERIFY2(p.id.isEmpty(), qPrintable(k));
+            QVERIFY2(p.refusal.contains(QStringLiteral("ahead of live")), qPrintable(k));
+        }
+    }
+
+    void jOnAFrigateClipSaysForwardsOnly()
+    {
+        State s = playing(Page::Events, 1, 1.0);
+        s.camera = Camera::Frigate;
+        const Press j = press(s, QStringLiteral("J"));
+        QVERIFY(j.id.isEmpty());
+        QCOMPARE(j.refusal, QStringLiteral("Frigate clips play forwards only"));
+        QCOMPARE(press(s, QStringLiteral("L")).id, kFastForward);
+    }
+
+    void aLockedSpeedRefusesJAndLButNotTheRest()
+    {
+        State s = playing(Page::Playback, 1, 1.0);
+        s.speedLocked = true;
+        for (const QString &k : {"J", "L"}) {
+            const Press p = press(s, k);
+            QVERIFY2(p.id.isEmpty(), qPrintable(k));
+            QCOMPARE(p.refusal, QStringLiteral("Frigate plays at 1× forward only"));
+        }
+        for (const QString &k : {"K", "Left", "Right"})
+            QVERIFY2(!press(s, k).id.isEmpty(), qPrintable(k));
+    }
+
+    void noReversePlayRefusesJOnly()
+    {
+        State s = playing(Page::Playback, 1, 1.0);
+        s.reverseAvailable = false;
+        QVERIFY(press(s, QStringLiteral("J")).id.isEmpty());
+        QVERIFY(!press(s, QStringLiteral("J")).refusal.isEmpty());
+        QCOMPARE(press(s, QStringLiteral("L")).id, kFastForward);
+    }
+
+    // A pane with nothing recorded has no transport: its keys are silently not its own.
+    void aPaneWithoutATransportTakesNoPress()
+    {
+        State s = playing(Page::Live, 1, 1.0);
+        s.camera = Camera::Stream;
+        for (const QString &k : {"J", "K", "Left"}) {
+            const Press p = press(s, k);
+            QVERIFY(p.id.isEmpty());
+            QVERIFY(p.refusal.isEmpty());
+        }
+    }
+
+    // A key acts whatever the pill shows: ← works on a pane too small for its ↺ button.
+    void aKeyActsWhenItsButtonIsCollapsedAway()
+    {
+        QVERIFY(!transport(playing(Page::Replay, 1, 1.0), NoSkips)[kSkipBack].shown);
+        QCOMPARE(press(playing(Page::Replay, 1, 1.0), QStringLiteral("Left")).id, kSkipBack);
+    }
+
     // ---- Collapsing to fit --------------------------------------------------------------
     void aSmallPaneDropsTheSkipButtons()
     {
@@ -301,6 +393,10 @@ private slots:
         const QVariantMap s = r.tools("events", {"newer", "older", "open"}, 0);
         QCOMPARE(s.value("shown").toStringList(), (QStringList{"newer", "older"}));
         QCOMPARE(r.fitStep(450, {500, 440}), 1);
+        const QVariantMap p = r.press({{"page", "events"}, {"camera", "frigate"}}, "J");
+        QCOMPARE(p.value("id").toString(), QString());
+        QCOMPARE(p.value("refusal").toString(), QStringLiteral("Frigate clips play forwards only"));
+        QCOMPARE(r.press({{"page", "live"}, {"camera", "recorder"}}, "J").value("id").toString(), kBack);
     }
 };
 

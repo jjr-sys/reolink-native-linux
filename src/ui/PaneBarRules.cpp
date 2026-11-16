@@ -142,6 +142,29 @@ QHash<QString, Button> transport(const State &s, int step)
     return out;
 }
 
+Press press(const State &s, const QString &idOrKey)
+{
+    QString id = idOrKey;
+    if (idOrKey == QLatin1String("J"))
+        id = s.page == Page::Live ? kBack : kFastBack;
+    else if (idOrKey == QLatin1String("K"))
+        id = kPause;
+    else if (idOrKey == QLatin1String("L"))
+        id = kFastForward;
+    else if (idOrKey == QLatin1String("Left"))
+        id = kSkipBack;
+    else if (idOrKey == QLatin1String("Right"))
+        id = kSkipForward;
+
+    const auto buttons = transport(s, Full);   // a key acts whatever the pill has room for
+    const auto it = buttons.constFind(id);
+    if (it == buttons.cend() || !it->shown)
+        return {};
+    if (!it->enabled)
+        return {QString(), it->reason};
+    return {id, QString()};
+}
+
 ToolSplit tools(Page page, const QStringList &available, int step)
 {
     ToolSplit out;
@@ -184,6 +207,12 @@ QVariantMap PaneBarRules::transport(const QVariantMap &state, int step) const
                                          {QStringLiteral("reason"), it->reason}});
     }
     return out;
+}
+
+QVariantMap PaneBarRules::press(const QVariantMap &state, const QString &idOrKey) const
+{
+    const panebar::Press p = panebar::press(panebar::stateFrom(state), idOrKey);
+    return {{QStringLiteral("id"), p.id}, {QStringLiteral("refusal"), p.refusal}};
 }
 
 QVariantMap PaneBarRules::tools(const QString &page, const QStringList &available, int step) const

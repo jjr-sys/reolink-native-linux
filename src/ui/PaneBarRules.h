@@ -57,6 +57,18 @@ inline const QString kSkipForward = QStringLiteral("skipForward");
 bool hasTransport(const State &s);
 QHash<QString, Button> transport(const State &s, int step);
 
+// A press of a transport button or a page key (J « · K ❚❚ · L » · ← ↺ · → ↻), decided once
+// for the pane bar, the keys and Playback's bottom bar (wayfinder/architecture ticket 04).
+// `id` is the button to apply (TransportActions.apply); empty when the press doesn't act.
+// `refusal` says why it can't (the greyed button's reason); empty when it acts, and when the
+// press isn't the transport's at all (any other key, or a pane with nothing recorded).
+// At live, J starts ◀ at 1× (as the pane's ◀ does) rather than fast backwards.
+struct Press {
+    QString id;
+    QString refusal;
+};
+Press press(const State &s, const QString &idOrKey);
+
 // Tools: `available` (the ids the pane's camera has, in the pill's order) split into those on
 // the pill (the page's common tools, fewer on narrow steps) and the rest, under ⋯.
 struct ToolSplit {
@@ -74,7 +86,7 @@ int fitStep(double room, const QList<double> &widthAtStep);
 // The same for QML (registered as the PaneBarRules singleton). A state is a map: page
 // ("live" | "replay" | "playback" | "events"), camera ("recorder" | "frigate" | "stream"),
 // direction, speed, paused, speedLocked, reverseAvailable. Buttons come back as maps of
-// shown / enabled / lit / caption / reason.
+// shown / enabled / lit / caption / reason; a press as { id, refusal }.
 class PaneBarRules : public QObject
 {
     Q_OBJECT
@@ -86,6 +98,8 @@ public:
     Q_INVOKABLE QVariantMap transport(const QVariantMap &state, int step) const;
     Q_INVOKABLE QVariantMap tools(const QString &page, const QStringList &available, int step) const;
     Q_INVOKABLE int fitStep(double room, const QVariantList &widthAtStep) const;
+    // { id, refusal } (panebar::press).
+    Q_INVOKABLE QVariantMap press(const QVariantMap &state, const QString &idOrKey) const;
 };
 
 } // namespace rl
