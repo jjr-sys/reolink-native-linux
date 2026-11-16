@@ -200,6 +200,14 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Changed
 
+- **A key that can't act says why.** J on a Frigate event clip, J / L while Playback's speed
+  is locked to 1× (Frigate panes only), and K, L or → on a Live pane at live (nothing ahead
+  of live) used to do nothing; each now shows the reason for 2 s, the same words as the
+  greyed button's tooltip: on the pane (Live, Events) or in Playback's speed line above the
+  bottom bar.
+- **Internal:** whether a transport button or key acts (and why not) is decided once, in
+  `PaneBarRules::press` (tested); the pane bar, every page's keys and Playback's bottom bar
+  ask it. `TransportActions.keyId` moved into it.
 - **Playback keeps panes in step both ways.** A pane that drifts more than 5 s × speed from
   the playhead, or stops where the playhead has its footage, starts again at the playhead
   going forwards too (it was backwards only, 5 s at any speed), as Live replay's panes do.

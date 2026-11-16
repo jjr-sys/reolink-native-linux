@@ -390,10 +390,38 @@ owns it (`Devices.days`); the four old searches and five old signals are gone.
 
 Revert: the review-fix commit, then `1eb48de`, then `9a508dc` (each builds and passes alone).
 
+### Candidate 5: one press rule (`3e64cda`, `6e78432`, review fixes)
+
+**Module.** `PaneBarRules::press(state, idOrKey)` → `{ id, refusal }`
+(`src/ui/PaneBarRules.{h,cpp}`; QML `PaneBarRules.press(map, idOrKey)` and `PaneBar.press(k)`).
+`id` is the button to apply (`TransportActions.apply`, unchanged); `refusal` is the greyed
+button's reason. Built on `transport()` at the widest step, so a key and its button can't
+disagree, and a key still acts when its button has collapsed off a narrow pill.
+
+**Decisions** (wayfinder/architecture ticket 04, plus the agreed plan).
+1. Keys and button ids share one string space ("J", "Left", "fastBack"…); `keyId` moved in.
+   J at live is `back` (◀ at 1×). J while a Live replay runs still steps « without restarting
+   a paused replay's direction (`LiveReplayControls.key`, the one key rule left in QML).
+2. Every key path asks it: Playback's five shortcuts, Live (`LivePane.replayKey` →
+   `paneBar.press`), Live replay, the Events clip player. Pane-bar buttons keep calling
+   `apply`: a greyed one can't be tapped and shows the reason as its tooltip.
+3. Playback's bottom bar takes dim / lit / reason from `transport()` with a group state
+   (`barRules`: a recorder, speedLocked when every pane is Frigate). Enabled buttons keep
+   their own how-to tips. New on screen: its back buttons also grey when reverse isn't
+   available (never today; ticket 12 made reverse universal).
+4. A refused key shows its reason for 2 s: the pane's notice (Live, Events; other notices
+   keep 4 s) or Playback's speed line, cleared by the next press that acts. K, L and → at
+   live now say "Nothing ahead of live…" (their shortcuts stay on); J on a Frigate clip is
+   now taken by the clip player, not passed on.
+5. Not modelled: "ended" (an ended clip is paused, `EventClip::paused`), so keys act as when
+   paused. The QML wiring has no tests (the page key paths stay screen-checked).
+6. Left as judgement calls from review: the "refusal → show, else apply" shape is repeated in
+   three callers, and `barRules` repeats `PaneBar.rules`' map by hand.
+
+Revert: the review-fix commit, then `6e78432`, then `3e64cda` (each builds and passes alone).
+
 ### Not built
 
 - **3c recorder media module:** day search built (above); DON'T for stream opening (one
   adapter; shared with HD live).
-- **Candidate 5 one press module:** LATER, after this branch (`PaneBarRules.press`), plus the
-  small fixes listed in the review (bottom-bar ⏸, dead `reverseTip`, greyed-but-lit buttons,
-  refusal reasons).
+- **Candidate 5 one press module:** built (above).

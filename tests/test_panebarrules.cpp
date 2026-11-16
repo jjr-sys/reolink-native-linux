@@ -210,7 +210,7 @@ private slots:
         }
     }
 
-    // ---- A press: a button or a key, and whether it acts (ticket architecture/04) ----------
+    // ---- A press: a button or a key, and whether it acts (wayfinder/architecture ticket 04) --
     void theKeysAreTheirButtons()
     {
         const State s = playing(Page::Replay, 1, 1.0);
@@ -281,6 +281,22 @@ private slots:
         QVERIFY(press(s, QStringLiteral("J")).id.isEmpty());
         QVERIFY(!press(s, QStringLiteral("J")).refusal.isEmpty());
         QCOMPARE(press(s, QStringLiteral("L")).id, kFastForward);
+    }
+
+    // Paused (or a clip that ended, which is paused where it stopped): every key acts; K
+    // plays on.
+    void aPausedPaneTakesEveryKey()
+    {
+        State s = playing(Page::Playback, -1, 4.0);
+        s.paused = true;
+        for (const QString &k : {"J", "K", "L", "Left", "Right"}) {
+            const Press p = press(s, k);
+            QVERIFY2(!p.id.isEmpty() && p.refusal.isEmpty(), qPrintable(k));
+        }
+        s.page = Page::Events;
+        s.camera = Camera::Frigate;
+        QCOMPARE(press(s, QStringLiteral("K")).id, kPause);
+        QVERIFY(press(s, QStringLiteral("J")).id.isEmpty());
     }
 
     // A pane with nothing recorded has no transport: its keys are silently not its own.

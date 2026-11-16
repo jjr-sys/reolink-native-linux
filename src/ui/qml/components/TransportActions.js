@@ -1,7 +1,6 @@
 .pragma library
 
-// The pane bar's transport (PaneBarRules ids) and the page keys, one mapping for every video
-// pane (Live replay, Playback, the Events clip player; wayfinder/live-replay tickets 11, 12).
+// What the pane bar's transport buttons (PaneBarRules ids) do, the same on every video pane (Live replay, Playback, the Events clip player; wayfinder/live-replay tickets 11, 12).
 // `target` is the pane's handler: skip(secs), togglePause() and speedAction(step[, dir]), which
 // applies `step` (a PlaybackGroup change) its own way — `dir` is -1 for the backwards buttons
 // (Live replay starts from live on those; Playback and Events don't need it).

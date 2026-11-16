@@ -1126,7 +1126,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 2
                     // The transport's buttons: greyed (with why), lit (PaneBarRules).
-                    readonly property var t: PaneBarRules.transport(page.barRules, 0)
+                    readonly property var buttons: PaneBarRules.transport(page.barRules, 0)   // 0: Full
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: {
@@ -1140,22 +1140,22 @@ Item {
                         spacing: 5
                         Ctl {
                             anchors.verticalCenter: parent.verticalCenter
-                            glyph: "«"; caption: qsTr("fast"); dim: !centre.t.fastBack.enabled
-                            lit: centre.t.fastBack.lit
-                            tip: dim ? centre.t.fastBack.reason : qsTr("Fast backwards: 2× → 4× → 8× → 16× → back to 1× (J)")
+                            glyph: "«"; caption: qsTr("fast"); dim: !centre.buttons.fastBack.enabled
+                            lit: centre.buttons.fastBack.lit
+                            tip: dim ? centre.buttons.fastBack.reason : qsTr("Fast backwards: 2× → 4× → 8× → 16× → back to 1× (J)")
                             onActivated: page.press("fastBack")
                         }
                         Ctl {
                             anchors.verticalCenter: parent.verticalCenter
-                            glyph: "◀½"; caption: qsTr("slow"); dim: !centre.t.slowBack.enabled
-                            lit: centre.t.slowBack.lit
-                            tip: dim ? centre.t.slowBack.reason : qsTr("Slow backwards: ½× → ¼× → back to 1×")
+                            glyph: "◀½"; caption: qsTr("slow"); dim: !centre.buttons.slowBack.enabled
+                            lit: centre.buttons.slowBack.lit
+                            tip: dim ? centre.buttons.slowBack.reason : qsTr("Slow backwards: ½× → ¼× → back to 1×")
                             onActivated: page.press("slowBack")
                         }
                         Ctl {
-                            big: true; glyph: "◀"; dim: !centre.t.back.enabled
-                            lit: centre.t.back.lit
-                            tip: dim ? centre.t.back.reason : qsTr("Play backwards at 1×")
+                            big: true; glyph: "◀"; dim: !centre.buttons.back.enabled
+                            lit: centre.buttons.back.lit
+                            tip: dim ? centre.buttons.back.reason : qsTr("Play backwards at 1×")
                             onActivated: page.press("back")
                         }
                         Ctl {
@@ -1166,22 +1166,22 @@ Item {
                         }
                         Ctl {
                             big: true; glyph: "▶"
-                            lit: centre.t.forward.lit
+                            lit: centre.buttons.forward.lit
                             tip: qsTr("Play at 1×")
                             onActivated: page.press("forward")
                         }
                         Ctl {
                             anchors.verticalCenter: parent.verticalCenter
-                            glyph: "▶½"; caption: qsTr("slow"); dim: !centre.t.slowForward.enabled
-                            lit: centre.t.slowForward.lit
-                            tip: dim ? centre.t.slowForward.reason : qsTr("Slow forwards: ½× → ¼× → back to 1×")
+                            glyph: "▶½"; caption: qsTr("slow"); dim: !centre.buttons.slowForward.enabled
+                            lit: centre.buttons.slowForward.lit
+                            tip: dim ? centre.buttons.slowForward.reason : qsTr("Slow forwards: ½× → ¼× → back to 1×")
                             onActivated: page.press("slowForward")
                         }
                         Ctl {
                             anchors.verticalCenter: parent.verticalCenter
-                            glyph: "»"; caption: qsTr("fast"); dim: !centre.t.fastForward.enabled
-                            lit: centre.t.fastForward.lit
-                            tip: dim ? centre.t.fastForward.reason : qsTr("Fast forwards: 2× → 4× → 8× → 16× → back to 1× (L)")
+                            glyph: "»"; caption: qsTr("fast"); dim: !centre.buttons.fastForward.enabled
+                            lit: centre.buttons.fastForward.lit
+                            tip: dim ? centre.buttons.fastForward.reason : qsTr("Fast forwards: 2× → 4× → 8× → 16× → back to 1× (L)")
                             onActivated: page.press("fastForward")
                         }
                     }
@@ -1294,9 +1294,9 @@ Item {
     // focus keeps its own keys.
     readonly property bool keysOn: active && !(Window.activeFocusItem
                                                && Window.activeFocusItem.cursorPosition !== undefined)
-    // Whether a key or a bottom-bar button acts, and why not, is PaneBarRules' (architecture
-    // ticket 04): the bottom bar is the whole group's, so its camera is a recorder's and a
-    // Frigate pane shows as speedLocked.
+    // Whether a key or a bottom-bar button acts, and why not, is PaneBarRules'
+    // (wayfinder/architecture ticket 04). The bottom bar is the whole group's, so its camera
+    // is a recorder's and an all-Frigate group shows as speedLocked.
     readonly property var barRules: ({
         page: "playback", camera: "recorder",
         direction: group.direction, speed: group.speed,
@@ -1312,6 +1312,8 @@ Item {
             page.refusal = p.refusal;
             refusalTimer.restart();
         } else if (p.id !== "") {
+            page.refusal = "";   // a press that acts ends an earlier refusal's message
+            refusalTimer.stop();
             TransportActions.apply(p.id, group, page);
         }
     }

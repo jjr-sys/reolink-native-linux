@@ -14,7 +14,8 @@ namespace rl {
 // rules of a pane's pill, apart from its looks. Which transport buttons it shows, which can act
 // (with a reason when not), which is lit and what the fast / slow buttons say; which tools sit
 // on the pill and which go under ⋯; how far it collapses to fit. Speed stepping itself is
-// PlaybackGroup's; the QML (components/PaneBar.qml) lays these out and calls the pane's actions.
+// PlaybackGroup's; the QML (components/PaneBar.qml, Playback's bottom bar) lays these out and
+// calls the pane's actions.
 namespace panebar {
 
 enum class Page { Live, Replay, Playback, Events };   // Replay: a Live pane playing its recording
