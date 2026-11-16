@@ -1,9 +1,9 @@
 #include "ui/LiveReplay.h"
 
 #include <QSignalSpy>
+#include <QtTest>
 
 #include <algorithm>
-#include <QtTest>
 
 using namespace rl;
 
@@ -222,13 +222,15 @@ private slots:
         rec.book[kToday] = segs({{3600, 35900}});   // the recorder's newest: 09:58:20
         QSignalSpy play(&r, &LiveReplay::playWanted);
         r.start(QStringLiteral("5:0"));
-        r.setBufferSpans(r.cameraKey(), QVariantList{QVariantMap{{"start", kNow - 240}, {"end", kNow - 1}}});
+        r.setBufferSpans(r.cameraKey(),
+                          QVariantList{QVariantMap{{"start", kNow - 240}, {"end", kNow - 1}}});
         r.playFrom(kNow, -1);
         QCOMPARE(play.count(), 1);                  // no waiting for today's search
         QCOMPARE(play.last().at(0).toDouble(), kNow - 1);
         QVERIFY(r.inBuffer(r.playhead()));
         // A camera clock ahead of this machine's: from now, still the buffer.
-        r.setBufferSpans(r.cameraKey(), QVariantList{QVariantMap{{"start", kNow - 240}, {"end", kNow + 0.8}}});
+        r.setBufferSpans(r.cameraKey(),
+                          QVariantList{QVariantMap{{"start", kNow - 240}, {"end", kNow + 0.8}}});
         r.playFrom(kNow, -1);
         QCOMPARE(play.last().at(0).toDouble(), kNow);
     }
@@ -244,18 +246,21 @@ private slots:
         rec.book[kToday] = segs({{3600, 35900}});   // to 09:58:20 = now − 100 s
         r.start(QStringLiteral("5:0"));
         rec.answerAll(1);
-        r.setBufferSpans(r.cameraKey(), QVariantList{QVariantMap{{"start", kNow - 60}, {"end", kNow}}});
+        r.setBufferSpans(r.cameraKey(),
+                          QVariantList{QVariantMap{{"start", kNow - 60}, {"end", kNow}}});
         QSignalSpy play(&r, &LiveReplay::playWanted);
         r.playFrom(kNow, -1);
         QVERIFY(r.covered(kNow - 30));
         QCOMPARE(r.daySegments().size(), 2);
         QCOMPARE(r.strip().size(), 2);
         r.frameAt(r.cameraKey(), kNow - 60, 0);
-        r.carryOn(r.cameraKey(), -1);                               // the buffer's oldest frame: a gap behind it
+        // the buffer's oldest frame: a gap behind it
+        r.carryOn(r.cameraKey(), -1);
         QCOMPARE(play.last().at(0).toDouble(), kNow - 100);   // the recorder's newest footage
         QVERIFY(!r.inBuffer(r.playhead()));
         // Overlapping (RLN36: the recorder is only seconds behind): straight on.
-        r.setBufferSpans(r.cameraKey(), QVariantList{QVariantMap{{"start", kNow - 120}, {"end", kNow}}});
+        r.setBufferSpans(r.cameraKey(),
+                          QVariantList{QVariantMap{{"start", kNow - 120}, {"end", kNow}}});
         r.playFrom(kNow, -1);
         r.frameAt(r.cameraKey(), kNow - 120, 0);
         r.carryOn(r.cameraKey(), -1);
@@ -272,7 +277,8 @@ private slots:
         rec.book[kToday] = segs({{3600, 35700}});   // to now − 300 s
         r.start(QStringLiteral("5:0"));
         rec.answerAll(1);
-        r.setBufferSpans(r.cameraKey(), QVariantList{QVariantMap{{"start", kNow - 200}, {"end", kNow}}});
+        r.setBufferSpans(r.cameraKey(),
+                          QVariantList{QVariantMap{{"start", kNow - 200}, {"end", kNow}}});
         QSignalSpy play(&r, &LiveReplay::playWanted);
         r.playFrom(kNow - 250, 1);
         QCOMPARE(play.last().at(0).toDouble(), kNow - 200);
@@ -296,7 +302,8 @@ private slots:
         Recorder rec(r);
         rec.book[kToday] = segs({{3600, 35700}});
         r.start(QStringLiteral("2:2"));
-        r.setBufferSpans(r.cameraKey(), QVariantList{QVariantMap{{"start", kNow - 200}, {"end", kNow - 9}}});
+        r.setBufferSpans(r.cameraKey(),
+                          QVariantList{QVariantMap{{"start", kNow - 200}, {"end", kNow - 9}}});
         QSignalSpy play(&r, &LiveReplay::playWanted);
         r.playFrom(kNow, -1);
         QCOMPARE(play.last().at(0).toDouble(), kNow - 9);
@@ -313,7 +320,8 @@ private slots:
         rec.book[kToday] = segs({{3600, 35700}});   // to now − 300 s
         r.start(QStringLiteral("5:0"));
         rec.answerAll(1);
-        r.setBufferSpans(r.cameraKey(), QVariantList{QVariantMap{{"start", kNow - 200}, {"end", kNow - 60}},
+        r.setBufferSpans(r.cameraKey(),
+                          QVariantList{QVariantMap{{"start", kNow - 200}, {"end", kNow - 60}},
                                       QVariantMap{{"start", kNow - 52}, {"end", kNow}}});
         QSignalSpy play(&r, &LiveReplay::playWanted);
         r.playFrom(kNow, -1);
@@ -332,7 +340,8 @@ private slots:
         rec.book[kToday] = segs({{3600, 35880}});   // to now − 120 s
         r.start(QStringLiteral("5:0"));
         rec.answerAll(1);
-        r.setBufferSpans(r.cameraKey(), QVariantList{QVariantMap{{"start", kNow - 150}, {"end", kNow}}});
+        r.setBufferSpans(r.cameraKey(),
+                          QVariantList{QVariantMap{{"start", kNow - 150}, {"end", kNow}}});
         QSignalSpy play(&r, &LiveReplay::playWanted);
         QSignalSpy pane(&r, &LiveReplay::paneWanted);
         r.playFrom(kNow - 400, 1);                  // the recorder
@@ -359,17 +368,20 @@ private slots:
         rec.book[kToday] = segs({{3600, 35900}});
         r.start(QStringLiteral("5:0"));
         rec.answerAll(1);
-        r.setBufferSpans(r.cameraKey(), QVariantList{QVariantMap{{"start", kNow - 60}, {"end", kNow - 0.4}}});
+        r.setBufferSpans(r.cameraKey(),
+                          QVariantList{QVariantMap{{"start", kNow - 60}, {"end", kNow - 0.4}}});
         QSignalSpy play(&r, &LiveReplay::playWanted);
         r.playFrom(kNow - 30, 1);
         QCOMPARE(play.count(), 1);
-        r.frameAt(r.cameraKey(), kNow - 1.2, 0);                    // the stream ended near the newest frame
+        // the stream ended near the newest frame
+        r.frameAt(r.cameraKey(), kNow - 1.2, 0);
         r.carryOn(r.cameraKey(), 1);
         QVERIFY(!r.replaying());
         // Further back in the buffer, a stream that ended carries on in it.
         r.start(QStringLiteral("5:0"));
         rec.answerAll();
-        r.setBufferSpans(r.cameraKey(), QVariantList{QVariantMap{{"start", kNow - 60}, {"end", kNow - 0.4}}});
+        r.setBufferSpans(r.cameraKey(),
+                          QVariantList{QVariantMap{{"start", kNow - 60}, {"end", kNow - 0.4}}});
         r.playFrom(kNow - 30, 1);
         r.frameAt(r.cameraKey(), kNow - 20, 0);
         r.carryOn(r.cameraKey(), 1);
@@ -427,7 +439,8 @@ private slots:
         QSignalSpy play(&r, &LiveReplay::playWanted);
         r.playFrom(at(2026, 11, 15, 9, 0), -1);
         r.frameAt(r.cameraKey(), at(2026, 11, 15, 8, 0), 0);
-        r.carryOn(r.cameraKey(), -1);                                 // at 08:00, the recording's start
+        // at 08:00, the recording's start
+        r.carryOn(r.cameraKey(), -1);
         QCOMPARE(play.count(), 1);                     // waits for the 13th (14th has none)
         rec.answerAll();
         QCOMPARE(play.count(), 2);
@@ -462,7 +475,8 @@ private slots:
         QSignalSpy play(&r, &LiveReplay::playWanted);
         r.group()->playBackward();
         r.playFrom(at(2026, 11, 15, 0, 0, 30), -1);
-        r.frameAt(r.cameraKey(), at(2026, 11, 15, 0, 0, 0) + 0.2, 0);    // the run stopped at the day's start
+        // the run stopped at the day's start
+        r.frameAt(r.cameraKey(), at(2026, 11, 15, 0, 0, 0) + 0.2, 0);
         r.carryOn(r.cameraKey(), -1);
         QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 14, 23, 59, 59));
         QCOMPARE(r.dayEpoch(), at(2026, 11, 14, 0));
@@ -500,7 +514,8 @@ private slots:
         r.playFrom(at(2026, 11, 14, 23, 0), 1);
         rec.answerAll();
         r.frameAt(r.cameraKey(), at(2026, 11, 14, 23, 59, 59) + 0.9, 0);
-        r.carryOn(r.cameraKey(), 1);                                  // the 14th ran out at midnight
+        // the 14th ran out at midnight
+        r.carryOn(r.cameraKey(), 1);
         rec.answerAll();
         QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 15, 0, 30));
     }
@@ -614,7 +629,8 @@ private slots:
         r.group()->playBackward();
         QVERIFY(!r.stalledAtEdge(19'500));
         r.group()->playForward();
-        r.frameAt(r.cameraKey(), kNow - 3600, 20'000);                // an hour back: a gap, not the edge
+        // an hour back: a gap, not the edge
+        r.frameAt(r.cameraKey(), kNow - 3600, 20'000);
         QVERIFY(!r.stalledAtEdge(30'000));
     }
     // A failed search (twice) counts as a day with no recordings, but leaves what its month
@@ -749,7 +765,8 @@ private slots:
         QCOMPARE(r.cameraKeys(), (QStringList{"5:0", "1:6", "1:2", "2:2"}));
         QCOMPARE(r.cameraKey(), QStringLiteral("5:0"));   // the lead
         QCOMPARE(rec.askedBy, (QStringList{"5:0", "1:6", "1:2", "2:2"}));   // one each, at once
-        QVERIFY(std::all_of(rec.asked.begin(), rec.asked.end(), [](const QDate &d) { return d == kToday; }));
+        QVERIFY(std::all_of(rec.asked.begin(), rec.asked.end(),
+                            [](const QDate &d) { return d == kToday; }));
     }
     // Leaving: another pane leaves alone; the lead leaving hands the lead on; the last one
     // leaving ends replay.
@@ -830,7 +847,8 @@ private slots:
         r.start(QStringLiteral("5:0"));
         r.join(QStringLiteral("1:6"));
         rec.answerAll();
-        r.setBufferSpans(QStringLiteral("1:6"), QVariantList{QVariantMap{{"start", kNow - 150}, {"end", kNow}}});
+        r.setBufferSpans(QStringLiteral("1:6"),
+                          QVariantList{QVariantMap{{"start", kNow - 150}, {"end", kNow}}});
         QSignalSpy play(&r, &LiveReplay::playWanted);
         QSignalSpy pane(&r, &LiveReplay::paneWanted);
         r.playFrom(kNow - 400, 1);
@@ -866,6 +884,75 @@ private slots:
         QCOMPARE(r.oldest(), at(2026, 11, 15, 0, 30));
         r.dayFound(QStringLiteral("3:0"), 2026, 11, 15, segs({{0, 60}}), {});   // not replaying
         QCOMPARE(r.oldest(), at(2026, 11, 15, 0, 30));
+    }
+    // Every replaying camera searches the day the playhead moves to (not only the lead), so
+    // its pane knows its footage there.
+    void everyCameraSearchesThePlayheadsDay()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.months[202611] = days({14, 15});
+        rec.months[202610] = days({20});   // the oldest scan ends on 20 Oct, not this day
+        rec.months[202609] = days({});
+        rec.book[QDate(2026, 11, 14)] = segs({{3600, 7200}});
+        r.start(QStringLiteral("5:0"));
+        r.join(QStringLiteral("1:6"));
+        rec.answerAll();
+        rec.ever.clear();
+        QStringList by;
+        connect(&r, &LiveReplay::searchWanted, this,
+                [&](const QString &key, int, int, int d) { if (d == 14) by << key; });
+        r.playFrom(at(2026, 11, 14, 1, 30), 1);
+        rec.answerAll();
+        QVERIFY(by.contains(QStringLiteral("5:0")));
+        QVERIFY(by.contains(QStringLiteral("1:6")));
+        QCOMPARE(r.daySegmentsFor(QStringLiteral("1:6")).size(), 1);
+    }
+    // The lead with no footage at the playhead: the next camera in order that has some moves
+    // it (Playback's frameDriverSecs).
+    void anotherCamerasFramesMoveThePlayheadWhereTheLeadHasNone()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.book[kToday] = segs({{3600, 7200}});
+        r.start(QStringLiteral("5:0"));
+        r.join(QStringLiteral("1:6"));
+        rec.answerAll();
+        r.dayFound(QStringLiteral("1:6"), 2026, 11, 15, segs({{3600, 7200}, {28800, 32400}}), {});
+        r.playFrom(at(2026, 11, 15, 1, 30), 1);
+        r.frameAt(QStringLiteral("1:6"), at(2026, 11, 15, 1, 31), 0);   // the lead covers: ignored
+        QCOMPARE(r.playhead(), at(2026, 11, 15, 1, 30));
+        QVERIFY(r.setLead(QStringLiteral("1:6")));
+        r.playFrom(at(2026, 11, 15, 8, 30), 1);                          // 1:6's footage only
+        QVERIFY(r.setLead(QStringLiteral("5:0")));                       // a lead with none here
+        r.frameAt(QStringLiteral("1:6"), at(2026, 11, 15, 8, 31), 0);
+        QCOMPARE(r.playhead(), at(2026, 11, 15, 8, 31));
+    }
+    // A play waiting for the lead's search, when the lead changes or leaves: retried under the
+    // new lead, not dropped.
+    void aWaitingPlayIsRetriedUnderTheNewLead()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.months[202611] = days({13, 15});
+        rec.months[202610] = days({20});   // the oldest scan ends on 20 Oct, not this day
+        rec.months[202609] = days({});
+        rec.book[kToday] = segs({{3600, 7200}});
+        r.start(QStringLiteral("5:0"));
+        r.join(QStringLiteral("1:6"));
+        rec.answerAll();
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.playFrom(at(2026, 11, 13, 1, 30), 1);                  // the 13th: a search for 5:0
+        QCOMPARE(play.count(), 0);
+        // 1:6 leads: its search, then plays
+        r.leave(QStringLiteral("5:0"));
+        rec.book[QDate(2026, 11, 13)] = segs({{3600, 7200}});
+        rec.answerAll();
+        QCOMPARE(play.count(), 1);
+        QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 13, 1, 30));
     }
 };
 

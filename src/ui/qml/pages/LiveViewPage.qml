@@ -226,7 +226,7 @@ Item {
         // Each replaying camera searches its own recorder (ticket 15a).
         onSearchWanted: (key, y, m, d) => {
             var row = page.rowsByKey()[key];
-            if (row === undefined) { liveReplay.stop(); return; }
+            if (row === undefined) { liveReplay.leave(key); return; }   // that camera is gone
             Devices.searchReplayDay(row, y, m, d);
         }
     }

@@ -92,7 +92,7 @@ QList<LiveReplay::Span> LiveReplay::spansOn(const Book &b, const QDate &day) con
 
 QVariantList LiveReplay::daySegments() const
 {
-    return daySegmentsFor(m_key);
+    return daySegmentsFor(m_lead);
 }
 
 QVariantList LiveReplay::daySegmentsFor(const QString &key) const
@@ -190,29 +190,29 @@ void LiveReplay::reset()
 
 void LiveReplay::start(const QString &cameraKey)
 {
-    if (cameraKey.isEmpty() || cameraKey == m_key)
+    if (cameraKey.isEmpty() || cameraKey == m_lead)
         return;
-    if (m_key.isEmpty())
+    if (m_lead.isEmpty())
         reset();
     else
         stop();   // another pane was replaying: it goes back to live first (stop resets)
-    m_key = cameraKey;
+    m_lead = cameraKey;
     m_keys = {cameraKey};
     const QDate today = dayOf(m_now);
-    m_books[m_key].scanMonth = monthId(today);
+    m_books[m_lead].scanMonth = monthId(today);   // its book, made here
     setPlayhead(m_now, today);
-    qCInfo(lcUi).noquote() << "live replay" << m_key << "from now";
+    qCInfo(lcUi).noquote() << "live replay" << m_lead << "from now";
     emit replayingChanged();
     emit recordingsChanged();
-    want(m_key, today, true);
+    want(m_lead, today, true);
 }
 
 void LiveReplay::stop()
 {
-    if (m_key.isEmpty())
+    if (m_lead.isEmpty())
         return;
     qCInfo(lcUi).noquote() << "live replay" << m_keys.join(QLatin1Char(' ')) << "back to live";
-    m_key.clear();
+    m_lead.clear();
     m_keys.clear();
     // The pane lets its recording go before the group turns back to forwards (reset): a turn
     // while it still replays would open a forward recorder stream as it closes (ticket 08d).
@@ -230,7 +230,7 @@ bool LiveReplay::join(const QString &cameraKey)
     const QDate today = dayOf(m_now);
     Book &b = m_books[cameraKey];
     b.scanMonth = monthId(today);
-    qCInfo(lcUi).noquote() << "live replay" << cameraKey << "joins" << m_key;
+    qCInfo(lcUi).noquote() << "live replay" << cameraKey << "joins" << m_lead;
     emit replayingChanged();
     emit recordingsChanged();
     want(cameraKey, m_day.isValid() ? m_day : today, true);   // the playhead's day first
@@ -249,26 +249,49 @@ void LiveReplay::leave(const QString &cameraKey)
     qCInfo(lcUi).noquote() << "live replay" << cameraKey << "back to live";
     m_keys.removeAll(cameraKey);
     m_books.remove(cameraKey);
-    if (cameraKey == m_key) {
-        m_key = m_keys.first();
-        m_pending = Pending::None;   // a play waiting on the old lead's search
-    }
+    const bool leadLeft = cameraKey == m_lead;
+    if (leadLeft)
+        m_lead = m_keys.first();
     emit replayingChanged();
     emit dayChanged();
     emit recordingsChanged();
+    if (leadLeft)
+        leadChanged();
 }
 
 bool LiveReplay::setLead(const QString &cameraKey)
 {
     if (!m_books.contains(cameraKey))
         return false;
-    if (cameraKey != m_key) {
-        m_key = cameraKey;
-        m_pending = Pending::None;
+    if (cameraKey != m_lead) {
+        m_lead = cameraKey;
         emit replayingChanged();
         emit dayChanged();
+        leadChanged();
     }
     return true;
+}
+
+// A new lead: its footage and frames decide from here. A play or carry-on still waiting is
+// asked again under it (a handover, not a drop); the stall clock and carry-on memory start
+// afresh.
+void LiveReplay::leadChanged()
+{
+    m_lastCarry = -1;
+    opened(m_lead);
+    retryPending();
+}
+
+// Whose frames move the playhead: the lead's, or where it has no footage at the playhead,
+// the first replaying camera that has (Playback's frameDriverSecs).
+QString LiveReplay::frameDriver() const
+{
+    if (covers(m_lead, m_playhead))
+        return m_lead;
+    for (const QString &k : m_keys)
+        if (k != m_lead && covers(k, m_playhead))
+            return k;
+    return m_lead;
 }
 
 void LiveReplay::want(const QString &key, const QDate &day, bool urgent)
@@ -335,7 +358,7 @@ void LiveReplay::dayFound(const QString &key, int year, int month, int day,
 
 void LiveReplay::storeDay(const QString &key, const QDate &d, const QList<Span> &spans)
 {
-    Book &b = m_books[key];
+    Book &b = book(key);
     QList<Span> sorted = spans;
     std::sort(sorted.begin(), sorted.end(), [](const Span &a, const Span &b) { return a.start < b.start; });
     b.days.insert(d, sorted);
@@ -375,7 +398,7 @@ void LiveReplay::dayFailed(const QString &key, int year, int month, int day)
 // month with any, searched for its first recording.
 void LiveReplay::advanceScan(const QString &key)
 {
-    Book &b = m_books[key];
+    Book &b = book(key);
     if (b.oldestFound || b.scanMonth == 0)
         return;
     if (b.oldestDay.isValid()) {
@@ -418,7 +441,7 @@ bool LiveReplay::mayHave(const Book &b, const QDate &day) const
 
 double LiveReplay::previousEnd(const QString &key, double epoch, QDate *day)
 {
-    const Book &b = m_books[key];
+    const Book &b = book(key);
     // The live buffer's runs are footage too (ticket 08b): an older run before a break.
     double buffered = kNone;
     for (const Span &s : b.buffer)
@@ -452,7 +475,7 @@ double LiveReplay::previousEnd(const QString &key, double epoch, QDate *day)
 
 double LiveReplay::nextStart(const QString &key, double epoch, QDate *day)
 {
-    const Book &b = m_books[key];
+    const Book &b = book(key);
     const QDate today = dayOf(m_now);
     for (QDate d = dayOf(epoch); d.isValid() && d <= today; d = d.addDays(1)) {
         if (b.known(d)) {
@@ -517,7 +540,7 @@ bool LiveReplay::inBufferOf(const Book &b, double epoch)
 
 bool LiveReplay::covered(double epoch) const
 {
-    return covers(m_key, epoch);
+    return covers(m_lead, epoch);
 }
 
 bool LiveReplay::covers(const QString &key, double epoch) const
@@ -570,7 +593,7 @@ void LiveReplay::resolve(double epoch, int direction, Ahead ahead)
         m_pendingAhead = ahead;
     };
     if (!b.known(d) && mayHave(b, d)) {
-        want(m_key, d, true);
+        want(m_lead, d, true);
         wait();
         return;
     }
@@ -579,7 +602,7 @@ void LiveReplay::resolve(double epoch, int direction, Ahead ahead)
         return;
     }
     QDate at;
-    double r = direction > 0 ? nextStart(m_key, epoch, &at) : previousEnd(m_key, epoch, &at);
+    double r = direction > 0 ? nextStart(m_lead, epoch, &at) : previousEnd(m_lead, epoch, &at);
     if (r == kPending) {
         wait();
         return;
@@ -591,7 +614,7 @@ void LiveReplay::resolve(double epoch, int direction, Ahead ahead)
             return;
         }
         // Nothing ahead before now: the newest footage's last 10 s.
-        r = previousEnd(m_key, epoch, &at);
+        r = previousEnd(m_lead, epoch, &at);
         if (r == kPending) {
             wait();
             return;
@@ -609,13 +632,13 @@ void LiveReplay::resolve(double epoch, int direction, Ahead ahead)
 
 bool LiveReplay::liveOrRefresh(Pending retry)
 {
-    Book &b = m_books[m_key];
+    Book &b = book(m_lead);
     const QDate today = dayOf(m_now);
     if (b.todayAnswered >= 0 && m_now - b.todayAnswered > 20) {
         b.days.remove(today);
         b.todayAnswered = -1;
         m_pending = retry;
-        want(m_key, today, true);
+        want(m_lead, today, true);
         return false;
     }
     stop();                     // the newest footage: back to live
@@ -626,7 +649,7 @@ void LiveReplay::carryOn(const QString &key, int direction)
 {
     // The lead camera's stream running out moves every pane; another's waits for the
     // playhead to reach its footage again (ticket 15a, as Playback).
-    if (!replaying() || key != m_key)
+    if (!replaying() || key != m_lead)
         return;
     const Book &b = leadBook();
     m_pending = Pending::None;
@@ -653,7 +676,8 @@ void LiveReplay::carryOn(const QString &key, int direction)
         return;
     }
     QDate at;
-    const double r = direction > 0 ? nextStart(m_key, m_playhead, &at) : previousEnd(m_key, m_playhead, &at);
+    const double r = direction > 0 ? nextStart(m_lead, m_playhead, &at)
+                                   : previousEnd(m_lead, m_playhead, &at);
     if (r == kPending) {
         m_pending = Pending::CarryOn;
         m_pendingDirection = direction;
@@ -680,7 +704,7 @@ void LiveReplay::retryPending()
     if (p == Pending::Play)
         resolve(m_pendingEpoch, m_pendingDirection, m_pendingAhead);
     else if (p == Pending::CarryOn)
-        carryOn(m_key, m_pendingDirection);
+        carryOn(m_lead, m_pendingDirection);
 }
 
 void LiveReplay::land(double epoch, const QDate &day)
@@ -693,7 +717,7 @@ void LiveReplay::land(double epoch, const QDate &day)
     m_pending = Pending::None;
     for (Book &b : m_books)   // every pane opens there: in its buffer or its recorder
         b.landedInBuffer = inBufferOf(b, epoch);
-    opened(m_key);
+    opened(m_lead);
     setPlayhead(epoch, day);
     emit playWanted(epoch);
 }
@@ -707,6 +731,11 @@ void LiveReplay::setPlayhead(double epoch, const QDate &day)
     }
     if (day != m_day) {
         m_day = day;
+        // Every replaying camera learns its footage on the playhead's day (its pane shows it
+        // or "No recording here"); the lead's own search is asked for where it plays.
+        for (const QString &k : std::as_const(m_keys))
+            if (k != m_lead)
+                want(k, day, true);
         emit dayChanged();
     }
 }
@@ -723,15 +752,14 @@ void LiveReplay::frameAt(const QString &key, double epoch, double wallMs)
     if (m_group->direction() > 0 && !b.landedInBuffer && inBufferOf(b, epoch)) {
         b.landedInBuffer = true;
         qCInfo(lcUi).noquote() << "live replay" << key << "into its live buffer";
-        if (key == m_key) {
-            opened(m_key);
+        if (key == m_lead) {
+            opened(m_lead);
             setPlayhead(epoch, dayOf(epoch));
         }
         emit paneWanted(key, epoch);
         return;
     }
-    // Only the lead camera's frames move the playhead (Playback's rule).
-    if (key != m_key)
+    if (key != frameDriver())
         return;
     if (epoch != m_lastFrame) {
         m_lastFrame = epoch;
@@ -745,7 +773,7 @@ void LiveReplay::frameAt(const QString &key, double epoch, double wallMs)
 
 void LiveReplay::opened(const QString &key)
 {
-    if (key != m_key)
+    if (key != m_lead)
         return;
     m_lastFrame = -1;
     m_lastMoveWall = -1;

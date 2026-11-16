@@ -268,7 +268,7 @@ Item {
         target: pane
         function onLoaded() {
             if (!root.replay.paused && root.replay.daySegmentsFor(root.cameraKey).length > 0
-                    && root.replay.covered(root.replay.playhead))
+                    && root.replay.covers(root.cameraKey, root.replay.playhead))
                 pane.item.playAtSecs(root.replay.playhead - root.replay.dayEpoch, root.replay.playhead);
         }
     }

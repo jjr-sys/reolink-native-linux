@@ -11,18 +11,22 @@
 
 namespace rl {
 
-// Live replay (wayfinder/live-replay ticket 07): one Live View pane at a time steps back from
-// now into its recorder camera's footage and plays it with Playback's controls, across days,
-// as far back as storage holds; "● Live" (or reaching the newest footage going forwards)
-// returns it to live. The pane plays through Playback's pane; this holds what is worth testing
-// apart from it:
+// Live replay (wayfinder/live-replay ticket 07): a Live View pane steps back from now into its
+// recorder camera's footage and plays it with Playback's controls, across days, as far back as
+// storage holds; "● Live" (or reaching the newest footage going forwards) returns it to live.
+// Up to four panes replay in step (ticket 15): one playhead, one speed, led by one camera, as
+// Playback's panes are. Each pane plays through Playback's pane; this holds what is worth
+// testing apart from it:
 //
-//  - Which camera replays (start / stop) and its speed and direction (group: Playback's ladder).
+//  - Which cameras replay (start / join / leave / stop), which one leads (setLead: its footage
+//    decides where a play lands and carries on, its frames move the playhead — or, where it has
+//    none, the next camera's), and the speed and direction (group: Playback's ladder).
 //  - The playhead (epoch seconds; frame times move it) and its day: the day's recordings in
 //    seconds into the day, as Playback's pane takes them.
-//  - The camera's recordings, searched a day at a time as needed (searchWanted → dayFound, one
-//    at a time), and its oldest recording, found month by month backwards from today until a
-//    month with none (each day's search also answers which days of its month have footage).
+//  - Each camera's recordings, searched a day at a time as needed (searchWanted → dayFound, one
+//    at a time per camera), and its oldest recording, found month by month backwards from today
+//    until a month with none (each day's search also answers which days of its month have
+//    footage).
 //  - Where a play lands (playFrom), and where a stream that ended carries on (carryOn):
 //    across days; nothing earlier than the oldest; forwards with nothing ahead, back to live.
 //  - The "time behind live" slider's stretched scale and the strip of known recordings on it.
@@ -49,8 +53,8 @@ class LiveReplay : public QObject
 public:
     explicit LiveReplay(QObject *parent = nullptr);
 
-    bool replaying() const { return !m_key.isEmpty(); }
-    QString cameraKey() const { return m_key; }
+    bool replaying() const { return !m_lead.isEmpty(); }
+    QString cameraKey() const { return m_lead; }
     QStringList cameraKeys() const { return m_keys; }
     static constexpr int kMaxCameras = 4;
     double now() const { return m_now; }
@@ -61,7 +65,8 @@ public:
     void setPaused(bool paused);
     double dayEpoch() const;
     QVariantList daySegments() const;
-    // The oldest recording's start (epoch seconds): found, or the oldest known so far; -1 none.
+    // The oldest recording's start any camera has (epoch seconds): found, or the oldest known so
+    // far; -1 none.
     double oldest() const;
     bool oldestFound() const;   // every camera's oldest found
     // Known recordings as slider spans {from, to} (0 = now … 1 = the oldest), oldest last.
@@ -178,14 +183,22 @@ private:
         bool landedInBuffer = false;     // its pane's last play opened in its buffer
         bool known(const QDate &day) const { return days.contains(day); }
     };
+    // A replaying camera's book (never makes one: callers hold a camera that replays).
+    Book &book(const QString &key)
+    {
+        Q_ASSERT(m_books.contains(key));
+        return m_books[key];
+    }
     const Book &leadBook() const
     {
         static const Book none;
-        const auto it = m_books.constFind(m_key);
+        const auto it = m_books.constFind(m_lead);
         return it == m_books.cend() ? none : it.value();
     }
     static double oldestOf(const Book &b);
     static bool inBufferOf(const Book &b, double epoch);
+    void leadChanged();
+    QString frameDriver() const;
 
     void reset();
     void want(const QString &key, const QDate &day, bool urgent);
@@ -211,11 +224,12 @@ private:
     double oldestBehind() const;
 
     PlaybackGroup *m_group;
-    QString m_key;
+    QString m_lead;
     double m_now = 0;
     double m_stripNow = 0;             // now when the strip was last announced
     double m_playhead = 0;
-    QDate m_day;                       // the playhead's day (a recording's end at midnight is its day's)
+    // the playhead's day (a recording's end at midnight is its day's)
+    QDate m_day;
     bool m_paused = false;
 
     QHash<QString, Book> m_books;      // the replaying cameras'
