@@ -1831,6 +1831,7 @@ void StreamPlayer::setSource(const QString &source)
     m_pendingReader = nullptr; // URL source supersedes any packet source
     m_pendingFormat.clear();
     m_pendingStop = nullptr;
+    m_pendingSeek = nullptr;
     m_pendingPresentationDelayMs = 0;
     m_source = source;
     emit sourceChanged();
@@ -1846,15 +1847,21 @@ void StreamPlayer::setExpectedSize(const QSize &size)
 
 void StreamPlayer::setPacketSource(std::function<int(unsigned char *, int)> reader,
                                    const QString &format, std::function<void()> onStop,
-                                   int presentationDelayMs)
+                                   int presentationDelayMs, std::function<bool(qint64)> onSeek)
 {
     stop();
     m_pendingReader = std::move(reader);
     m_pendingFormat = format;
     m_pendingStop = std::move(onStop);
+    m_pendingSeek = std::move(onSeek);
     m_pendingPresentationDelayMs = qMax(0, presentationDelayMs);
     m_source.clear();
     emit sourceChanged();
+}
+
+bool StreamPlayer::seekSource(qint64 epoch)
+{
+    return m_session && m_activeSeek && m_activeSeek(epoch);
 }
 
 QVideoSink *StreamPlayer::videoSink() const
@@ -1978,6 +1985,8 @@ void StreamPlayer::start()
     // stop() above (which tears down the previous session) doesn't kill this source.
     m_activeStop = std::move(m_pendingStop);
     m_pendingStop = nullptr;
+    m_activeSeek = std::move(m_pendingSeek);
+    m_pendingSeek = nullptr;
     applyState(State::Connecting, QString());
     std::thread(runWorker, s).detach();
 }
@@ -1987,6 +1996,7 @@ void StreamPlayer::stop()
     // Unblock and tear down the running session's custom packet source (native
     // Baichuan). Its read() may be blocking the decode worker; this wakes it so
     // avformat unwinds. The pending (not-yet-started) source is left untouched.
+    m_activeSeek = nullptr; // a stopped source is never moved
     if (m_activeStop) {
         m_activeStop();
         m_activeStop = nullptr;

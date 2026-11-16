@@ -195,10 +195,16 @@ public:
     // Drive playback from a blocking packet callback (native Baichuan) instead of a
     // URL. `reader` fills a buffer with elementary-stream bytes (returns count, 0/EOF
     // to end); `format` is the demuxer ("h264"/"hevc"); `onStop` is invoked on
-    // stop()/destruction to unblock and tear down the source. Set before start();
+    // stop()/destruction to unblock and tear down the source; `onSeek` (optional) moves a
+    // recorded source to another moment in place (see seekSource). Set before start();
     // cleared by setSource(). Not a QML API.
     void setPacketSource(std::function<int(unsigned char *, int)> reader, const QString &format,
-                         std::function<void()> onStop, int presentationDelayMs = 0);
+                         std::function<void()> onStop, int presentationDelayMs = 0,
+                         std::function<bool(qint64)> onSeek = {});
+    // Move the running packet source to `epoch` without reopening: false when nothing is
+    // running, the source can't seek (live, the live buffer, a URL) or the seek failed —
+    // the caller reopens instead. Each player seeks only its own source.
+    bool seekSource(qint64 epoch);
 
     QVideoSink *videoSink() const;
     void setVideoSink(QVideoSink *sink);
@@ -333,6 +339,8 @@ private:
     std::function<void()> m_pendingStop; // teardown for the not-yet-started source
     int m_pendingPresentationDelayMs = 0;
     std::function<void()> m_activeStop;  // teardown for the running session's source
+    std::function<bool(qint64)> m_pendingSeek; // in-place seek for the not-yet-started source
+    std::function<bool(qint64)> m_activeSeek;  // in-place seek for the running session's source
     bool m_loop = false;
 
     State m_state = State::Idle;

@@ -282,10 +282,6 @@ public:
     bool liveBufferHas(int row, qint64 epochMs, int direction) const;
     Q_INVOKABLE QVariantList liveBufferSpans(int row) const;
     void startLiveBufferPlayback(int row, qint64 epochMs, int direction, StreamPlayer *player);
-    // Seek the active Baichuan playback (same row) to a new instant in place — no
-    // reconnect. Returns false if there's no live session for `row` (caller should
-    // then startBaichuanPlayback instead).
-    Q_INVOKABLE bool seekBaichuanPlayback(int row, qint64 startEpoch);
 
     // Two-way talk: open a Baichuan talk session to this camera's speaker and start
     // streaming the microphone into it. `session` reports progress (Connecting ->
@@ -509,11 +505,6 @@ private:
     void markHostUnreachable(qint64 hostId, const QString &hostName);
     bool m_pushWarmed = false;      // one-time warm of the push cache after priming
 
-
-    // The in-flight Baichuan playback session, so a scrub can seek it in place.
-    // Weak: the StreamPlayer owns the client's lifetime.
-    std::weak_ptr<BaichuanClient> m_playbackClient;
-    int m_playbackRow = -1;
 };
 
 } // namespace rl

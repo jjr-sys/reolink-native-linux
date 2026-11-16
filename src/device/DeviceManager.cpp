@@ -1707,10 +1707,6 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
         });
     }
     client->start();
-    if (startEpoch > 0) {
-        m_playbackClient = client; // weak — for in-place seek; StreamPlayer owns lifetime
-        m_playbackRow = row;
-    }
     // The sub stream is always H.264; the main stream's codec is per-channel.
     // An UNKNOWN main codec (firmware omitted/mangled GetEnc vType — issue #4)
     // passes an empty format so avformat probes the stream instead: forcing
@@ -1728,7 +1724,10 @@ void DeviceManager::startBaichuan(int row, qint64 startEpoch, StreamPlayer *play
         [client](unsigned char *buf, int size) { return client->read(buf, size); },
         format,
         [client] { client->stop(); },
-        smoothLive ? int(BcLiveFramePacer::kDelayUs / 1000) : 0);
+        smoothLive ? int(BcLiveFramePacer::kDelayUs / 1000) : 0,
+        // Recorded footage moves in place on this pane's own stream (StreamPlayer::seekSource).
+        startEpoch > 0 ? std::function<bool(qint64)>([client](qint64 epoch) { return client->seek(epoch); })
+                       : std::function<bool(qint64)>());
     player->start();
 }
 
@@ -1839,14 +1838,6 @@ std::shared_ptr<LiveBuffer> DeviceManager::findLiveBuffer(int row) const
         return {};
     const Entry &e = m_entries.at(row);
     return m_liveBuffers->find(liveBufferKey(e.rec.id, e.channel));
-}
-
-bool DeviceManager::seekBaichuanPlayback(int row, qint64 startEpoch)
-{
-    if (row != m_playbackRow)
-        return false;
-    auto client = m_playbackClient.lock();
-    return client && client->seek(startEpoch);
 }
 
 void DeviceManager::fetchSettings(int row, const QStringList &getCommands)

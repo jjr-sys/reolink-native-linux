@@ -23,10 +23,8 @@ public:
     {
         return devices ? devices->playbackUrl(row, epoch, false) : QString();
     }
-    bool seekInPlace(int row, qint64 epoch) override
-    {
-        return devices && devices->seekBaichuanPlayback(row, epoch);
-    }
+    // This pane's own stream (each pane's session has its own player).
+    bool seekInPlace(int, qint64 epoch) override { return player && player->seekSource(epoch); }
     void openHttp(int row, qint64, const QString &url) override
     {
         if (!devices || !player)

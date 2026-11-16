@@ -131,6 +131,44 @@ class TestLiveStream : public QObject
 {
     Q_OBJECT
 private slots:
+    // Seek in place (architecture review #2, 3a): each player seeks its own running source.
+    // Playback starts every pane in turn, so a seek kept anywhere but on the stream itself
+    // belonged to the last pane opened and every other pane reconnected on each scrub.
+    void seekGoesToThisPlayersOwnSource()
+    {
+        auto blocked = [](StreamPlayer &p, std::function<bool(qint64)> onSeek) {
+            auto gate = std::make_shared<std::pair<std::mutex, std::condition_variable>>();
+            auto stopped = std::make_shared<bool>(false);
+            p.setPacketSource([gate, stopped](unsigned char *, int) {
+                std::unique_lock lock(gate->first);
+                gate->second.wait(lock, [&] { return *stopped; });
+                return 0;
+            }, "h264", [gate, stopped] {
+                std::lock_guard lock(gate->first);
+                *stopped = true;
+                gate->second.notify_all();
+            }, 0, std::move(onSeek));
+        };
+        StreamPlayer a, b, none;
+        QList<qint64> seenA, seenB;
+        blocked(a, [&seenA](qint64 e) { seenA << e; return true; });
+        blocked(b, [&seenB](qint64 e) { seenB << e; return true; });
+        blocked(none, {});
+        QVERIFY(!a.seekSource(100));   // not started: nothing running to seek
+        a.start();
+        b.start();
+        none.start();
+        QVERIFY(a.seekSource(1000));
+        QVERIFY(b.seekSource(2000));
+        QVERIFY(!none.seekSource(3000)); // a source without seek (live, the live buffer)
+        QCOMPARE(seenA, QList<qint64>{1000});
+        QCOMPARE(seenB, QList<qint64>{2000});
+        a.stop();
+        QVERIFY(!a.seekSource(1500));    // stopped: reopen instead
+        QCOMPARE(seenA, QList<qint64>{1000});
+        a.setSource(QStringLiteral("rtsp://local/x")); // a URL source never seeks
+        QVERIFY(!a.seekSource(1600));
+    }
     void directAndFrigateMainUseUrl_data()
     {
         QTest::addColumn<QString>("url");
