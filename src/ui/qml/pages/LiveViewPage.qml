@@ -223,23 +223,21 @@ Item {
     // page carries its searches to the device and keeps its clock.
     LiveReplay {
         id: liveReplay
-        onSearchWanted: (y, m, d) => {
-            var row = page.replayRow();
-            if (row < 0) { liveReplay.stop(); return; }
+        // Each replaying camera searches its own recorder (ticket 15a).
+        onSearchWanted: (key, y, m, d) => {
+            var row = page.rowsByKey()[key];
+            if (row === undefined) { liveReplay.stop(); return; }
             Devices.searchReplayDay(row, y, m, d);
         }
     }
-    function replayRow() {
-        var r = rowsByKey()[liveReplay.cameraKey];
-        return r === undefined ? -1 : r;
-    }
     Connections {
         target: Devices
+        // Answers for cameras not replaying are ignored by LiveReplay.
         function onReplayDayFound(row, y, m, d, segments, monthDays) {
-            if (row === page.replayRow()) liveReplay.dayFound(y, m, d, segments, monthDays);
+            liveReplay.dayFound(page.cameraKey(row), y, m, d, segments, monthDays);
         }
         function onReplayDayFailed(row, y, m, d) {
-            if (row === page.replayRow()) liveReplay.dayFailed(y, m, d);
+            liveReplay.dayFailed(page.cameraKey(row), y, m, d);
         }
     }
     Timer {
@@ -250,7 +248,7 @@ Item {
         onTriggered: {
             liveReplay.now = Date.now() / 1000;
             // Recorder-paced forwards stalls at the newest footage: on, or back to live.
-            if (liveReplay.stalledAtEdge(Date.now())) liveReplay.carryOn(1);
+            if (liveReplay.stalledAtEdge(Date.now())) liveReplay.carryOn(liveReplay.cameraKey, 1);
         }
     }
     // Leaving Live View returns every pane to live (nothing is kept).

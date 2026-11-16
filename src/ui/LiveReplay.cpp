@@ -73,15 +73,15 @@ double LiveReplay::dayEpoch() const
     return m_day.isValid() ? midnight(m_day) : 0;
 }
 
-QList<LiveReplay::Span> LiveReplay::spansOn(const QDate &day) const
+QList<LiveReplay::Span> LiveReplay::spansOn(const Book &b, const QDate &day) const
 {
     // The day's own, and the next day's that started on it (a file over midnight).
     const double from = midnight(day), to = midnight(day.addDays(1));
-    QList<Span> out = m_days.value(day);
-    for (const Span &s : m_days.value(day.addDays(1)))
+    QList<Span> out = b.days.value(day);
+    for (const Span &s : b.days.value(day.addDays(1)))
         if (s.start < to)
             out.append({s.start, qMin(s.end, to)});
-    for (const Span &s : m_buffer)   // the live buffer counts as footage (ticket 08b)
+    for (const Span &s : b.buffer)   // the live buffer counts as footage (ticket 08b)
         if (s.end >= from && s.start < to)
             out.append({s.start, qMin(s.end, to)});
     for (Span &s : out)
@@ -92,11 +92,18 @@ QList<LiveReplay::Span> LiveReplay::spansOn(const QDate &day) const
 
 QVariantList LiveReplay::daySegments() const
 {
+    return daySegmentsFor(m_key);
+}
+
+QVariantList LiveReplay::daySegmentsFor(const QString &key) const
+{
     QVariantList out;
-    if (!m_day.isValid())
+    const auto it = m_books.constFind(key);
+    if (!m_day.isValid() || it == m_books.cend())
         return out;
+    const Book &b = it.value();
     const double base = dayEpoch();
-    for (const Span &s : spansOn(m_day)) {
+    for (const Span &s : spansOn(b, m_day)) {
         QVariantMap m;
         m["start"] = s.start - base;
         m["end"] = s.end - base;
@@ -108,10 +115,32 @@ QVariantList LiveReplay::daySegments() const
 
 double LiveReplay::oldest() const
 {
-    if (m_oldestFound && m_oldestDay.isValid() && !m_days.value(m_oldestDay).isEmpty())
-        return m_days.value(m_oldestDay).first().start;
+    // The oldest any of the cameras can reach (ticket 15).
     double best = kNone;
-    for (auto it = m_days.cbegin(); it != m_days.cend(); ++it)
+    for (const Book &b : m_books) {
+        const double o = oldestOf(b);
+        if (o >= 0 && (best < 0 || o < best))
+            best = o;
+    }
+    return best;
+}
+
+bool LiveReplay::oldestFound() const
+{
+    if (m_books.isEmpty())
+        return false;
+    for (const Book &b : m_books)
+        if (!b.oldestFound)
+            return false;
+    return true;
+}
+
+double LiveReplay::oldestOf(const Book &b)
+{
+    if (b.oldestFound && b.oldestDay.isValid() && !b.days.value(b.oldestDay).isEmpty())
+        return b.days.value(b.oldestDay).first().start;
+    double best = kNone;
+    for (auto it = b.days.cbegin(); it != b.days.cend(); ++it)
         if (!it.value().isEmpty() && (best < 0 || it.value().first().start < best))
             best = it.value().first().start;
     return best;
@@ -127,9 +156,12 @@ QVariantList LiveReplay::strip() const
 {
     QList<std::pair<double, double>> spans;
     const double ob = oldestBehind();
-    QList<Span> all = m_buffer;
-    for (auto it = m_days.cbegin(); it != m_days.cend(); ++it)
-        all += it.value();
+    QList<Span> all;   // every camera's footage (ticket 15)
+    for (const Book &b : m_books) {
+        all += b.buffer;
+        for (auto it = b.days.cbegin(); it != b.days.cend(); ++it)
+            all += it.value();
+    }
     for (const Span &s : all)
         if (s.start < m_now)
             spans.append({posForBehind(m_now - qMin(s.end, m_now), ob),
@@ -147,18 +179,9 @@ QVariantList LiveReplay::strip() const
 
 void LiveReplay::reset()
 {
-    m_days.clear();
-    m_buffer.clear();
+    m_books.clear();
     m_landedInBuffer = false;
-    m_months.clear();
-    m_failures.clear();
-    m_queue.clear();
-    m_inFlight = QDate();
-    m_oldestFound = false;
-    m_oldestDay = QDate();
-    m_scanMonth = 0;
     m_pending = Pending::None;
-    m_todayAnswered = -1;
     m_lastCarry = -1;
     m_lastFrame = -1;
     m_lastMoveWall = -1;
@@ -176,12 +199,12 @@ void LiveReplay::start(const QString &cameraKey)
         stop();   // another pane was replaying: it goes back to live first (stop resets)
     m_key = cameraKey;
     const QDate today = dayOf(m_now);
-    m_scanMonth = monthId(today);
+    m_books[m_key].scanMonth = monthId(today);
     setPlayhead(m_now, today);
     qCInfo(lcUi).noquote() << "live replay" << m_key << "from now";
     emit replayingChanged();
     emit recordingsChanged();
-    want(today, true);
+    want(m_key, today, true);
 }
 
 void LiveReplay::stop()
@@ -197,39 +220,50 @@ void LiveReplay::stop()
     emit recordingsChanged();
 }
 
-void LiveReplay::want(const QDate &day, bool urgent)
+void LiveReplay::want(const QString &key, const QDate &day, bool urgent)
 {
-    if (!day.isValid() || known(day) || day == m_inFlight)
+    const auto it = m_books.find(key);
+    if (it == m_books.end())
         return;
-    const qsizetype at = m_queue.indexOf(day);
+    Book &b = it.value();
+    if (!day.isValid() || b.known(day) || day == b.inFlight)
+        return;
+    const qsizetype at = b.queue.indexOf(day);
     if (at >= 0) {
         if (urgent && at > 0)
-            m_queue.move(at, 0);
+            b.queue.move(at, 0);
         return;
     }
     if (urgent)
-        m_queue.prepend(day);
+        b.queue.prepend(day);
     else
-        m_queue.append(day);
-    pump();
+        b.queue.append(day);
+    pump(key);
 }
 
-void LiveReplay::pump()
+// One search in flight per camera (different recorders answer in parallel).
+void LiveReplay::pump(const QString &key)
 {
-    if (m_inFlight.isValid() || m_queue.isEmpty() || !replaying())
+    const auto it = m_books.find(key);
+    if (it == m_books.end())
         return;
-    m_inFlight = m_queue.takeFirst();
-    emit searchWanted(m_inFlight.year(), m_inFlight.month(), m_inFlight.day());
+    Book &b = it.value();
+    if (b.inFlight.isValid() || b.queue.isEmpty())
+        return;
+    b.inFlight = b.queue.takeFirst();
+    emit searchWanted(key, b.inFlight.year(), b.inFlight.month(), b.inFlight.day());
 }
 
-void LiveReplay::dayFound(int year, int month, int day, const QVariantList &segments,
-                          const QVariantList &monthDays)
+void LiveReplay::dayFound(const QString &key, int year, int month, int day,
+                          const QVariantList &segments, const QVariantList &monthDays)
 {
     const QDate d(year, month, day);
-    if (!replaying() || !d.isValid())
+    const auto it = m_books.find(key);
+    if (it == m_books.end() || !d.isValid())
         return;
-    if (d == m_inFlight)
-        m_inFlight = QDate();
+    Book &b = it.value();
+    if (d == b.inFlight)
+        b.inFlight = QDate();
     const double base = midnight(d);
     QList<Span> spans;
     for (const QVariant &v : segments) {
@@ -244,148 +278,158 @@ void LiveReplay::dayFound(int year, int month, int day, const QVariantList &segm
     QList<int> ds;
     for (const QVariant &v : monthDays)
         ds << v.toInt();
-    m_months.insert(monthId(d), ds);
-    storeDay(d, spans);
+    b.months.insert(monthId(d), ds);
+    storeDay(key, d, spans);
 }
 
-void LiveReplay::storeDay(const QDate &d, const QList<Span> &spans)
+void LiveReplay::storeDay(const QString &key, const QDate &d, const QList<Span> &spans)
 {
+    Book &b = m_books[key];
     QList<Span> sorted = spans;
     std::sort(sorted.begin(), sorted.end(), [](const Span &a, const Span &b) { return a.start < b.start; });
-    m_days.insert(d, sorted);
+    b.days.insert(d, sorted);
     if (d == dayOf(m_now))
-        m_todayAnswered = m_now;
-    advanceScan();
+        b.todayAnswered = m_now;
+    advanceScan(key);
     if (d == m_day || d == m_day.addDays(1))
         emit dayChanged();
     emit recordingsChanged();
     retryPending();
-    pump();
+    pump(key);
 }
 
-void LiveReplay::dayFailed(int year, int month, int day)
+void LiveReplay::dayFailed(const QString &key, int year, int month, int day)
 {
     const QDate d(year, month, day);
-    if (!replaying() || !d.isValid())
+    const auto it = m_books.find(key);
+    if (it == m_books.end() || !d.isValid())
         return;
-    if (d == m_inFlight)
-        m_inFlight = QDate();
+    Book &b = it.value();
+    if (d == b.inFlight)
+        b.inFlight = QDate();
     // Asked once more; a second failure counts as no recordings that day, so replay moves on
     // (what its month is known to have stays).
-    if (++m_failures[d] < 2) {
-        m_queue.append(d);
-        pump();
+    if (++b.failures[d] < 2) {
+        b.queue.append(d);
+        pump(key);
         return;
     }
     qCWarning(lcUi).noquote() << "live replay: the search for" << d.toString(Qt::ISODate)
                               << "failed twice; taken as no recordings";
-    storeDay(d, {});
+    storeDay(key, d, {});
 }
 
 // The oldest recording: month by month backwards from today's (each day's search answers its
 // month's days) until a month with none; the oldest is then the earliest day of the earliest
 // month with any, searched for its first recording.
-void LiveReplay::advanceScan()
+void LiveReplay::advanceScan(const QString &key)
 {
-    if (m_oldestFound || m_scanMonth == 0)
+    Book &b = m_books[key];
+    if (b.oldestFound || b.scanMonth == 0)
         return;
-    if (m_oldestDay.isValid()) {
-        m_oldestFound = known(m_oldestDay);
+    if (b.oldestDay.isValid()) {
+        b.oldestFound = b.known(b.oldestDay);
         return;
     }
     const QDate today = dayOf(m_now);
-    for (int guard = 0; guard < 120 && m_months.contains(m_scanMonth); ++guard) {
-        const QDate first(m_scanMonth / 100, m_scanMonth % 100, 1);
-        if (m_months.value(m_scanMonth).isEmpty()) {
+    for (int guard = 0; guard < 120 && b.months.contains(b.scanMonth); ++guard) {
+        const QDate first(b.scanMonth / 100, b.scanMonth % 100, 1);
+        if (b.months.value(b.scanMonth).isEmpty()) {
             const QDate earliest = first.addMonths(1);
-            if (monthId(earliest) > monthId(today) || m_months.value(monthId(earliest)).isEmpty()) {
+            if (monthId(earliest) > monthId(today) || b.months.value(monthId(earliest)).isEmpty()) {
                 // No month with recordings: the oldest known day stands in.
-                m_oldestFound = true;
-                const double o = oldest();
-                m_oldestDay = o >= 0 ? dayOf(o) : QDate();
+                b.oldestFound = true;
+                const double o = oldestOf(b);
+                b.oldestDay = o >= 0 ? dayOf(o) : QDate();
                 return;
             }
-            const QList<int> ds = m_months.value(monthId(earliest));
-            m_oldestDay = QDate(earliest.year(), earliest.month(), *std::min_element(ds.begin(), ds.end()));
-            m_oldestFound = known(m_oldestDay);
-            want(m_oldestDay, false);
+            const QList<int> ds = b.months.value(monthId(earliest));
+            b.oldestDay = QDate(earliest.year(), earliest.month(), *std::min_element(ds.begin(), ds.end()));
+            b.oldestFound = b.known(b.oldestDay);
+            want(key, b.oldestDay, false);
             return;
         }
-        m_scanMonth = monthId(first.addMonths(-1));
+        b.scanMonth = monthId(first.addMonths(-1));
     }
-    if (!m_months.contains(m_scanMonth))
-        want(QDate(m_scanMonth / 100, m_scanMonth % 100, 1), false);
+    if (!b.months.contains(b.scanMonth))
+        want(key, QDate(b.scanMonth / 100, b.scanMonth % 100, 1), false);
 }
 
-bool LiveReplay::mayHave(const QDate &day) const
+bool LiveReplay::mayHave(const Book &b, const QDate &day) const
 {
     if (day > dayOf(m_now))
         return false;
-    if (m_oldestFound && m_oldestDay.isValid() && day < m_oldestDay)
+    if (b.oldestFound && b.oldestDay.isValid() && day < b.oldestDay)
         return false;
-    const auto it = m_months.constFind(monthId(day));
-    return it == m_months.cend() || it.value().contains(day.day());
+    const auto it = b.months.constFind(monthId(day));
+    return it == b.months.cend() || it.value().contains(day.day());
 }
 
-double LiveReplay::previousEnd(double epoch, QDate *day)
+double LiveReplay::previousEnd(const QString &key, double epoch, QDate *day)
 {
+    const Book &b = m_books[key];
     // The live buffer's runs are footage too (ticket 08b): an older run before a break.
     double buffered = kNone;
-    for (const Span &s : m_buffer)
+    for (const Span &s : b.buffer)
         if (s.end < epoch - 0.5 && s.end > buffered)
             buffered = s.end;
     QDate d = dayOf(epoch);
     for (int guard = 0; guard < 4000 && d.isValid(); ++guard, d = d.addDays(-1)) {
         const bool bufferedToday = buffered >= 0 && dayOf(buffered) == d;
-        if (bufferedToday && !known(d)) {   // no need to wait for the day's search
+        if (bufferedToday && !b.known(d)) {   // no need to wait for the day's search
             *day = d;
             return buffered;
         }
-        if (m_oldestFound && (!m_oldestDay.isValid() || d < m_oldestDay))
+        if (b.oldestFound && (!b.oldestDay.isValid() || d < b.oldestDay))
             return kNone;
-        if (known(d)) {
+        if (b.known(d)) {
             double best = bufferedToday ? buffered : kNone;
-            for (const Span &s : m_days.value(d))
+            for (const Span &s : b.days.value(d))
                 if (s.end < epoch - 0.5 && s.end > best)
                     best = s.end;
             if (best >= 0) {
                 *day = dayOf(best - 0.001);   // an end at midnight is its own day's
                 return best;
             }
-        } else if (mayHave(d)) {
-            want(d, true);
+        } else if (mayHave(b, d)) {
+            want(key, d, true);
             return kPending;
         }
     }
     return kNone;
 }
 
-double LiveReplay::nextStart(double epoch, QDate *day)
+double LiveReplay::nextStart(const QString &key, double epoch, QDate *day)
 {
+    const Book &b = m_books[key];
     const QDate today = dayOf(m_now);
     for (QDate d = dayOf(epoch); d.isValid() && d <= today; d = d.addDays(1)) {
-        if (known(d)) {
+        if (b.known(d)) {
             double best = kNone;
-            for (const Span &s : m_days.value(d))
+            for (const Span &s : b.days.value(d))
                 if (s.start > epoch + 0.5 && s.start < m_now && (best < 0 || s.start < best))
                     best = s.start;
-            for (const Span &s : m_buffer)   // the live buffer is footage too (ticket 08b)
+            for (const Span &s : b.buffer)   // the live buffer is footage too (ticket 08b)
                 if (dayOf(s.start) == d && s.start > epoch + 0.5 && (best < 0 || s.start < best))
                     best = s.start;
             if (best >= 0) {
                 *day = dayOf(best);           // a file over midnight starts the day before
                 return best;
             }
-        } else if (mayHave(d)) {
-            want(d, true);
+        } else if (mayHave(b, d)) {
+            want(key, d, true);
             return kPending;
         }
     }
     return kNone;
 }
 
-void LiveReplay::setBufferSpans(const QVariantList &spans)
+void LiveReplay::setBufferSpans(const QString &key, const QVariantList &spans)
 {
+    const auto it = m_books.find(key);
+    if (it == m_books.end())
+        return;
+    Book &b = it.value();
     QList<Span> next;
     for (const QVariant &v : spans) {
         const QVariantMap m = v.toMap();
@@ -396,11 +440,11 @@ void LiveReplay::setBufferSpans(const QVariantList &spans)
     }
     // The newest end moves every second while live fills the buffer: the segments and the
     // strip are announced when a run comes, goes or starts elsewhere, or an end moves 5 s.
-    const bool same = next.size() == m_buffer.size()
-        && std::equal(next.begin(), next.end(), m_buffer.begin(), [](const Span &a, const Span &b) {
+    const bool same = next.size() == b.buffer.size()
+        && std::equal(next.begin(), next.end(), b.buffer.begin(), [](const Span &a, const Span &b) {
                return std::abs(a.start - b.start) < 0.5 && std::abs(a.end - b.end) < 5;
            });
-    m_buffer = next;
+    b.buffer = next;
     if (same)
         return;
     emit dayChanged();          // the day's segments
@@ -409,7 +453,8 @@ void LiveReplay::setBufferSpans(const QVariantList &spans)
 
 bool LiveReplay::inBuffer(double epoch) const
 {
-    for (const Span &s : m_buffer)
+    const Book &b = leadBook();
+    for (const Span &s : b.buffer)
         if (epoch >= s.start && epoch <= s.end)
             return true;
     return false;
@@ -417,7 +462,16 @@ bool LiveReplay::inBuffer(double epoch) const
 
 bool LiveReplay::covered(double epoch) const
 {
-    for (const Span &s : spansOn(dayOf(epoch)))
+    return covers(m_key, epoch);
+}
+
+bool LiveReplay::covers(const QString &key, double epoch) const
+{
+    const auto it = m_books.constFind(key);
+    if (it == m_books.cend())
+        return false;
+    const Book &b = it.value();
+    for (const Span &s : spansOn(b, dayOf(epoch)))
         if (epoch >= s.start && epoch <= s.end)
             return true;
     return false;
@@ -442,10 +496,11 @@ void LiveReplay::skipBy(double secs)
 void LiveReplay::resolve(double epoch, int direction, Ahead ahead)
 {
     m_pending = Pending::None;
+    const Book &b = leadBook();   // the lead camera's footage decides (ticket 15a)
     // Backwards from now: the buffer's newest frame (the camera's clock runs up to a second or
     // so off this machine's), then the buffer, without waiting for any search (ticket 08b).
     if (direction < 0)
-        for (const Span &s : m_buffer)
+        for (const Span &s : b.buffer)
             if (epoch > s.end && epoch - s.end < kBufferNowSlackSecs)
                 epoch = s.end;
     if (inBuffer(epoch)) {
@@ -459,8 +514,8 @@ void LiveReplay::resolve(double epoch, int direction, Ahead ahead)
         m_pendingDirection = direction;
         m_pendingAhead = ahead;
     };
-    if (!known(d) && mayHave(d)) {
-        want(d, true);
+    if (!b.known(d) && mayHave(b, d)) {
+        want(m_key, d, true);
         wait();
         return;
     }
@@ -469,7 +524,7 @@ void LiveReplay::resolve(double epoch, int direction, Ahead ahead)
         return;
     }
     QDate at;
-    double r = direction > 0 ? nextStart(epoch, &at) : previousEnd(epoch, &at);
+    double r = direction > 0 ? nextStart(m_key, epoch, &at) : previousEnd(m_key, epoch, &at);
     if (r == kPending) {
         wait();
         return;
@@ -481,12 +536,12 @@ void LiveReplay::resolve(double epoch, int direction, Ahead ahead)
             return;
         }
         // Nothing ahead before now: the newest footage's last 10 s.
-        r = previousEnd(epoch, &at);
+        r = previousEnd(m_key, epoch, &at);
         if (r == kPending) {
             wait();
             return;
         }
-        for (const Span &s : spansOn(at))
+        for (const Span &s : spansOn(b, at))
             if (r >= 0 && s.end == r)
                 r = qMax(s.start, r - 10);
     }
@@ -499,27 +554,31 @@ void LiveReplay::resolve(double epoch, int direction, Ahead ahead)
 
 bool LiveReplay::liveOrRefresh(Pending retry)
 {
+    Book &b = m_books[m_key];
     const QDate today = dayOf(m_now);
-    if (m_todayAnswered >= 0 && m_now - m_todayAnswered > 20) {
-        m_days.remove(today);
-        m_todayAnswered = -1;
+    if (b.todayAnswered >= 0 && m_now - b.todayAnswered > 20) {
+        b.days.remove(today);
+        b.todayAnswered = -1;
         m_pending = retry;
-        want(today, true);
+        want(m_key, today, true);
         return false;
     }
     stop();                     // the newest footage: back to live
     return true;
 }
 
-void LiveReplay::carryOn(int direction)
+void LiveReplay::carryOn(const QString &key, int direction)
 {
-    if (!replaying())
+    // The lead camera's stream running out moves every pane; another's waits for the
+    // playhead to reach its footage again (ticket 15a, as Playback).
+    if (!replaying() || key != m_key)
         return;
+    const Book &b = leadBook();
     m_pending = Pending::None;
     // Forwards at the live buffer's newest frame: that is now, so back to live (ticket 08b) —
     // not a reopen at each newest second while live keeps filling it.
-    if (direction > 0 && !m_buffer.isEmpty()) {
-        const Span newest = *std::max_element(m_buffer.begin(), m_buffer.end(),
+    if (direction > 0 && !b.buffer.isEmpty()) {
+        const Span newest = *std::max_element(b.buffer.begin(), b.buffer.end(),
             [](const Span &a, const Span &b) { return a.end < b.end; });
         if (m_playhead >= newest.start && newest.end - m_playhead < kLiveEdgeSecs) {
             stop();
@@ -539,7 +598,7 @@ void LiveReplay::carryOn(int direction)
         return;
     }
     QDate at;
-    const double r = direction > 0 ? nextStart(m_playhead, &at) : previousEnd(m_playhead, &at);
+    const double r = direction > 0 ? nextStart(m_key, m_playhead, &at) : previousEnd(m_key, m_playhead, &at);
     if (r == kPending) {
         m_pending = Pending::CarryOn;
         m_pendingDirection = direction;
@@ -566,7 +625,7 @@ void LiveReplay::retryPending()
     if (p == Pending::Play)
         resolve(m_pendingEpoch, m_pendingDirection, m_pendingAhead);
     else if (p == Pending::CarryOn)
-        carryOn(m_pendingDirection);
+        carryOn(m_key, m_pendingDirection);
 }
 
 void LiveReplay::land(double epoch, const QDate &day)
@@ -578,7 +637,7 @@ void LiveReplay::land(double epoch, const QDate &day)
         epoch = nextMidnight - 1;
     m_pending = Pending::None;
     m_landedInBuffer = inBuffer(epoch);
-    opened();
+    opened(m_key);
     setPlayhead(epoch, day);
     emit playWanted(epoch);
 }
@@ -596,9 +655,10 @@ void LiveReplay::setPlayhead(double epoch, const QDate &day)
     }
 }
 
-void LiveReplay::frameAt(double epoch, double wallMs)
+void LiveReplay::frameAt(const QString &key, double epoch, double wallMs)
 {
-    if (!replaying() || epoch <= 0)
+    // The lead camera's frames move the playhead (ticket 15a, as Playback).
+    if (!replaying() || key != m_key || epoch <= 0)
         return;
     // Forwards in the recorder's footage, reaching the live buffer: play on from the buffer
     // (ticket 08b), not on to the recorder's stall at its newest footage.
@@ -616,8 +676,10 @@ void LiveReplay::frameAt(double epoch, double wallMs)
     setPlayhead(epoch, d);
 }
 
-void LiveReplay::opened()
+void LiveReplay::opened(const QString &key)
 {
+    if (key != m_key)
+        return;
     m_lastFrame = -1;
     m_lastMoveWall = -1;
 }

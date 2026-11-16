@@ -52,7 +52,7 @@ Item {
     }
     // The camera's live buffer as footage for the replay (live-replay ticket 08b): at the
     // start and each second while replaying (it keeps filling: live stays connected).
-    function refreshBuffer() { if (replay && replaying) replay.setBufferSpans(Devices.liveBufferSpans(deviceRow)); }
+    function refreshBuffer() { if (replay && replaying) replay.setBufferSpans(cameraKey, Devices.liveBufferSpans(deviceRow)); }
     Timer {
         interval: 1000
         repeat: true
@@ -227,18 +227,19 @@ Item {
             audioMuted: AudioPrefs.playbackMuted || root.group.offNormal || !root.selected
                         || !root.audioAllowed
             audioActive: true
-            segments: root.replay.daySegments
+            // This camera's own recordings (re-read whenever the day's footage changes).
+            segments: (root.replay.daySegments, root.replay.daySegmentsFor(root.cameraKey))
             dayEpoch: root.replay.dayEpoch
             playheadSecs: root.replay.playhead - root.replay.dayEpoch
             speed: root.group.speed
             direction: root.group.direction
             speedText: root.group.speed !== 1 || root.group.direction !== 1
                        ? root.group.label(root.replay.paused) : ""
-            onFrameSecsChanged: if (frameSecs >= 0) root.replay.frameAt(dayEpoch + frameSecs, Date.now())
+            onFrameSecsChanged: if (frameSecs >= 0) root.replay.frameAt(root.cameraKey, dayEpoch + frameSecs, Date.now())
             reportForwardEnd: true
             useLiveBuffer: true
-            onReverseEnded: root.replay.carryOn(-1)
-            onForwardEnded: root.replay.carryOn(1)
+            onReverseEnded: root.replay.carryOn(root.cameraKey, -1)
+            onForwardEnded: root.replay.carryOn(root.cameraKey, 1)
             onClicked: root.clicked()
             onDoubleClicked: root.doubleClicked()
         }
@@ -260,7 +261,7 @@ Item {
     Connections {
         target: pane
         function onLoaded() {
-            if (!root.replay.paused && root.replay.daySegments.length > 0
+            if (!root.replay.paused && root.replay.daySegmentsFor(root.cameraKey).length > 0
                     && root.replay.covered(root.replay.playhead))
                 pane.item.playAtSecs(root.replay.playhead - root.replay.dayEpoch, root.replay.playhead);
         }

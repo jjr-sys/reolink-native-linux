@@ -60,7 +60,7 @@ public:
     QVariantList daySegments() const;
     // The oldest recording's start (epoch seconds): found, or the oldest known so far; -1 none.
     double oldest() const;
-    bool oldestFound() const { return m_oldestFound; }
+    bool oldestFound() const;   // every camera's oldest found
     // Known recordings as slider spans {from, to} (0 = now … 1 = the oldest), oldest last.
     QVariantList strip() const;
     PlaybackGroup *group() const { return m_group; }
@@ -79,26 +79,31 @@ public:
     // The stream ran out going `direction` (a recording's start or end, a day's end): carry on
     // from the playhead to the previous recording's end or the next one's start; backwards
     // past the oldest, nothingEarlier; forwards with nothing ahead before now, back to live.
-    Q_INVOKABLE void carryOn(int direction);
+    // Only the lead camera's stream moves the playhead on (Playback's rule, ticket 15a).
+    Q_INVOKABLE void carryOn(const QString &key, int direction);
     // ↺ / ↻: `secs` from the playhead (never past now): there if footage covers it, else back to
     // the previous recording's end, or forwards to the next one's start — with nothing ahead,
     // back to live.
     Q_INVOKABLE void skipBy(double secs);
-    Q_INVOKABLE bool covered(double epoch) const;
-    // The replaying camera's live buffer: its runs as {start, end} epoch seconds (the page
-    // updates it each second); counted as footage. inBuffer: whether it holds `epoch`.
-    Q_INVOKABLE void setBufferSpans(const QVariantList &spans);
+    Q_INVOKABLE bool covered(double epoch) const;              // the lead camera's footage
+    Q_INVOKABLE bool covers(const QString &key, double epoch) const;
+    // That day's recordings for one camera, as daySegments (its pane plays them).
+    Q_INVOKABLE QVariantList daySegmentsFor(const QString &key) const;
+    // A replaying camera's live buffer: its runs as {start, end} epoch seconds (the page
+    // updates it each second); counted as footage. inBuffer: whether the lead's holds `epoch`.
+    Q_INVOKABLE void setBufferSpans(const QString &key, const QVariantList &spans);
     Q_INVOKABLE bool inBuffer(double epoch) const;
 
     // A day's search answered: its recordings (seconds into the day) and the days of its month
     // with recordings. A failed search may be asked again.
-    Q_INVOKABLE void dayFound(int year, int month, int day, const QVariantList &segments,
-                              const QVariantList &monthDays);
-    Q_INVOKABLE void dayFailed(int year, int month, int day);
+    Q_INVOKABLE void dayFound(const QString &key, int year, int month, int day,
+                              const QVariantList &segments, const QVariantList &monthDays);
+    Q_INVOKABLE void dayFailed(const QString &key, int year, int month, int day);
 
     // The pane shows a frame recorded at `epoch` (wallMs: a monotonic clock); a new stream opened.
-    Q_INVOKABLE void frameAt(double epoch, double wallMs);
-    Q_INVOKABLE void opened();
+    // Only the lead camera's frames move the playhead.
+    Q_INVOKABLE void frameAt(const QString &key, double epoch, double wallMs);
+    Q_INVOKABLE void opened(const QString &key);
     // Forwards, the picture's time hasn't moved for 8 s within 5 min of now: the recorder's
     // newest footage (recorder-paced replay stalls there). Not paused, not before a picture.
     Q_INVOKABLE bool stalledAtEdge(double wallMs) const;
@@ -121,8 +126,8 @@ signals:
     void pausedChanged();
     void dayChanged();
     void recordingsChanged();
-    // Ask the device for this day's recordings (answer with dayFound / dayFailed).
-    void searchWanted(int year, int month, int day);
+    // Ask the camera's device for this day's recordings (answer with dayFound / dayFailed).
+    void searchWanted(const QString &key, int year, int month, int day);
     // Open the pane's stream at `epoch` (the playhead and its day are already there).
     void playWanted(double epoch);
     // Backwards reached the oldest recording: pause there.
@@ -145,28 +150,49 @@ private:
     static constexpr double kBufferNowSlackSecs = 15;
     static constexpr double kLiveEdgeSecs = 3;
 
+    // One camera's recordings as known so far, its searches and its live buffer (ticket 15a).
+    struct Book {
+        QHash<QDate, QList<Span>> days;  // searched days: recordings, epoch seconds
+        QList<Span> buffer;              // the live buffer's runs, epoch seconds
+        QHash<int, QList<int>> months;   // year*100+month -> days with recordings
+        QHash<QDate, int> failures;      // failed searches per day
+        QList<QDate> queue;
+        QDate inFlight;
+        bool oldestFound = false;
+        QDate oldestDay;                 // once found
+        int scanMonth = 0;               // year*100+month the oldest scan asked for last (0 = idle)
+        double todayAnswered = -1;       // now when today's search was last answered
+        bool known(const QDate &day) const { return days.contains(day); }
+    };
+    const Book &leadBook() const
+    {
+        static const Book none;
+        const auto it = m_books.constFind(m_key);
+        return it == m_books.cend() ? none : it.value();
+    }
+    static double oldestOf(const Book &b);
+
     void reset();
-    void want(const QDate &day, bool urgent);
-    void pump();
-    void advanceScan();
+    void want(const QString &key, const QDate &day, bool urgent);
+    void pump(const QString &key);
+    void advanceScan(const QString &key);
     void retryPending();
     void land(double epoch, const QDate &day);
     void resolve(double epoch, int direction, Ahead ahead);
     // Nothing ahead before now: ask for today again first when its answer is old (a long
     // replay may have more footage ahead now), else back to live. False while asking.
     bool liveOrRefresh(Pending retry);
-    void storeDay(const QDate &day, const QList<Span> &spans);
+    void storeDay(const QString &key, const QDate &day, const QList<Span> &spans);
     void setPlayhead(double epoch, const QDate &day);
-    bool known(const QDate &day) const { return m_days.contains(day); }
-    QList<Span> spansOn(const QDate &day) const;
+    QList<Span> spansOn(const Book &b, const QDate &day) const;
     // Whether `day` may have recordings: unknown, or its month says so; never before the oldest.
-    bool mayHave(const QDate &day) const;
+    bool mayHave(const Book &b, const QDate &day) const;
     QDate dayOf(double epoch) const;
     double midnight(const QDate &day) const;
     // The previous recording's end before `epoch` / the next one's start after it, with the
     // day it belongs to; kPending while a day it needs is asked for, kNone when there is none.
-    double previousEnd(double epoch, QDate *day);
-    double nextStart(double epoch, QDate *day);
+    double previousEnd(const QString &key, double epoch, QDate *day);
+    double nextStart(const QString &key, double epoch, QDate *day);
     double oldestBehind() const;
 
     PlaybackGroup *m_group;
@@ -177,22 +203,13 @@ private:
     QDate m_day;                       // the playhead's day (a recording's end at midnight is its day's)
     bool m_paused = false;
 
-    QHash<QDate, QList<Span>> m_days;  // searched days: recordings, epoch seconds
-    QList<Span> m_buffer;              // the live buffer's runs, epoch seconds
-    bool m_landedInBuffer = false;     // the last play opened in the buffer
-    QHash<int, QList<int>> m_months;   // year*100+month -> days with recordings
-    QHash<QDate, int> m_failures;      // failed searches per day
-    QList<QDate> m_queue;
-    QDate m_inFlight;
-    bool m_oldestFound = false;
-    QDate m_oldestDay;                 // once found
-    int m_scanMonth = 0;               // year*100+month the oldest scan asked for last (0 = idle)
+    QHash<QString, Book> m_books;      // the replaying cameras' (one: the lead's)
+    bool m_landedInBuffer = false;     // the last play opened in the lead's buffer
 
     Pending m_pending = Pending::None;
     double m_pendingEpoch = 0;
     int m_pendingDirection = 1;
     Ahead m_pendingAhead = Ahead::NewestFootage;
-    double m_todayAnswered = -1;      // now when today's search was last answered
 
     double m_lastCarry = -1;           // where carryOn last landed, and which way
     int m_lastCarryDirection = 0;
