@@ -6,6 +6,8 @@
 #include "device/EventSwitches.h"
 #include "device/FrigateApi.h"
 
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -135,6 +137,29 @@ private slots:
             if (r.channel == 2)
                 seen << QStringLiteral("%1@%2").arg(r.type).arg(now - r.timestamp);
         QCOMPARE(seen.join(","), QStringLiteral("person@40,vehicle@595,person@600"));
+    }
+
+    // An event that couldn't be stored is not counted as unread (nor pictured or announced).
+    void anEventThatWasntStoredIsntCounted()
+    {
+        QTemporaryDir dir;
+        Database db(dir.filePath("t.db"), QStringLiteral("sw_unstored"));
+        QVERIFY(db.open());
+        CredentialStore credentials;
+        DeviceManager devices(&db, &credentials);
+        EventManager events(&db, &devices);
+        devices.reportDetection(9, 2, QStringLiteral("person"), QStringLiteral("Drive"));
+        QCOMPARE(events.unread(), 1);
+        {   // the store breaks under it
+            QSqlDatabase other = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("breaker"));
+            other.setDatabaseName(dir.filePath("t.db"));
+            QVERIFY(other.open());
+            QVERIFY(QSqlQuery(other).exec(QStringLiteral("DROP TABLE events")));
+            other.close();
+        }
+        QSqlDatabase::removeDatabase(QStringLiteral("breaker"));
+        devices.reportDetection(9, 2, QStringLiteral("vehicle"), QStringLiteral("Drive"));
+        QCOMPARE(events.unread(), 1);
     }
 
     void switchingOffReportsThenDeletesOnlyThatPair()

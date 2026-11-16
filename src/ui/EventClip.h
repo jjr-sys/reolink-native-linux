@@ -160,7 +160,7 @@ signals:
     void pauseMediaWanted();
     void seekMediaWanted(double ms);   // the file to `ms` and play
     void retryHdWanted();          // a play the user asked for tries HD again
-    void notice(int which);        // a Notice
+    void notice(rl::EventClip::Notice which);
 
 private:
     QString resolve(qint64 hostId, int channel, qint64 timestamp, int pre, int post) const;

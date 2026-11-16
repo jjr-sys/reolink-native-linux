@@ -393,7 +393,7 @@ Item {
             page._tickWall = now;
             var panes = page.paneStates();
             page.keepInStep(panes);
-            var f = group.offNormal ? day.frameDriverSecs(panes, page.playheadSecs) : -1;
+            var f = group.offNormal ? day.frameDriverSecs(panes, page.playheadSecs, true) : -1;
             page.playheadSecs = day.advance(page.playheadSecs, dt, group.speed, group.direction, f);
         }
     }
@@ -434,7 +434,7 @@ Item {
     // recording ended) starts again where the playhead has its footage, and one that drifted
     // more than 5 s × speed starts again at the playhead (PaneSync, as Live replay's panes).
     function keepInStep(panes) {
-        var driver = day.frameDriver(panes, playheadSecs);
+        var driver = day.frameDriver(panes, playheadSecs, group.offNormal);
         var now = Date.now();
         panes.forEach(st => {
             if (!day.needsRestart(st, playheadSecs, group.speed, group.offNormal, driver, now))

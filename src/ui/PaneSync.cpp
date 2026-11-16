@@ -7,7 +7,7 @@ namespace rl::panesync {
 
 QString frameDriver(const QString &lead, const QList<Pane> &panes)
 {
-    auto drives = [](const Pane &p) { return p.shown && !p.frozen && p.covered; };
+    auto drives = [](const Pane &p) { return p.shown && !p.frozen && !p.locked && p.covered; };
     for (const Pane &p : panes)
         if (p.key == lead && drives(p))
             return p.key;

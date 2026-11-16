@@ -44,7 +44,7 @@ void PlaybackDay::setSegments(const QString &key, const QVariantList &segments)
 void PlaybackDay::clear()
 {
     m_segments.clear();
-    m_asked.clear();
+    m_searches.clear();
 }
 
 QString PlaybackDay::leadKey() const
@@ -94,20 +94,20 @@ double PlaybackDay::landing(double sec, int direction) const
 double PlaybackDay::carryOn(const QString &key, int direction, double playhead) const
 {
     if (direction == 0 || key != leadKey())
-        return kIgnore;
+        return Ignore;
     const double at = direction < 0 ? previousEnd(key, playhead) : nextStart(key, playhead);
-    return at < 0 ? kNothing : at;
+    return at < 0 ? double(Nothing) : at;
 }
 
 bool PlaybackDay::wantSearch(const QString &key, double nowMs, bool force)
 {
-    Asked &a = m_asked[key];
+    Searches &a = m_searches[key];
     const bool known = m_segments.contains(key);
-    const bool settled = known && (!m_segments.value(key).isEmpty() || a.n >= kSearchTries);
-    if (!force && (settled || (a.at >= 0 && nowMs - a.at < kSearchGapMs)))
+    const bool settled = known && (!m_segments.value(key).isEmpty() || a.count >= kSearchTries);
+    if (!force && (settled || (a.lastAskedMs >= 0 && nowMs - a.lastAskedMs < kSearchGapMs)))
         return false;
-    a.at = nowMs;
-    ++a.n;
+    a.lastAskedMs = nowMs;
+    ++a.count;
     return true;
 }
 
@@ -120,7 +120,7 @@ double PlaybackDay::advance(double playhead, double dt, double speed, int direct
     return std::clamp(playhead + dt * speed * direction, 0.0, kDayEnd);
 }
 
-panesync::Pane PlaybackDay::paneFrom(const QVariantMap &m, double playhead) const
+panesync::Pane PlaybackDay::paneFrom(const QVariantMap &m, double playhead, bool offNormal) const
 {
     panesync::Pane p;
     p.key = m.value(QStringLiteral("key")).toString();
@@ -131,27 +131,28 @@ panesync::Pane PlaybackDay::paneFrom(const QVariantMap &m, double playhead) cons
     p.frameSecs = m.value(QStringLiteral("frameSecs"), -1).toDouble();
     p.lastRestartMs = m.value(QStringLiteral("lastRestartMs"), -1).toDouble();
     p.covered = covered(p.key, playhead);
+    p.locked = offNormal && m_direct.contains(p.key);   // Frigate plays at 1× forward only
     return p;
 }
 
-QList<panesync::Pane> PlaybackDay::panesFrom(const QVariantList &panes, double playhead) const
+QList<panesync::Pane> PlaybackDay::panesFrom(const QVariantList &panes, double playhead,
+                                             bool offNormal) const
 {
     QList<panesync::Pane> out;
     for (const QVariant &v : panes)
-        out.append(paneFrom(v.toMap(), playhead));
+        out.append(paneFrom(v.toMap(), playhead, offNormal));
     return out;
 }
 
-QString PlaybackDay::frameDriver(const QVariantList &panes, double playhead) const
+QString PlaybackDay::frameDriver(const QVariantList &panes, double playhead, bool offNormal) const
 {
-    // Frames follow the selected pane (whichever kind), as the bar's tools do.
-    return panesync::frameDriver(m_selected, panesFrom(panes, playhead));
+    return panesync::frameDriver(leadKey(), panesFrom(panes, playhead, offNormal));
 }
 
-double PlaybackDay::frameDriverSecs(const QVariantList &panes, double playhead) const
+double PlaybackDay::frameDriverSecs(const QVariantList &panes, double playhead, bool offNormal) const
 {
-    const QList<panesync::Pane> list = panesFrom(panes, playhead);
-    const QString key = panesync::frameDriver(m_selected, list);
+    const QList<panesync::Pane> list = panesFrom(panes, playhead, offNormal);
+    const QString key = panesync::frameDriver(leadKey(), list);
     for (const panesync::Pane &p : list)
         if (p.key == key)
             return p.frameSecs;
@@ -161,8 +162,7 @@ double PlaybackDay::frameDriverSecs(const QVariantList &panes, double playhead) 
 bool PlaybackDay::needsRestart(const QVariantMap &pane, double playhead, double speed,
                                bool offNormal, const QString &driverKey, double nowMs) const
 {
-    panesync::Pane p = paneFrom(pane, playhead);
-    p.locked = offNormal && m_direct.contains(p.key);
+    const panesync::Pane p = paneFrom(pane, playhead, offNormal);
     return panesync::needsRestart(p, playhead, speed, p.key == driverKey, nowMs);
 }
 

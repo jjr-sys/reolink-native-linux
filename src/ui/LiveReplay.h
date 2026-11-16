@@ -91,14 +91,14 @@ public:
     // Whose frames move the playhead: the lead's, or where it has no footage at the playhead,
     // the first replaying camera that has (Playback's frameDriverSecs).
     Q_INVOKABLE QString frameDriver() const;
-    // Whether a replaying camera's pane is on screen (another maximised hides it: it plays
-    // nothing, so it can't drive the playhead). anyShown: any replaying pane is.
     // A pane that isn't driving the playhead plays at its own pace: whether it starts again at
     // the playhead now (PaneSync's rule, shared with Playback: covered and not playing, or more
     // than 5 s × speed out; not within 3 s of its last restart). frameEpoch: its frame's time
     // (epoch seconds, -1 none).
     Q_INVOKABLE bool needsRestart(const QString &key, bool busy, bool frozen, bool still,
                                   double frameEpoch, double lastRestartMs, double nowMs) const;
+    // Whether a replaying camera's pane is on screen (another maximised hides it: it plays
+    // nothing, so it can't drive the playhead). anyShown: any replaying pane is.
     Q_INVOKABLE void setShown(const QString &cameraKey, bool shown);
     Q_INVOKABLE bool anyShown() const;
 

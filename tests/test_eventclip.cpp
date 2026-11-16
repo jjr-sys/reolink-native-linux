@@ -23,7 +23,7 @@ struct Rig
         QObject::connect(&c, &EventClip::pauseMediaWanted, [this] { log << "pauseMedia"; });
         QObject::connect(&c, &EventClip::seekMediaWanted, [this](double ms) { log << QStringLiteral("seekMedia %1").arg(ms); });
         QObject::connect(&c, &EventClip::retryHdWanted, [this] { log << "retryHd"; });
-        QObject::connect(&c, &EventClip::notice, [this](int n) {
+        QObject::connect(&c, &EventClip::notice, [this](EventClip::Notice n) {
             log << (n == EventClip::StartOfClip ? "notice start" : "notice missing");
         });
     }
@@ -347,6 +347,21 @@ private slots:
         r.c.tick(50000 + limitMs);
         QCOMPARE(r.c.phase(), EventClip::Failed);
         QCOMPARE(r.took(), QStringList({"stopAll"}));
+    }
+    // The deadline runs from when starting began: reopening again before a picture (a seek, HD,
+    // a new route) doesn't push it back.
+    void reopeningWhileStartingKeepsTheDeadline()
+    {
+        Rig r;
+        r.c.play(1, 7, 1000);
+        r.c.tick(0);
+        r.c.tick(6000);
+        r.c.seekTo(1010);
+        r.c.hdChanged();
+        r.c.reopenNeeded();
+        QCOMPARE(r.c.phase(), EventClip::Starting);
+        r.c.tick(10000);
+        QCOMPARE(r.c.phase(), EventClip::Failed);
     }
     void aSilentReopenPausesOnThePictureItHad()
     {

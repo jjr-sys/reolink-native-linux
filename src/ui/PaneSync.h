@@ -21,7 +21,7 @@ struct Pane
     double lastRestartMs = -1;
 };
 
-// Whose frames move the playhead: `lead`'s pane while it is shown, not frozen and covered;
+// Whose frames move the playhead: `lead`'s pane while it is shown, not frozen, not locked and covered;
 // else the first such pane in `panes`' order; else "" (none: the wall clock).
 QString frameDriver(const QString &lead, const QList<Pane> &panes);
 

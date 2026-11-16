@@ -27,8 +27,6 @@ public:
     // carryOn's answers besides a time: no recording that way that day; not the lead's stream.
     enum CarryOn { Nothing = -1, Ignore = -2 };
     Q_ENUM(CarryOn)
-    static constexpr double kNothing = Nothing;
-    static constexpr double kIgnore = Ignore;
     static constexpr int kSearchTries = 3;
     static constexpr double kSearchGapMs = 10000;
 
@@ -59,7 +57,7 @@ public:
     // nothing, at the end of its previous recording, or -1 (nothing earlier that day).
     Q_INVOKABLE double landing(double sec, int direction) const;
     // `key`'s stream ran out going `direction` at `playhead`: where every pane goes on (the
-    // previous recording's end / the next one's start), kNothing, or kIgnore (not the lead's).
+    // previous recording's end / the next one's start), Nothing, or Ignore (not the lead's).
     Q_INVOKABLE double carryOn(const QString &key, int direction, double playhead) const;
     // Whether to ask for `key`'s day now (and note that it was): never twice within 10 s; an
     // answered day only while it came back empty, at most three times; `force` regardless.
@@ -70,10 +68,11 @@ public:
     Q_INVOKABLE static double advance(double playhead, double dt, double speed, int direction,
                                       double driverSecs);
     // The panes as the page sees them ([{key, shown, frozen, frameSecs, busy, still,
-    // lastRestartMs}], pane order): whose frames move the playhead (PaneSync), and its frame's
-    // time (-1: none, or no frame yet).
-    Q_INVOKABLE QString frameDriver(const QVariantList &panes, double playhead) const;
-    Q_INVOKABLE double frameDriverSecs(const QVariantList &panes, double playhead) const;
+    // lastRestartMs}], pane order): whose frames move the playhead (PaneSync: the lead camera's
+    // pane, else the first that can; Frigate panes are locked off 1×), and its frame's time
+    // (-1: none, or no frame yet).
+    Q_INVOKABLE QString frameDriver(const QVariantList &panes, double playhead, bool offNormal) const;
+    Q_INVOKABLE double frameDriverSecs(const QVariantList &panes, double playhead, bool offNormal) const;
     // Whether this pane starts again at the playhead (PaneSync); Frigate panes are locked off 1×.
     Q_INVOKABLE bool needsRestart(const QVariantMap &pane, double playhead, double speed,
                                   bool offNormal, const QString &driverKey, double nowMs) const;
@@ -83,15 +82,15 @@ signals:
 
 private:
     struct Span { double start; double end; };
-    struct Asked { double at = -1; int n = 0; };
-    panesync::Pane paneFrom(const QVariantMap &m, double playhead) const;
-    QList<panesync::Pane> panesFrom(const QVariantList &panes, double playhead) const;
+    struct Searches { double lastAskedMs = -1; int count = 0; };
+    panesync::Pane paneFrom(const QVariantMap &m, double playhead, bool offNormal) const;
+    QList<panesync::Pane> panesFrom(const QVariantList &panes, double playhead, bool offNormal) const;
 
     QStringList m_order;
     QString m_selected;
     QStringList m_direct;
     QHash<QString, QList<Span>> m_segments;
-    QHash<QString, Asked> m_asked;
+    QHash<QString, Searches> m_searches;
 };
 
 } // namespace rl

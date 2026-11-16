@@ -63,8 +63,10 @@ void EventClip::extendWindow()
 
 void EventClip::clear()
 {
-    if (!m_active)
+    if (!m_active) {
+        setPhase(Idle);
         return;
+    }
     m_active = false;
     m_openEnded = false;
     m_host = -1;
@@ -80,10 +82,10 @@ void EventClip::clear()
 
 void EventClip::setPhase(Phase phase)
 {
-    if (phase == Starting)
-        m_startingSince = -1;   // each start gets its own give-up time
     if (m_phase == phase)
-        return;
+        return;   // reopening while starting keeps the first deadline
+    if (phase == Starting)
+        m_startingSince = -1;   // the give-up count starts at the next tick
     m_phase = phase;
     emit phaseChanged();
     emit positionChanged();     // shownPosition follows the phase
@@ -125,8 +127,7 @@ void EventClip::play(qint64 hostId, int channel, qint64 timestamp)
 void EventClip::close()
 {
     emit stopAllWanted();
-    clear();
-    setPhase(Idle);
+    clear();   // and back to Idle
 }
 
 void EventClip::open(double at)

@@ -88,10 +88,10 @@ private slots:
         d.setPaneOrder({"1:6", "1:2"});
         d.setSegments("1:6", segs({{3600, 7200}, {28800, 32400}}));
         QCOMPARE(d.carryOn("1:6", -1, 28800), 7200.0);
-        QCOMPARE(d.carryOn("1:6", -1, 3600), double(PlaybackDay::kNothing));
+        QCOMPARE(d.carryOn("1:6", -1, 3600), double(PlaybackDay::Nothing));
         QCOMPARE(d.carryOn("1:6", 1, 7200), 28800.0);
-        QCOMPARE(d.carryOn("1:6", 1, 32400), double(PlaybackDay::kNothing));
-        QCOMPARE(d.carryOn("1:2", -1, 28800), double(PlaybackDay::kIgnore));
+        QCOMPARE(d.carryOn("1:6", 1, 32400), double(PlaybackDay::Nothing));
+        QCOMPARE(d.carryOn("1:2", -1, 28800), double(PlaybackDay::Ignore));
     }
 
     // A recorder that has just connected may answer its first search empty: an empty day is
@@ -139,12 +139,21 @@ private slots:
         d.setSegments("1:2", segs({{0, 100}}));
         const QVariantList panes{pane("1:6", true, false, 50), pane("1:2", true, false, 50),
                                  pane("3:0", true, false, 50)};
-        QCOMPARE(d.frameDriver(panes, 50), QStringLiteral("1:2"));
-        QCOMPARE(d.frameDriver(panes, 500), QStringLiteral("1:6"));   // the lead has none here
-        QCOMPARE(d.frameDriver({pane("1:6", false, false, 50), pane("1:2", true, true, 50)}, 50),
+        QCOMPARE(d.frameDriver(panes, 50, false), QStringLiteral("1:2"));
+        QCOMPARE(d.frameDriver(panes, 500, false), QStringLiteral("1:6"));   // the lead has none here
+        QCOMPARE(d.frameDriver({pane("1:6", false, false, 50), pane("1:2", true, true, 50)}, 50, false),
                  QString());   // hidden, frozen
-        QCOMPARE(d.frameDriverSecs({pane("1:6", true, false, -1)}, 50), -1.0);   // no frame yet
-        QCOMPARE(d.frameDriverSecs({pane("1:6", true, false, 60)}, 50), 60.0);
+        QCOMPARE(d.frameDriverSecs({pane("1:6", true, false, -1)}, 50, true), -1.0);   // no frame yet
+        QCOMPARE(d.frameDriverSecs({pane("1:6", true, false, 60)}, 50, true), 60.0);
+        // A Frigate camera selected: the lead is the first recorder; off 1× a Frigate pane is
+        // stopped (locked), so its stale frame never drives (review #2, standards review).
+        d.setDirectKeys({"3:0"});
+        d.setSelectedKey("3:0");
+        d.setSegments("3:0", segs({{0, 1000}}));
+        const QVariantList withFrigate{pane("3:0", true, false, 40), pane("1:6", true, false, 55)};
+        QCOMPARE(d.frameDriver(withFrigate, 50, true), QStringLiteral("1:6"));
+        QCOMPARE(d.frameDriverSecs(withFrigate, 50, true), 55.0);
+        QCOMPARE(d.frameDriver({pane("3:0", true, false, 40)}, 50, true), QString());
     }
 
     // A pane that doesn't drive the playhead plays at its own pace: where it has footage at

@@ -82,7 +82,7 @@ Item {
             if (out === PlaybackSession.NoSource || out === PlaybackSession.Gap)
                 clip.openFailed();
         }
-        onStopAllWanted: { loader.cancel(); media.stop(); session.stop(); player.stop(); }
+        onStopAllWanted: root._stopAll()
         onStopStreamWanted: { session.stop(); player.stop(); }
         onPauseMediaWanted: media.pause()
         onSeekMediaWanted: (ms) => { media.position = ms; media.play(); }
@@ -129,6 +129,7 @@ Item {
     function seekTo(at) { clip.seekTo(at); }
     function skip(secs) { clip.skip(secs); }
     function speedAction(fn) { fn(); clip.speedChanged(); }
+    function _stopAll() { loader.cancel(); media.stop(); session.stop(); player.stop(); }
     function _streamStopped() { clip.streamStopped(player.state === StreamPlayer.Stopped); }
     function _firstPicture() {
         if (!clip.firstPicture(Date.now()))
@@ -217,7 +218,7 @@ Item {
         onPositionChanged: if (position > 0) root._firstPicture()
         onMediaStatusChanged: if (mediaStatus === MediaPlayer.EndOfMedia) clip.mediaEnded(Date.now() / 1000)
     }
-    Component.onDestruction: { loader.cancel(); media.stop(); session.stop(); player.stop(); }
+    Component.onDestruction: _stopAll()
 
     // ---- Layout --------------------------------------------------------------------------
     Rectangle { anchors.fill: parent; color: Theme.surface }
