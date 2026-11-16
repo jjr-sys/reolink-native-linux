@@ -250,8 +250,8 @@ public:
     // The same search for Live replay (wayfinder/live-replay ticket 07): answered with
     // replayDayFound / replayDayFailed, leaving Playback's results alone.
     Q_INVOKABLE void searchReplayDay(int row, int year, int month, int day);
-    // Playable HTTP-FLV URL for a recording starting at startEpoch (Unix seconds).
-    Q_INVOKABLE QString playbackUrl(int row, qint64 startEpoch, bool mainStream = false);
+    // A direct (Frigate) camera's playable URL from startEpoch (Unix seconds); "" otherwise.
+    Q_INVOKABLE QString playbackUrl(int row, qint64 startEpoch);
 
     // What the downloads queue needs to fetch this camera's recordings (invalid if the
     // device is not ready or has no recordings).
@@ -433,14 +433,6 @@ private:
         bool talk = false;                          // channel supports two-way audio
         bool isAdmin = false;                       // logged-in user may edit settings
         api::BatteryInfo battery;                   // battery/solar state (if any)
-        // Seconds to add to a wall-clock epoch to get the NVR's playback reference
-        // clock (PlaybackTime − StartTime), learned from the last recording search.
-        // The HTTP-FLV playback endpoint seeks by this reference, not wall-clock.
-        qint64 playbackOffsetSecs = 0;
-        // Recording file boundaries (wall-clock start,end epochs) from the last
-        // search. FLV playback must start on a boundary and use `seek` for the
-        // offset into the file, so a scrub is snapped to the containing file.
-        QVector<std::pair<qint64, qint64>> recordingFiles;
         // Persistent authenticated client for the host, shared by its channels.
         std::shared_ptr<ReolinkHttpClient> client;
     };

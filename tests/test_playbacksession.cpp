@@ -1,4 +1,3 @@
-#include "device/RecordingFileSnap.h"
 #include "media/PlaybackSession.h"
 
 #include <QtTest>
@@ -59,36 +58,12 @@ struct Fixture {
     PlaybackSession s{std::unique_ptr<PlaybackTransport>(t)};
     Fixture() { s.setDeviceRow(3); }
 };
-using Files = QVector<std::pair<qint64, qint64>>;
 } // namespace
 
 class TestPlaybackSession : public QObject
 {
     Q_OBJECT
 private slots:
-    // ---- file snapping (moved out of DeviceManager::playbackUrl) ----
-    void snapInsideFileSeeksIntoIt()
-    {
-        const Files f{{1000, 1100}, {1200, 1300}};
-        const auto s = snapToRecordingFile(f, 1250);
-        QVERIFY(s.found);
-        QCOMPARE(s.fileStart, qint64(1200));
-        QCOMPARE(s.seekSecs, 50);
-    }
-    void snapInGapUsesNearestEarlierFile()
-    {
-        const Files f{{1000, 1100}, {1200, 1300}};
-        const auto s = snapToRecordingFile(f, 1150);
-        QVERIFY(s.found);
-        QCOMPARE(s.fileStart, qint64(1000));
-        QCOMPARE(s.seekSecs, 100); // clamped to the file length
-    }
-    void snapBeforeAnyFileIsNotFound()
-    {
-        QVERIFY(!snapToRecordingFile(Files{{1000, 1100}}, 999).found);
-        QVERIFY(!snapToRecordingFile(Files{}, 5).found);
-    }
-
     // ---- the live buffer (live-replay ticket 08b) ----
     // A Live pane's replay plays its live buffer where the buffer holds the moment, both ways,
     // HD or not; elsewhere the recorder as before. Playback's panes never use it.

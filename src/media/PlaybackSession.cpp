@@ -21,7 +21,7 @@ public:
     bool direct(int row) const override { return devices && row >= 0 && devices->isDirectAt(row); }
     QString httpUrl(int row, qint64 epoch) override
     {
-        return devices ? devices->playbackUrl(row, epoch, false) : QString();
+        return devices ? devices->playbackUrl(row, epoch) : QString();
     }
     // This pane's own stream (each pane's session has its own player).
     bool seekInPlace(int, qint64 epoch) override { return player && player->seekSource(epoch); }

@@ -90,7 +90,6 @@ add_library(reolink_core STATIC
     src/media/VaapiVideoBuffer.h src/media/VaapiVideoBuffer.cpp
     src/media/LiveStream.h src/media/LiveStream.cpp src/media/LiveStreamTransport.h
     src/media/PlaybackSession.h src/media/PlaybackSession.cpp src/media/PlaybackTransport.h
-    src/device/RecordingFileSnap.h src/device/RecordingFileSnap.cpp
     src/media/ClipLoader.h src/media/ClipLoader.cpp
     src/media/BcMp4Writer.h src/media/BcMp4Writer.cpp
     src/media/AudioDecoder.h src/media/AudioDecoder.cpp

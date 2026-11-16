@@ -1,7 +1,6 @@
 #include <QElapsedTimer>
 #include "DeviceManager.h"
 #include "media/BufferReplay.h"
-#include "RecordingFileSnap.h"
 
 #include "core/Log.h"
 #include "core/Paths.h"
@@ -1538,9 +1537,6 @@ void DeviceManager::searchRecorderDay(int row, int year, int month, int day, boo
         QVariantList segments;
         QVariantList days;
         QString error;
-        qint64 playbackOffsetSecs = 0;
-        bool haveOffset = false;
-        QVector<std::pair<qint64, qint64>> files; // (start,end) wall-clock epochs
         if (batch.transportOk && !batch.results.isEmpty() && batch.results.first().ok) {
             const api::SearchResult sr = api::parseSearch(batch.results.first().value);
             for (const api::RecordingFile &f : sr.files) {
@@ -1556,15 +1552,6 @@ void DeviceManager::searchRecorderDay(int row, int year, int month, int day, boo
                 seg["type"] = QStringLiteral("timer");
                 seg["startEpoch"] = static_cast<double>(f.start.toSecsSinceEpoch());
                 segments.append(seg);
-                files.append({f.start.toSecsSinceEpoch(),
-                              f.end.isValid() ? f.end.toSecsSinceEpoch()
-                                              : f.start.toSecsSinceEpoch() + 3600});
-                // Learn the NVR's playback-clock offset from the first valid file:
-                // the FLV endpoint seeks by PlaybackTime, not wall-clock StartTime.
-                if (!haveOffset && f.playbackTime.isValid()) {
-                    playbackOffsetSecs = f.start.secsTo(f.playbackTime);
-                    haveOffset = true;
-                }
             }
             for (int d : sr.recordingDays)
                 days.append(d);
@@ -1573,23 +1560,15 @@ void DeviceManager::searchRecorderDay(int row, int year, int month, int day, boo
         }
         QMetaObject::invokeMethod(
             this,
-            [this, row, segments, days, year, month, day, forReplay, error, playbackOffsetSecs,
-             haveOffset, files] {
+            [this, row, segments, days, year, month, day, forReplay, error] {
                 // Live replay's own searches (any day, as replay moves): their own signals, so
-                // Playback's timeline and file boundaries are left alone (live-replay ticket 07).
+                // Playback's timeline is left alone (live-replay ticket 07).
                 if (forReplay) {
                     if (error.isEmpty())
                         emit replayDayFound(row, year, month, day, segments, days);
                     else
                         emit replayDayFailed(row, year, month, day);
                     return;
-                }
-                // Store the offset + file boundaries BEFORE emitting recordingsFound
-                // so a QML handler that immediately calls playbackUrl() sees them.
-                if (row >= 0 && row < m_entries.size()) {
-                    if (haveOffset)
-                        m_entries[row].playbackOffsetSecs = playbackOffsetSecs;
-                    m_entries[row].recordingFiles = files;
                 }
                 if (error.isEmpty()) {
                     emit recordingsFound(row, segments);
@@ -1610,31 +1589,17 @@ QSize DeviceManager::declaredSize(int row, bool mainStream) const
     return mainStream ? e.mainSize : e.subSize;
 }
 
-QString DeviceManager::playbackUrl(int row, qint64 startEpoch, bool mainStream)
+QString DeviceManager::playbackUrl(int row, qint64 startEpoch)
 {
     if (row < 0 || row >= m_entries.size() || startEpoch <= 0)
         return {};
     const Entry &e = m_entries.at(row);
-    if (e.kindCaps().frigateApi) {
-        // Plays from `startEpoch` for an hour; Playback reopens past the end, a seek opens a new list.
-        return frigate::playbackVodUrl(e.rec.addr, e.rec.port, e.serverName(), startEpoch);
-    }
-    if (!e.reolinkReady())
+    // Only a direct camera plays by URL (PlaybackSession::chooseRoute); a Reolink recorder's
+    // footage always comes over Baichuan. Frigate plays from `startEpoch` for an hour;
+    // Playback reopens past the end, a seek opens a new list.
+    if (!e.kindCaps().frigateApi)
         return {};
-    // The FLV endpoint wants a recording-file boundary plus a seek offset.
-    const RecordingFileSnap snap = snapToRecordingFile(e.recordingFiles, startEpoch);
-    if (!snap.found)
-        return {}; // no recording covers this moment
-    const qint64 fileStart = snap.fileStart;
-    const int seekSecs = snap.seekSecs;
-    // `start` is the file's PlaybackTime (its wall-clock start + the device's UTC
-    // offset), which the NVR requires as a boundary.
-    const QDateTime start = QDateTime::fromSecsSinceEpoch(fileStart + e.playbackOffsetSecs);
-    // Reuse the app's existing session token so the NVR doesn't reject a second
-    // login for the playback stream. Falls back to user/password if no token yet.
-    const QString token = e.client ? e.client->token() : QString();
-    return api::playbackFlvUrl(e.rec.addr, e.rec.port, e.rec.https, e.channel, mainStream, start,
-                               e.rec.username, e.password, token, seekSecs);
+    return frigate::playbackVodUrl(e.rec.addr, e.rec.port, e.serverName(), startEpoch);
 }
 
 DownloadSource DeviceManager::downloadSource(int row)

@@ -82,7 +82,7 @@ public:
 
     // Play the wall-clock moment `epoch`. `covered` is the caller's timeline verdict
     // (a gap is normal: stop, no error). A native session is moved in place when one
-    // is streaming, else (re)opened; HTTP always reopens at the snapped file.
+    // is streaming, else (re)opened; HTTP (a direct camera) always reopens.
     Q_INVOKABLE rl::PlaybackSession::Outcome playAt(double epoch, bool covered = true);
     // Always the light sub stream (event jump), whatever HD says: native Baichuan sub
     // for a Reolink device, the HTTP stream for direct (Frigate) footage.
