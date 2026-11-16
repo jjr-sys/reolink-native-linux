@@ -27,7 +27,6 @@
 #include <QSet>
 #include <QUrl>
 #include <QVariant>
-#include <QThread>
 #include <QTimeZone>
 #include <QtConcurrent/QtConcurrent>
 
@@ -112,8 +111,9 @@ DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject
             return link;
         link.http = clientFor(row);   // null until the device is ready
         const Entry &e = m_entries.at(row);
-        link.ready = e.reolinkReady() && link.http;
+        link.ready = bool(link.http);   // clientFor: a Reolink login is loaded
         link.admin = e.isAdmin;
+        link.kind = device::kindFromString(e.rec.kind);
         link.channel = e.channel;
         link.baichuan.host = e.rec.addr;
         link.baichuan.username = e.rec.username;
@@ -1911,17 +1911,17 @@ void DeviceManager::warmPushCache()
         if (!e.reolinkReady())
             continue;
         m_pushWarmed = true;   // a camera is ready; don't re-warm every poll cycle
-        keys << QStringLiteral("%1:%2").arg(e.rec.id).arg(e.channel);
+        keys << device::cameraKey(e.rec.id, e.channel);
     }
-    m_settings->warmPushCache(keys);
+    if (m_settings)   // gone at teardown
+        m_settings->warmPushCache(keys);
 }
 
 QString DeviceManager::cameraKeyAt(int row) const
 {
     if (row < 0 || row >= m_entries.size())
         return {};
-    const Entry &e = m_entries.at(row);
-    return QStringLiteral("%1:%2").arg(e.rec.id).arg(e.channel);
+    return device::cameraKey(m_entries.at(row).rec.id, m_entries.at(row).channel);
 }
 
 QString DeviceManager::nameAt(int row) const

@@ -1,6 +1,7 @@
 #include "ScriptedTransports.h"
 #include "device/DeviceSettings.h"
 
+#include <QElapsedTimer>
 #include <QSignalSpy>
 #include <QtTest>
 
@@ -74,6 +75,74 @@ private slots:
         QVERIFY(v.contains(QStringLiteral("GetPush")));   // the V20 answer, under the old name
         QCOMPARE(v.value(QStringLiteral("_failed")).toStringList(), QStringList{QStringLiteral("GetOsd")});
         QCOMPARE(c.http->sentParams.first().value("channel", -1), 2);
+    }
+
+    // A transient failure (no answer) is tried three times; a device's own refusal once.
+    void onlyATransientFailureIsRetried()
+    {
+        Camera c;
+        c.http->transportOk = false;
+        QSignalSpy failed(c.settings.get(), &DeviceSettings::settingsFailed);
+        QElapsedTimer took;
+        took.start();
+        c.settings->fetchSettings(QStringLiteral("7:2"), {QStringLiteral("GetEnc")});
+        QVERIFY(!waitFor(failed).isEmpty());
+        QVERIFY2(took.elapsed() >= 1000, "three tries, 400 ms apart");
+        Camera d;
+        QSignalSpy refused(d.settings.get(), &DeviceSettings::settingsFailed);
+        d.settings->fetchSettings(QStringLiteral("7:2"), {QStringLiteral("GetOsd")});
+        QVERIFY(!waitFor(refused).isEmpty());
+        QCOMPARE(d.http->sent, QStringList{QStringLiteral("GetOsd")});
+    }
+
+    void theFloodlightFlipsOnlyItsState()
+    {
+        Camera c;
+        c.http->values.insert(QStringLiteral("GetWhiteLed"),
+                              Json{{"WhiteLed", {{"state", 0}, {"bright", 80}, {"mode", 1}}}});
+        c.http->values.insert(QStringLiteral("SetWhiteLed"), Json::object());
+        QSignalSpy applied(c.settings.get(), &DeviceSettings::settingApplied);
+        c.settings->toggleFloodlight(QStringLiteral("7:2"));
+        const QList<QVariant> got = waitFor(applied);
+        QCOMPARE(got.value(1).toString(), QStringLiteral("SetWhiteLed"));
+        QVERIFY(got.value(2).toBool());
+        const Json set = c.http->sentParams.last()["WhiteLed"];
+        QCOMPARE(set.value("state", -1), 1);
+        QCOMPARE(set.value("bright", -1), 80);
+    }
+
+    void anUnknownAlertKindStillAnswers()
+    {
+        Camera c;
+        QSignalSpy applied(c.settings.get(), &DeviceSettings::settingApplied);
+        c.settings->setAlertEnable(QStringLiteral("7:2"), QStringLiteral("sms"), true);
+        QCOMPARE(applied.count(), 1);
+        QCOMPARE(applied.first().at(2).toBool(), false);
+        QCOMPARE(c.bc.opens, 0);
+    }
+
+    // The HTTP list refused and Baichuan has none either: the list can't be read, and says so.
+    void quickRepliesNobodyCanListSayWhy()
+    {
+        Camera c;
+        QSignalSpy loaded(c.settings.get(), &DeviceSettings::quickRepliesLoaded);
+        c.settings->fetchQuickReplies(QStringLiteral("7:2"));
+        const QList<QVariant> got = waitFor(loaded);
+        QVERIFY(got.value(1).toList().isEmpty());
+        QVERIFY(got.value(3).toString().contains(QStringLiteral("quick replies")));
+        QCOMPARE(c.bc.opens, 1);   // cross-checked over Baichuan
+    }
+
+    void aConfigWriteSendsItsChangesAndAnswersByCommand()
+    {
+        Camera c;
+        QSignalSpy applied(c.settings.get(), &DeviceSettings::settingApplied);
+        c.settings->writeBcConfig(QStringLiteral("7:2"), 26, 25, {{QStringLiteral("bright"), 100}});
+        const QList<QVariant> got = waitFor(applied);
+        QCOMPARE(got.value(1).toString(), QStringLiteral("Set25"));
+        QVERIFY(got.value(2).toBool());
+        QCOMPARE(c.bc.fieldWrites.size(), 1);
+        QCOMPARE(c.bc.fieldWrites.first().value(QStringLiteral("bright")).toInt(), 100);
     }
 
     void aWriteNeedsAnAdministrator()
@@ -161,7 +230,7 @@ private slots:
     }
 
     // ---- Motion zone grid ---------------------------------------------------------------
-    void zoneBitsRoundTrip()
+    void aZoneGridSurvivesTheDevicesTable()
     {
         Camera c;
         const QString bits = QStringLiteral("1010000011");

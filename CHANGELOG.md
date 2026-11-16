@@ -208,6 +208,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
 - **A live report of an event without a picture fills it in.** When Frigate's history filed
   an event whose snapshot never came, the live report of the same event now grabs a frame
   for it (it used to stay blank).
+- **A camera's Push Notifications switch gates its own notices.** The switch was remembered
+  by list row, so after the camera list changed (a camera added, a recorder's channels
+  re-read) a notice could be allowed or stopped by another camera's switch.
+- **Internal:** a camera's settings commands (settings, quick replies, alert switches, the
+  recording schedule, Baichuan config, floodlight, reboot) moved out of `DeviceManager` into
+  a tested `DeviceSettings` (`Devices.settings`), named by camera key; their answers carry
+  the key, so one can't land on another camera when rows shift.
 - **Internal:** the on-screen check hooks QML reads (`RL_INITIAL_PAGE`, `RL_EVENTS_KEYS`,
   `RL_PLAYBACK_*`, `RL_LIVE_REPLAY`, ...) are one `TestHooks` singleton with their
   documentation, instead of 17 context properties in `main.cpp`.

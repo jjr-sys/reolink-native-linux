@@ -10,6 +10,8 @@ import ReolinkApp.Core
 Rectangle {
     id: root
     property int deviceRow: -1     // the doorbell's own camera row (its NVR channel)
+    // Its camera key, which its quick-reply answers carry (Devices.settings).
+    readonly property string deviceKey: Devices.cameraKeyAt(deviceRow)
     property var cameraIdentity: ({})
     property string camera: ""
     property bool active: false
@@ -52,7 +54,7 @@ Rectangle {
             return;
         }
         replyState = "loading";
-        Devices.settings.fetchQuickReplies(Devices.cameraKeyAt(deviceRow));
+        Devices.settings.fetchQuickReplies(root.deviceKey);
     }
 
     onActiveChanged: {
@@ -84,14 +86,14 @@ Rectangle {
     Connections {
         target: Devices.settings
         function onQuickRepliesLoaded(key, list, maxFiles, error) {
-            if (key !== Devices.cameraKeyAt(root.deviceRow))
+            if (key !== root.deviceKey)
                 return;
             root.clips = list;
             root.replyError = error;
             root.replyState = error !== "" ? "error" : "ready";
         }
         function onQuickReplyPlayed(key, clipId, ok, error) {
-            if (key !== Devices.cameraKeyAt(root.deviceRow) || clipId !== root.playingId)
+            if (key !== root.deviceKey || clipId !== root.playingId)
                 return;
             root.playingId = -1;
             root.statusIsError = !ok;
@@ -200,7 +202,7 @@ Rectangle {
                             root.playingId = parent.modelData.id;
                             root.status = qsTr("Playing “%1”…").arg(replyLabel.text);
                             root.statusIsError = false;
-                            Devices.settings.playQuickReply(Devices.cameraKeyAt(root.deviceRow), parent.modelData.id);
+                            Devices.settings.playQuickReply(root.deviceKey, parent.modelData.id);
                         }
                     }
                 }

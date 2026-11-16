@@ -2,7 +2,6 @@
 
 #include "device/QuickReply.h"
 
-#include <QHash>
 #include <QMetaObject>
 #include <QThread>
 #include <QTimer>
@@ -73,6 +72,15 @@ DeviceSettings::~DeviceSettings()
     m_pending.waitForFinished();
 }
 
+QString DeviceSettings::refusal(const device::CameraLink &cam, bool write)
+{
+    if (!cam.ready || !cam.http)
+        return notReady();
+    if (write && !cam.admin)
+        return needsAdmin();
+    return {};
+}
+
 template <typename Work, typename Done>
 void DeviceSettings::run(Work work, Done done)
 {
@@ -87,8 +95,9 @@ void DeviceSettings::run(Work work, Done done)
 void DeviceSettings::fetchSettings(const QString &key, const QStringList &getCommands)
 {
     const device::CameraLink cam = m_lookup(key);
-    if (!cam.ready || !cam.http || getCommands.isEmpty()) {
-        emit settingsFailed(key, notReady());
+    const QString why = getCommands.isEmpty() ? notReady() : refusal(cam, false);
+    if (!why.isEmpty()) {
+        emit settingsFailed(key, why);
         return;
     }
     const auto http = cam.http;
@@ -153,12 +162,8 @@ void DeviceSettings::applySetting(const QString &key, const QString &setCommand,
                                   const QVariantMap &param)
 {
     const device::CameraLink cam = m_lookup(key);
-    if (!cam.ready || !cam.http) {
-        emit settingApplied(key, setCommand, false, notReady());
-        return;
-    }
-    if (!cam.admin) {
-        emit settingApplied(key, setCommand, false, needsAdmin());
+    if (const QString why = refusal(cam, true); !why.isEmpty()) {
+        emit settingApplied(key, setCommand, false, why);
         return;
     }
     const auto http = cam.http;
@@ -179,12 +184,8 @@ void DeviceSettings::toggleFloodlight(const QString &key)
 {
     const QString cmd = QStringLiteral("SetWhiteLed");
     const device::CameraLink cam = m_lookup(key);
-    if (!cam.ready || !cam.http) {
-        emit settingApplied(key, cmd, false, notReady());
-        return;
-    }
-    if (!cam.admin) {
-        emit settingApplied(key, cmd, false, needsAdmin());
+    if (const QString why = refusal(cam, true); !why.isEmpty()) {
+        emit settingApplied(key, cmd, false, why);
         return;
     }
     const auto http = cam.http;
@@ -207,8 +208,8 @@ void DeviceSettings::toggleFloodlight(const QString &key)
 void DeviceSettings::fetchQuickReplies(const QString &key)
 {
     const device::CameraLink cam = m_lookup(key);
-    if (!cam.ready || !cam.http) {
-        emit quickRepliesLoaded(key, {}, 0, notReady());
+    if (const QString why = refusal(cam, false); !why.isEmpty()) {
+        emit quickRepliesLoaded(key, {}, 0, why);
         return;
     }
     const auto http = cam.http;
@@ -231,8 +232,8 @@ void DeviceSettings::fetchQuickReplies(const QString &key)
 void DeviceSettings::playQuickReply(const QString &key, int clipId)
 {
     const device::CameraLink cam = m_lookup(key);
-    if (!cam.ready || !cam.http) {
-        emit quickReplyPlayed(key, clipId, false, notReady());
+    if (const QString why = refusal(cam, false); !why.isEmpty()) {
+        emit quickReplyPlayed(key, clipId, false, why);
         return;
     }
     const auto http = cam.http;
@@ -271,8 +272,8 @@ void DeviceSettings::playQuickReply(const QString &key, int clipId)
 void DeviceSettings::fetchAutoReply(const QString &key)
 {
     const device::CameraLink cam = m_lookup(key);
-    if (!cam.ready || !cam.http) {
-        emit autoReplyLoaded(key, {}, {}, notReady());
+    if (const QString why = refusal(cam, false); !why.isEmpty()) {
+        emit autoReplyLoaded(key, {}, {}, why);
         return;
     }
     const auto http = cam.http;
@@ -318,12 +319,8 @@ void DeviceSettings::fetchAutoReply(const QString &key)
 void DeviceSettings::setAutoReply(const QString &key, bool enable, int fileId, int timeout)
 {
     const device::CameraLink cam = m_lookup(key);
-    if (!cam.ready || !cam.http) {
-        emit autoReplySaved(key, false, notReady());
-        return;
-    }
-    if (!cam.admin) {
-        emit autoReplySaved(key, false, needsAdmin());
+    if (const QString why = refusal(cam, true); !why.isEmpty()) {
+        emit autoReplySaved(key, false, why);
         return;
     }
     const auto http = cam.http;
@@ -378,17 +375,15 @@ void DeviceSettings::fetchAlerts(const QString &key)
 void DeviceSettings::setAlertEnable(const QString &key, const QString &kind, bool enable)
 {
     const device::CameraLink cam = m_lookup(key);
-    if (!cam.ready) {
-        emit settingApplied(key, kind, false, notReady());
-        return;
-    }
-    if (!cam.admin) {
-        emit settingApplied(key, kind, false, needsAdmin());
+    if (const QString why = refusal(cam, true); !why.isEmpty()) {
+        emit settingApplied(key, kind, false, why);
         return;
     }
     quint32 getCmd = 0, setCmd = 0;
-    if (!device::CameraCommands::alertCommandIds(kind, getCmd, setCmd))
+    if (!device::CameraCommands::alertCommandIds(kind, getCmd, setCmd)) {
+        emit settingApplied(key, kind, false, tr("unknown alert \"%1\"").arg(kind));
         return;
+    }
     const device::CameraCommands commands = m_commands;
     const BaichuanParams p = cam.baichuan;
     const int ch = cam.channel;
@@ -418,12 +413,8 @@ void DeviceSettings::writeRecSchedule(const QString &key, const QString &type, c
 {
     const QString cmd = QStringLiteral("SetRecSchedule");
     const device::CameraLink cam = m_lookup(key);
-    if (!cam.ready) {
-        emit settingApplied(key, cmd, false, notReady());
-        return;
-    }
-    if (!cam.admin) {
-        emit settingApplied(key, cmd, false, needsAdmin());
+    if (const QString why = refusal(cam, true); !why.isEmpty()) {
+        emit settingApplied(key, cmd, false, why);
         return;
     }
     const device::CameraCommands commands = m_commands;
@@ -463,12 +454,8 @@ void DeviceSettings::writeBcConfig(const QString &key, int getCmd, int setCmd,
 {
     const QString label = QStringLiteral("Set%1").arg(setCmd);
     const device::CameraLink cam = m_lookup(key);
-    if (!cam.ready) {
-        emit settingApplied(key, label, false, notReady());
-        return;
-    }
-    if (!cam.admin) {
-        emit settingApplied(key, label, false, needsAdmin());
+    if (const QString why = refusal(cam, true); !why.isEmpty()) {
+        emit settingApplied(key, label, false, why);
         return;
     }
     const device::CameraCommands commands = m_commands;

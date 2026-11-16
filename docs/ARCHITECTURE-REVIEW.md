@@ -460,9 +460,38 @@ variables QML used once, with their documentation; it replaces 17 context proper
 `main.cpp` and the `typeof x !== "undefined"` guards. `startHidden` (a real option) and the
 hooks C++ reads stay where they are. Behaviour unchanged (each variable read the same way;
 checked on screen with the Events keys, Playback autoplay at a time, and Live replay). Rest of
-wayfinder/architecture ticket 06: settings commands → ticket 08; DetectionHub not yet.
+wayfinder/architecture ticket 06: settings commands → ticket 08 (below); DetectionHub not yet.
 
 Revert: `6a8591c`, then `a004f67`.
+
+### Leftover: DeviceSettings, settings commands by camera key (`ccf87fc`, `d70cdb9`, review fixes)
+
+**Module.** `DeviceSettings` (`src/device/DeviceSettings.{h,cpp}`; QML `Devices.settings`):
+the HTTP settings commands (fetch with retries and V20 fallbacks, apply), quick replies and
+auto-reply, alert switches, recording schedule, Baichuan config, floodlight, reboot, the
+motion-zone codec, and the push switch for desktop notices. `DeviceManager` hands it one
+lookup, camera key → `CameraLink { ready, admin, kind, channel, http, baichuan }`, and a
+Baichuan opener; `CameraCommands` stays its protocol layer. `DeviceManager.cpp` went from
+2,469 to 1,970 lines.
+
+**Decisions** (wayfinder/architecture ticket 08).
+1. Keyed by camera key: calls name the camera, answers carry the key, and QML handlers
+   match it (`Devices.cameraKeyAt(row)`; the Settings page and doorbell keep the key they
+   asked with).
+2. The push switch is kept by camera key. It was by row, so a notice could follow another
+   camera's switch after the list changed (fixed). An event on a camera with no row of its
+   own is now allowed (it took the host's first row's switch).
+3. `setRotationOverride` stays in `DeviceManager` (a local view setting).
+4. `kind` is carried for a second command set (Bosch); nothing reads it yet.
+5. New, stricter: Baichuan writes check the camera is ready (as reads did), and an unknown
+   alert kind answers instead of staying silent.
+6. Left as found: the worker threads are waited for without a time cap at teardown (as
+   before; `RecorderDays` cancels and caps at 2 s), and `tr()` runs on workers for some
+   wordings (static, as before).
+7. Checked on screen: Settings → System (HTTP) and Detection (Baichuan) read from the RLN36
+   through the new path. Writes weren't tried: the scratch run's login isn't an administrator.
+
+Revert: the review-fix commit, then `d70cdb9`, then `ccf87fc`.
 
 ### Not built
 

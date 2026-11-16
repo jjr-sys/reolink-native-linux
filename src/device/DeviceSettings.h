@@ -1,6 +1,7 @@
 #pragma once
 
 #include "device/CameraCommands.h"
+#include "device/DeviceKind.h"
 #include "protocol/BaichuanLink.h"
 #include "protocol/ReolinkTransport.h"
 
@@ -18,10 +19,19 @@ namespace rl {
 
 namespace device {
 
+// A camera's key, "hostId:channel" (GLOSSARY: camera key).
+inline QString cameraKey(qint64 hostId, int channel)
+{
+    return QStringLiteral("%1:%2").arg(hostId).arg(channel);
+}
+
 // What the settings commands need to ask one camera, as DeviceManager knows it.
 struct CameraLink {
     bool ready = false;   // a Reolink login is loaded: the camera can be asked
     bool admin = false;   // the login may change settings
+    // The device kind: the Reolink command set serves recorders and cameras; a second set
+    // (Bosch) would be picked by this.
+    Kind kind = Kind::Camera;
     int channel = 0;
     std::shared_ptr<ReolinkTransport> http;
     BaichuanParams baichuan;
@@ -106,6 +116,9 @@ signals:
     void bcConfigLoaded(const QString &key, int cmdId, const QVariantMap &values);
 
 private:
+    // Why a camera can't be asked (or written to, with `write`): not ready, or not an
+    // administrator's login; empty when it can.
+    static QString refusal(const device::CameraLink &cam, bool write);
     // Runs `work` on a worker thread and `done` with its result back on this object's thread.
     template <typename Work, typename Done>
     void run(Work work, Done done);
