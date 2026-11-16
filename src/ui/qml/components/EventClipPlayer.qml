@@ -96,6 +96,10 @@ Item {
     readonly property bool paused: clip.paused
     readonly property bool playing: clip.phase === EventClip.Playing
     readonly property real position: clip.position
+    readonly property real shownPosition: clip.shownPosition
+    readonly property bool ended: clip.phase === EventClip.Ended
+    // The phase's name, for the RL_EVENTS_KEYS log.
+    readonly property string phaseName: ["idle", "starting", "playing", "paused", "ended", "failed"][clip.phase]
     Timer {   // the wall clock, while the clip needs it (give-up, a recorder's playhead)
         interval: 200
         repeat: true

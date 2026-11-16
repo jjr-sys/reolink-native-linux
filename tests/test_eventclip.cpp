@@ -413,7 +413,7 @@ private slots:
     }
 
     // A new Frigate clip starts at its window's start, before its file reports a position:
-    // the last file's playhead must not carry over (it read 45 s ahead while loading).
+    // the last file's position must not carry over (it read ahead while loading).
     void aNewFrigateClipReadsItsStartWhileLoading()
     {
         Rig r(true);
@@ -427,6 +427,8 @@ private slots:
         r.c.setMediaPositionMs(60000);
         r.c.mediaEnded(1090 + 5);        // the next minute, on its own
         QCOMPARE(r.c.position(), 1090.0);
+        r.c.firstPicture(0);
+        r.c.setMediaPositionMs(20000);   // 1110, playing
         r.c.play(3, 1, 2000);            // another event: 1985 ..
         QCOMPARE(r.c.position(), 1985.0);
     }
@@ -441,6 +443,7 @@ private slots:
         r.c.keepPlaying();
         QVERIFY(r.c.openEnded());
         QCOMPARE(r.took(), QStringList({"open 1030"}));
+        QCOMPARE(r.c.position(), 1030.0);   // a recorder's time is its clock, untouched
     }
 
     // What the engines report: an open with nothing to play fails; a download that fails while

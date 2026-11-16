@@ -265,8 +265,7 @@ While the project is pre-1.0, minor versions may still change behaviour.
 ### Fixed
 
 - **Frigate Keep playing shows the right time.** While the next minute of a Frigate event clip
-  loaded, the clip's time read 45 s ahead (the last clip's end carried over) until its first
-  picture.
+  loaded, the clip's time showed the end of the minute before until its first picture.
 
 - **Live replay with a second camera joined as the lead froze.** J on another pane made it
   lead, but its pane was never opened: the playhead waited for frames that never came, and the

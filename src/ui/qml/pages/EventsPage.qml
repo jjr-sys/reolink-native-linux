@@ -1203,9 +1203,7 @@ Item {
         property bool played: false
         onTriggered: { played = true; page.playRow(feed.stepEvent(-1, 1)); }
     }
-    // RL_EVENTS_KEYS test hook (main.cpp): steps to the clip, from 4 s after it first plays.
-    // A step is a key, "SD" (HD off), "KEEP" (Keep playing) or "+N" (wait N seconds); the
-    // clip's phase and position are logged each second from then on.
+    // RL_EVENTS_KEYS test hook: the steps and their syntax are documented in main.cpp.
     Timer {
         id: keysHook
         running: typeof eventsKeys !== "undefined" && eventsKeys !== "" && clipPlayer.playing && !started
@@ -1213,23 +1211,26 @@ Item {
         property bool started: false
         property var steps: []
         function log(what) {
-            console.log("events keys:", what, "→", clipPlayer.speedGroup.label(clipPlayer.paused),
-                        "position", clipPlayer.position.toFixed(1));
+            console.log("events keys:", what, "→", clipPlayer.phaseName,
+                        clipPlayer.speedGroup.label(clipPlayer.paused),
+                        "shown", clipPlayer.shownPosition.toFixed(1));
         }
         function next() {
             while (steps.length > 0) {
-                const s = steps.shift();
+                let s = steps.shift();
                 if (s.startsWith("+")) {
-                    keysWait.interval = Number(s.slice(1)) * 1000;
+                    keysWait.interval = (Number(s.slice(1)) || 0) * 1000;
                     keysWait.start();
                     return;
                 }
                 if (s === "SD")
                     clipPlayer.setHd(false);
-                else if (s === "KEEP")
+                else if (s !== "KEEP")
+                    clipPlayer.key(s);
+                else if (clipPlayer.ended)   // as on screen: Keep playing shows once ended
                     clipPlayer.keepPlaying();
                 else
-                    clipPlayer.key(s);
+                    s = "KEEP refused: not ended";
                 log(s);
             }
         }
