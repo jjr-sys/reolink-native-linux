@@ -24,6 +24,12 @@ Item {
     property bool fisheyeLens: false
     property string fisheyeMode: "fisheye"
     property color highlightColour: "transparent"
+    // Live events while replaying (live-replay ticket 14): what this camera sees now, on
+    // "● Live" ("● Live · Person"); and, maximised, the other shown cameras highlighted now
+    // ([{ key, text, colour }]), each a chip that goes to that camera live.
+    property string liveNote: ""
+    property var othersLit: []
+    signal showCamera(string key)
 
     signal clicked()
     signal doubleClicked()
@@ -111,6 +117,7 @@ Item {
         replay.playFrom(replay.epochForPos(pos), group.direction);
     }
     function goLive() { if (replaying) replay.stop(); }
+    function pause() { if (replaying && !replay.paused) togglePause(); }
     // A speed button: backwards ones start replay from live (back), forwards ones only change
     // a running replay (speed).
     function speedAction(step, dir) { if (dir < 0) back(step); else speed(step); }
@@ -283,12 +290,46 @@ Item {
         Text {
             id: liveText
             anchors.centerIn: parent
-            text: qsTr("● Live")
+            text: root.liveNote !== "" ? qsTr("● Live · %1").arg(root.liveNote) : qsTr("● Live")
             color: Theme.danger
             font.pixelSize: 12; font.bold: true
         }
         HoverHandler { id: liveHover }
         TapHandler { onTapped: root.goLive() }
+    }
+    // The other cameras highlighted now (maximised): a tap goes to that camera, live.
+    Column {
+        z: 4
+        visible: root.replaying && root.othersLit.length > 0
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: 8 + 26 + 6
+        anchors.rightMargin: 8
+        spacing: 4
+        Repeater {
+            model: root.replaying ? root.othersLit : []
+            delegate: Rectangle {
+                required property var modelData
+                x: parent ? parent.width - width : 0   // right-aligned (a Column sets only y)
+                width: chipText.implicitWidth + 18
+                height: 24
+                radius: 12
+                color: chipHover.hovered ? Theme.surfaceAlt : "#cc0d141b"
+                border.color: modelData.colour
+                border.width: 2
+                Text {
+                    id: chipText
+                    anchors.centerIn: parent
+                    text: modelData.text
+                    color: Theme.text
+                    font.pixelSize: 12
+                }
+                HoverHandler { id: chipHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: root.showCamera(modelData.key) }
+                ToolTip.visible: chipHover.hovered
+                ToolTip.text: qsTr("Back to live on this camera")
+            }
+        }
     }
 
     // A short message on the pane.

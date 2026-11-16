@@ -255,6 +255,35 @@ Item {
     // Leaving Live View returns every pane to live (nothing is kept).
     onActiveChanged: if (!active) liveReplay.stop()
     onVisibleChanged: if (!visible) liveReplay.stop()
+    // ---- Live events while a pane replays (live-replay ticket 14) ---------------------------
+    // The doorbell pop-up pauses the replay (the panes are silent under it); it stays paused.
+    onAudioSuppressedChanged: {
+        if (audioSuppressed && liveReplay.replaying) {
+            var p = replayPane();
+            if (p) p.replayPause();
+        }
+    }
+    // The maximised replaying pane names the other selected cameras highlighted now, newest
+    // first (three at most); a tap goes back to live on that camera.
+    readonly property var replayOthersLit: {
+        var looks = Highlights.looks;   // re-read as highlights come and go
+        if (!liveReplay.replaying || maximizedKey !== liveReplay.cameraKey)
+            return [];
+        var keys = Highlights.othersLit(selection.keys, liveReplay.cameraKey);
+        var byKey = rowsByKey(), out = [];
+        for (var i = 0; i < keys.length && out.length < 3; i++) {
+            var look = looks[keys[i]], item = paneRepeater.itemAt(byKey[keys[i]]);
+            var kind = look.kind.charAt(0).toUpperCase() + look.kind.slice(1);
+            out.push({ key: keys[i], colour: look.colour,
+                       text: kind + " · " + (item ? item.label : keys[i]) });
+        }
+        return out;
+    }
+    function showLive(key) {
+        liveReplay.stop();
+        maximizedKey = key;
+        selectedKey = key;
+    }
     // The pane the keys act on: the replaying one, else the maximised one, else the selected one.
     function replayPane() {
         var k = liveReplay.replaying ? liveReplay.cameraKey
@@ -648,6 +677,8 @@ Item {
                 onClicked: page.selectedKey = page.selectedKey === cameraKey ? "" : cameraKey
                 onPopOut: (row, lbl) => page.popOut(row, lbl)
                 onOpenBoschTourRequested: page.openBoschTourRequested()
+                replayOthersLit: isMaximized ? page.replayOthersLit : []
+                onShowCameraRequested: (key) => page.showLive(key)
                 highlight: page.doorbellCamera === cameraKey
                            ? ({ kind: "doorbell", colour: Theme.warning, style: "steady", since: 0, flashUntil: 0, last: 0 })
                            : Highlights.looks[cameraKey] || null

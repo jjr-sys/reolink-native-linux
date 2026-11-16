@@ -3,6 +3,7 @@
 #include "device/DeviceManager.h"
 
 #include <QDateTime>
+#include <algorithm>
 #include <QJsonDocument>
 #include <QSettings>
 
@@ -58,6 +59,20 @@ void Highlights::setRules(const QString &json)
     QSettings().setValue(QLatin1String(kRulesKey), after);
     publish();
     emit rulesChanged();
+}
+
+QStringList Highlights::othersLit(const QVariantMap &looks, const QStringList &shown,
+                                  const QString &except)
+{
+    QStringList out;
+    for (const QString &camera : shown)
+        if (camera != except && looks.contains(camera))
+            out << camera;
+    std::stable_sort(out.begin(), out.end(), [&looks](const QString &a, const QString &b) {
+        return looks.value(a).toMap().value(QStringLiteral("last")).toLongLong()
+             > looks.value(b).toMap().value(QStringLiteral("last")).toLongLong();
+    });
+    return out;
 }
 
 void Highlights::ingest(const QString &camera, const QString &type)

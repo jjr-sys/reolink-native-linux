@@ -1,4 +1,5 @@
 #include "device/HighlightPolicy.h"
+#include "device/Highlights.h"
 #include "media/AlertSounds.h"
 
 #include <QJsonArray>
@@ -224,6 +225,23 @@ private slots:
         QCOMPARE(kindOf(QStringLiteral("visitor")), Kind::None);
         for (Style st : {Style::Steady, Style::Flashing, Style::FlashThenSteady})
             QCOMPARE(styleOf(nameOf(st)), st);
+    }
+
+    // Live replay (live-replay ticket 14): a maximised replaying pane names the other shown
+    // cameras that are highlighted now, newest detection first; not itself, not cameras
+    // that aren't shown.
+    void othersLitAreTheOtherShownCamerasNewestFirst()
+    {
+        auto look = [](qint64 last) { return QVariantMap{{QStringLiteral("last"), last}}; };
+        const QVariantMap looks{{A, look(T0)}, {B, look(T0 + s(2))},
+                                {QStringLiteral("1:5"), look(T0 + s(5))},
+                                {QStringLiteral("2:0"), look(T0 + s(9))}};
+        const QStringList shown{A, B, QStringLiteral("1:5"), QStringLiteral("3:1")};
+        QCOMPARE(rl::Highlights::othersLit(looks, shown, B),
+                 (QStringList{QStringLiteral("1:5"), A}));
+        QCOMPARE(rl::Highlights::othersLit(looks, shown, QString()),
+                 (QStringList{QStringLiteral("1:5"), B, A}));
+        QVERIFY(rl::Highlights::othersLit({}, shown, B).isEmpty());
     }
 };
 

@@ -66,6 +66,10 @@ Rectangle {
     // Highlight (Highlights.looks entry): { kind, colour, style, since, flashUntil, last },
     // times in epoch ms; null when not highlighted. kind "doorbell" is the pop-up's fixed one.
     property var highlight: null
+    // Maximised and replaying: the other shown cameras highlighted now (LiveReplayControls
+    // othersLit); a tap asks the page to show that camera live (live-replay ticket 14).
+    property var replayOthersLit: []
+    signal showCameraRequested(string key)
     readonly property bool highlighted: highlight !== null
     property real clock: Date.now()  // ticks while highlighted: flash phase and "N s ago"
     Timer {
@@ -130,6 +134,11 @@ Rectangle {
     function replayKey(k) { return replayControls.key(k); }
     function replayBehind(secs, dir, fast) { replayControls.playBehind(secs, dir, fast); }
     function replayGoLive() { replayControls.goLive(); }
+    function replayPause() { replayControls.pause(); }
+    // What the camera sees now, for "● Live · Person" while replaying.
+    readonly property string highlightKindText: !highlighted ? ""
+        : highlight.kind === "doorbell" ? qsTr("Doorbell")
+        : highlight.kind.charAt(0).toUpperCase() + highlight.kind.slice(1)
 
     // Mosaic panes can be Normal or Large (about 1.5× the area, from the packer).
     property bool showLarge: false
@@ -727,6 +736,9 @@ Rectangle {
         fisheyeLens: root.fisheyeLens
         fisheyeMode: root.fisheyeMode
         highlightColour: root.highlightLit && root.highlight ? root.highlight.colour : "transparent"
+        liveNote: root.highlightKindText
+        othersLit: root.replayOthersLit
+        onShowCamera: (key) => root.showCameraRequested(key)
         onClicked: root.clicked(root.deviceRow)
         onDoubleClicked: root.toggleMaximize(root.deviceRow)
     }

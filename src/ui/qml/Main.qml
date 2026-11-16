@@ -200,6 +200,7 @@ ApplicationWindow {
         anchors.centerIn: parent
     }
 
+    Timer { id: mockDoorbellTimer; onTriggered: doorbell.active = true }   // RL_MOCK_DOORBELL "@secs"
     // Doorbell visitor-press surface (raised on a "visitor" detection).
     DoorbellOverlay {
         id: doorbell
@@ -240,13 +241,20 @@ ApplicationWindow {
         }
         if (typeof mockDoorbell !== "undefined" && mockDoorbell) {
             // RL_MOCK_DOORBELL=<hostId>:<channel> aims the mock at a real doorbell.
-            var t = String(mockDoorbellTarget).split(":");
+            // Optionally "@<secs>": ring that long after start (live-replay 14).
+            var at = String(mockDoorbellTarget).split("@");
+            var t = at[0].split(":");
             doorbell.camera = "Front Door";
             if (t.length === 2) {
                 doorbell.deviceRow = Devices.rowOfHostChannel(parseInt(t[0]), parseInt(t[1]));
                 doorbell.cameraIdentity = { hostId: parseInt(t[0]), channel: parseInt(t[1]) };
             }
-            doorbell.active = true;
+            if (at.length > 1) {
+                mockDoorbellTimer.interval = Number(at[1]) * 1000;
+                mockDoorbellTimer.start();
+            } else {
+                doorbell.active = true;
+            }
         }
         // First run: no devices yet → open Add Device and scan the network, like
         // the official client on install. Decide here (the DB count is stable at

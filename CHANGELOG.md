@@ -22,6 +22,12 @@ While the project is pre-1.0, minor versions may still change behaviour.
   from the frames it received while replaying (unseen, a fraction of a second) instead of
   waiting up to 4 s for the camera's next keyframe.
 
+- **Live events while a pane replays.** A replaying pane's "● Live" names what its camera sees
+  now ("● Live · Person"). Maximised, it also shows a chip for each other selected camera
+  highlighted now ("Vehicle · Driveway", newest first, up to three); a tap goes back to live on
+  that camera. A doorbell press pauses the replay where it is (the pop-up silences the panes
+  anyway); it stays paused afterwards. Alert sounds play as before.
+
 - **One bar on every video pane.** Live View, Playback and the Events clip player now share
   one floating bar at the bottom of each pane (shown on hover): a thin time line on top, then
   ↺ « ◀½ ◀ ❚❚ ▶ ▶½ » ↻, HD, sound, the page's common tools and ⋯ for the rest. Each fast

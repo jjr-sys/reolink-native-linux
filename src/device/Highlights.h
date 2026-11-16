@@ -31,6 +31,14 @@ public:
     QString rules() const;
     void setRules(const QString &json);
 
+    // The cameras in `shown` other than `except` that are highlighted in `looks`, newest
+    // detection first: a maximised replaying pane names them (live-replay ticket 14).
+    static QStringList othersLit(const QVariantMap &looks, const QStringList &shown,
+                                 const QString &except);
+    Q_INVOKABLE QStringList othersLit(const QStringList &shown, const QString &except) const
+    {
+        return othersLit(m_looks, shown, except);
+    }
     // Feed a detection directly (mock scripts, tests). `type` as DeviceManager emits it.
     Q_INVOKABLE void ingest(const QString &camera, const QString &type);
     // RL_MOCK_DETECTIONS="person:1:3@2;motion:1:4@4": <type>:<hostId>:<channel>@<seconds>.
