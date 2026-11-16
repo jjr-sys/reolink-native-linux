@@ -108,7 +108,7 @@ Dialog {
                 label: qsTr("Reboot")
                 danger: true
                 enabledBtn: dialog.isAdmin
-                onClicked: { Devices.reboot(dialog.targetRow); dialog.close(); }
+                onClicked: { Devices.settings.reboot(Devices.cameraKeyAt(dialog.targetRow)); dialog.close(); }
             }
             Item { Layout.fillWidth: true }
             ActionButton {

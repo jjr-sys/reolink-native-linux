@@ -52,7 +52,7 @@ Rectangle {
             return;
         }
         replyState = "loading";
-        Devices.fetchQuickReplies(deviceRow);
+        Devices.settings.fetchQuickReplies(Devices.cameraKeyAt(deviceRow));
     }
 
     onActiveChanged: {
@@ -82,16 +82,16 @@ Rectangle {
     }
 
     Connections {
-        target: Devices
-        function onQuickRepliesLoaded(row, list, maxFiles, error) {
-            if (row !== root.deviceRow)
+        target: Devices.settings
+        function onQuickRepliesLoaded(key, list, maxFiles, error) {
+            if (key !== Devices.cameraKeyAt(root.deviceRow))
                 return;
             root.clips = list;
             root.replyError = error;
             root.replyState = error !== "" ? "error" : "ready";
         }
-        function onQuickReplyPlayed(row, clipId, ok, error) {
-            if (row !== root.deviceRow || clipId !== root.playingId)
+        function onQuickReplyPlayed(key, clipId, ok, error) {
+            if (key !== Devices.cameraKeyAt(root.deviceRow) || clipId !== root.playingId)
                 return;
             root.playingId = -1;
             root.statusIsError = !ok;
@@ -200,7 +200,7 @@ Rectangle {
                             root.playingId = parent.modelData.id;
                             root.status = qsTr("Playing “%1”…").arg(replyLabel.text);
                             root.statusIsError = false;
-                            Devices.playQuickReply(root.deviceRow, parent.modelData.id);
+                            Devices.settings.playQuickReply(Devices.cameraKeyAt(root.deviceRow), parent.modelData.id);
                         }
                     }
                 }

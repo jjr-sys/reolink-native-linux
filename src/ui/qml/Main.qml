@@ -394,7 +394,10 @@ ApplicationWindow {
         target: Devices
         function onSnapshotSaved(row, path) { toast.show(qsTr("Snapshot saved"), false); }
         function onSnapshotFailed(row, error) { toast.show(qsTr("Snapshot failed: %1").arg(error), true); }
-        function onSettingApplied(row, command, ok, error) {
+    }
+    Connections {
+        target: Devices.settings
+        function onSettingApplied(key, command, ok, error) {
             if (command === "AudioAlarmPlay")
                 toast.show(ok ? qsTr("Siren triggered") : qsTr("Siren failed: %1").arg(error), !ok);
             else if (command === "SetWhiteLed")

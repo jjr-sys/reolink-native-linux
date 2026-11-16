@@ -8,7 +8,6 @@
 #include "device/FisheyeDetect.h"
 #include "device/FrigateApi.h"
 #include "device/FrigateLive.h"
-#include "device/QuickReply.h"
 #include "media/StreamPlayer.h"
 #include "protocol/BaichuanChannels.h"
 #include "protocol/BaichuanClient.h"
@@ -104,6 +103,23 @@ DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject
         const auto client = clientFor(row);
         return client ? reolinkDaySearch(client, e.channel) : DaySearch{};
     }, this);
+    // A camera's settings commands: its HTTP client and Baichuan login, once the device is
+    // ready (wayfinder/architecture ticket 08).
+    m_settings = new DeviceSettings([this](const QString &key) {
+        device::CameraLink link;
+        const int row = rowOfCameraKey(key);
+        if (row < 0)
+            return link;
+        link.http = clientFor(row);   // null until the device is ready
+        const Entry &e = m_entries.at(row);
+        link.ready = e.reolinkReady() && link.http;
+        link.admin = e.isAdmin;
+        link.channel = e.channel;
+        link.baichuan.host = e.rec.addr;
+        link.baichuan.username = e.rec.username;
+        link.baichuan.password = e.password;
+        return link;
+    }, m_baichuan, this);
     // Pages show search results only on screen; log them so an empty page can be told apart
     // from a failed search afterwards.
     auto searchLabel = [this](const QString &key) {
@@ -164,6 +180,8 @@ DeviceManager::~DeviceManager()
 {
     delete m_days;   // its searches stop first; nothing below waits on them
     m_days = nullptr;
+    delete m_settings;   // its commands finish before the rows they asked about go
+    m_settings = nullptr;
     for (qint64 hostId : m_pushListeners.keys())
         stopPushListener(hostId);
     qDeleteAll(m_frigateLive);
@@ -1702,292 +1720,6 @@ std::shared_ptr<LiveBuffer> DeviceManager::findLiveBuffer(int row) const
     return m_liveBuffers->find(liveBufferKey(e.rec.id, e.channel));
 }
 
-void DeviceManager::fetchSettings(int row, const QStringList &getCommands)
-{
-    auto client = clientFor(row);
-    if (!client || getCommands.isEmpty()) {
-        emit settingsFailed(row, tr("device not ready"));
-        return;
-    }
-    const int ch = m_entries.at(row).channel;
-    m_pending.addFuture(QtConcurrent::run([this, client, row, ch, getCommands] {
-        QVariantMap values;
-        QStringList failed;
-        QString lastError;
-        // Fetch one command, retrying only transient transport failures: NVRs (e.g.
-        // RLN8-410) intermittently return HTTP 502 when proxying a camera command
-        // under load. Retry a few times with a short backoff (the lighter action=0
-        // on the 2nd try); a DEFINITIVE device error (rspCode set — e.g. -9 "not
-        // supported") stops immediately so we don't hammer the NVR for nothing.
-        auto fetchOne = [&](const QString &cmd) {
-            api::CommandResult r;
-            for (int attempt = 0; attempt < 3; ++attempt) {
-                r = client->callOne(cmd, Json{{"channel", ch}}, attempt == 1 ? 0 : 1);
-                if (r.ok || r.rspCode != 0)
-                    break;
-                QThread::msleep(400);
-            }
-            return r;
-        };
-        // Newer firmware renamed several commands with a "V20" suffix (a different
-        // schedule shape). If the device says the legacy name isn't supported, try
-        // the V20 variant and store it under the legacy key so panels bind uniformly.
-        static const QHash<QString, QString> v20Alt = {
-            {QStringLiteral("GetPush"), QStringLiteral("GetPushV20")},
-            {QStringLiteral("GetEmail"), QStringLiteral("GetEmailV20")},
-            {QStringLiteral("GetFtp"), QStringLiteral("GetFtpV20")},
-            {QStringLiteral("GetRec"), QStringLiteral("GetRecV20")}};
-        for (const QString &c : getCommands) {
-            api::CommandResult r = fetchOne(c);
-            if (!r.ok && r.rspCode != 0 && v20Alt.contains(c))
-                r = fetchOne(v20Alt.value(c));
-            if (r.ok) {
-                values.insert(c, api::toVariant(r.value));
-            } else {
-                failed.append(c);
-                if (!r.detail.isEmpty())
-                    lastError = r.detail;
-            }
-        }
-        QMetaObject::invokeMethod(
-            this,
-            [this, row, values, failed, lastError] {
-                if (values.isEmpty()) {
-                    emit settingsFailed(row, lastError.isEmpty() ? tr("settings fetch failed")
-                                                                 : lastError);
-                    return;
-                }
-                // Report which commands the device refused so panels can show an
-                // honest "unavailable" state instead of misleading defaults.
-                QVariantMap v = values;
-                if (!failed.isEmpty()) {
-                    QVariantList f;
-                    for (const QString &c : failed)
-                        f.append(c);
-                    v.insert(QStringLiteral("_failed"), f);
-                }
-                emit settingsLoaded(row, v);
-            },
-            Qt::QueuedConnection);
-    }));
-}
-
-void DeviceManager::applySetting(int row, const QString &setCommand, const QVariantMap &param)
-{
-    auto client = clientFor(row);
-    if (!client) {
-        emit settingApplied(row, setCommand, false, tr("device not ready"));
-        return;
-    }
-    if (row < m_entries.size() && !m_entries.at(row).isAdmin) {
-        emit settingApplied(row, setCommand, false, tr("requires an administrator account"));
-        return;
-    }
-    const Json p = api::toJson(param);
-    m_pending.addFuture(QtConcurrent::run([this, client, row, setCommand, p] {
-        const api::CommandResult r = client->callOne(setCommand, p, /*action=*/0);
-        const bool ok = r.ok;
-        const QString error = ok ? QString() : (r.detail.isEmpty() ? tr("failed") : r.detail);
-        QMetaObject::invokeMethod(
-            this,
-            [this, row, setCommand, ok, error] {
-                emit settingApplied(row, setCommand, ok, error);
-            },
-            Qt::QueuedConnection);
-    }));
-}
-
-namespace {
-// The doorbell's clips: HTTP first; an empty or refused HTTP list is cross-checked over
-// Baichuan, since an NVR can answer the HTTP list with nothing while the device has clips.
-// `error` is set only when neither path could be read at all.
-quickreply::ClipList fetchClipList(ReolinkHttpClient &client, const BaichuanControl::Params &p,
-                                   int ch, QString *error)
-{
-    namespace qr = quickreply;
-    qr::ClipList list;
-    const api::CommandResult r =
-        client.callOne(QStringLiteral("GetAudioFileList"), Json{{"channel", ch}}, 0);
-    if (r.ok)
-        list = qr::parseHttpList(r.value);
-    if (!list.clips.isEmpty())
-        return list;
-    BaichuanControl bc(p);
-    if (bc.open()) {
-        quint16 st = 0;
-        const QByteArray xml = bc.get(qr::kBcListCmd, ch, &st);
-        bc.close();
-        if (qr::baichuanStatusOk(st))
-            list = qr::parseBaichuanList(xml);
-        else if (!r.ok && error)
-            *error = QObject::tr("the device does not support quick replies (status %1)").arg(st);
-    } else if (!r.ok && error) {
-        *error = r.detail.isEmpty() ? QObject::tr("could not reach the device") : r.detail;
-    }
-    return list;
-}
-
-QVariantList clipsToVariant(const quickreply::ClipList &list)
-{
-    QVariantList clips;
-    for (const quickreply::Clip &c : list.clips)
-        clips.append(QVariantMap{{QStringLiteral("id"), c.id}, {QStringLiteral("name"), c.name}});
-    return clips;
-}
-} // namespace
-
-void DeviceManager::fetchQuickReplies(int row)
-{
-    auto client = clientFor(row);
-    if (!client || row < 0 || row >= m_entries.size()) {
-        emit quickRepliesLoaded(row, {}, 0, tr("device not ready"));
-        return;
-    }
-    const Entry &e = m_entries.at(row);
-    BaichuanControl::Params p{e.rec.addr, 9000, e.rec.username, e.password};
-    const int ch = e.channel;
-    m_pending.addFuture(QtConcurrent::run([this, client, row, p, ch] {
-        QString error;
-        const quickreply::ClipList list = fetchClipList(*client, p, ch, &error);
-        const QVariantList clips = clipsToVariant(list);
-        const int maxFiles = list.maxFiles;
-        QMetaObject::invokeMethod(
-            this,
-            [this, row, clips, maxFiles, error] { emit quickRepliesLoaded(row, clips, maxFiles, error); },
-            Qt::QueuedConnection);
-    }));
-}
-
-// Auto-reply: the current setting plus the clips it can pick from. The setting is read
-// over HTTP, then Baichuan cmd 427 if HTTP does not answer.
-void DeviceManager::fetchAutoReply(int row)
-{
-    auto client = clientFor(row);
-    if (!client || row < 0 || row >= m_entries.size()) {
-        emit autoReplyLoaded(row, {}, {}, tr("device not ready"));
-        return;
-    }
-    const Entry &e = m_entries.at(row);
-    BaichuanControl::Params p{e.rec.addr, 9000, e.rec.username, e.password};
-    const int ch = e.channel;
-    m_pending.addFuture(QtConcurrent::run([this, client, row, p, ch] {
-        namespace qr = quickreply;
-        QString error;
-        qr::AutoReply a;
-        const api::CommandResult r =
-            client->callOne(QStringLiteral("GetAutoReply"), Json{{"channel", ch}}, 0);
-        if (r.ok)
-            a = qr::parseHttpAutoReply(r.value);
-        if (!a.valid) {
-            BaichuanControl bc(p);
-            if (bc.open()) {
-                quint16 st = 0;
-                const QByteArray xml = bc.get(qr::kBcAutoReplyGetCmd, ch, &st);
-                bc.close();
-                if (qr::baichuanStatusOk(st))
-                    a = qr::parseBaichuanAutoReply(xml);
-            }
-        }
-        QVariantList clips;
-        if (a.valid) {
-            QString clipError;
-            clips = clipsToVariant(fetchClipList(*client, p, ch, &clipError));
-        } else {
-            error = tr("this device does not offer auto-reply");
-        }
-        const QVariantMap setting{{QStringLiteral("enable"), a.enable},
-                                  {QStringLiteral("fileId"), a.fileId},
-                                  {QStringLiteral("timeout"), a.timeout}};
-        QMetaObject::invokeMethod(
-            this,
-            [this, row, setting, clips, error] { emit autoReplyLoaded(row, setting, clips, error); },
-            Qt::QueuedConnection);
-    }));
-}
-
-void DeviceManager::setAutoReply(int row, bool enable, int fileId, int timeout)
-{
-    auto client = clientFor(row);
-    if (!client || row < 0 || row >= m_entries.size()) {
-        emit autoReplySaved(row, false, tr("device not ready"));
-        return;
-    }
-    if (!m_entries.at(row).isAdmin) {
-        emit autoReplySaved(row, false, tr("requires an administrator account"));
-        return;
-    }
-    const Entry &e = m_entries.at(row);
-    BaichuanControl::Params p{e.rec.addr, 9000, e.rec.username, e.password};
-    const int ch = e.channel;
-    m_pending.addFuture(QtConcurrent::run([this, client, row, enable, fileId, timeout, p, ch] {
-        namespace qr = quickreply;
-        qr::AutoReply a;
-        a.valid = true;
-        a.enable = enable;
-        a.fileId = fileId;
-        a.timeout = timeout;
-        const api::CommandResult r =
-            client->callOne(QStringLiteral("SetAutoReply"), qr::httpAutoReplyParam(ch, a), 0);
-        bool ok = r.ok && (!r.value.is_object() || !r.value.contains("rspCode") ||
-                           r.value.value("rspCode", 200) == 200);
-        QString error;
-        if (!ok) {
-            // Same fallback as the clip list: try the native protocol.
-            BaichuanControl bc(p);
-            if (bc.open()) {
-                ok = bc.writeFields(qr::kBcAutoReplyGetCmd, qr::kBcAutoReplySetCmd, ch,
-                                    qr::baichuanAutoReplyChanges(a));
-                bc.close();
-            }
-            if (!ok)
-                error = r.detail.isEmpty() ? tr("the device refused the change") : r.detail;
-        }
-        QMetaObject::invokeMethod(
-            this, [this, row, ok, error] { emit autoReplySaved(row, ok, error); },
-            Qt::QueuedConnection);
-    }));
-}
-
-void DeviceManager::playQuickReply(int row, int clipId)
-{
-    auto client = clientFor(row);
-    if (!client || row < 0 || row >= m_entries.size()) {
-        emit quickReplyPlayed(row, clipId, false, tr("device not ready"));
-        return;
-    }
-    const Entry &e = m_entries.at(row);
-    BaichuanControl::Params p{e.rec.addr, 9000, e.rec.username, e.password};
-    const int ch = e.channel;
-    m_pending.addFuture(QtConcurrent::run([this, client, row, clipId, p, ch] {
-        namespace qr = quickreply;
-        bool ok = false;
-        QString error;
-        const api::CommandResult r = client->callOne(
-            QStringLiteral("QuickReplyPlay"), Json{{"id", clipId}, {"channel", ch}}, 0);
-        // Success is code 0 and value.rspCode 200 (reolink_aio).
-        ok = r.ok && (!r.value.is_object() || !r.value.contains("rspCode") ||
-                      r.value.value("rspCode", 200) == 200);
-        if (!ok && (r.ok || qr::httpShouldFallBack(r.rspCode) || r.rspCode == 0)) {
-            BaichuanControl bc(p);
-            if (bc.open()) {
-                quint16 st = 0;
-                bc.transact(qr::kBcPlayCmd, ch, qr::baichuanPlayBody(ch, clipId), &st);
-                bc.close();
-                ok = qr::baichuanStatusOk(st);
-                if (!ok)
-                    error = tr("the doorbell refused the clip (status %1)").arg(st);
-            } else {
-                error = tr("could not reach the device");
-            }
-        } else if (!ok) {
-            error = r.detail.isEmpty() ? tr("failed") : r.detail;
-        }
-        QMetaObject::invokeMethod(
-            this, [this, row, clipId, ok, error] { emit quickReplyPlayed(row, clipId, ok, error); },
-            Qt::QueuedConnection);
-    }));
-}
-
 QVariantMap DeviceManager::streamCosts() const
 {
     QVariantMap out;
@@ -2172,255 +1904,24 @@ QVariantList DeviceManager::channelsForHost(qint64 hostId) const
     return out;
 }
 
-void DeviceManager::toggleFloodlight(int row)
-{
-    const QString cmd = QStringLiteral("SetWhiteLed");
-    auto client = clientFor(row);
-    if (!client) {
-        emit settingApplied(row, cmd, false, tr("device not ready"));
-        return;
-    }
-    if (row < m_entries.size() && !m_entries.at(row).isAdmin) {
-        emit settingApplied(row, cmd, false, tr("requires an administrator account"));
-        return;
-    }
-    const int ch = m_entries.at(row).channel;
-    m_pending.addFuture(QtConcurrent::run([this, client, row, ch, cmd] {
-        const device::CommandResult r = device::CameraCommands::toggleFloodlight(*client, ch);
-        QString error;
-        if (!r.ok) {
-            const bool unsupported = r.failure == device::CommandFailure::Unsupported;
-            error = !r.detail.isEmpty() ? r.detail
-                    : unsupported       ? tr("floodlight not supported")
-                                        : tr("failed");
-        }
-        const bool ok = r.ok;
-        QMetaObject::invokeMethod(
-            this, [this, row, cmd, ok, error] { emit settingApplied(row, cmd, ok, error); },
-            Qt::QueuedConnection);
-    }));
-}
-
-void DeviceManager::reboot(int row)
-{
-    applySetting(row, QStringLiteral("Reboot"), {});
-}
-
-// The Baichuan session parameters for a row (a Reolink host with its password loaded).
-static BaichuanParams bcParams(const QString &addr, const QString &user, const QString &password)
-{
-    BaichuanParams p;
-    p.host = addr;
-    p.username = user;
-    p.password = password;
-    return p;
-}
-
-void DeviceManager::fetchAlerts(int row)
-{
-    if (row < 0 || row >= m_entries.size()) {
-        emit alertsLoaded(row, {});
-        return;
-    }
-    const Entry &e = m_entries.at(row);
-    if (!e.reolinkReady()) {
-        emit alertsLoaded(row, {});
-        return;
-    }
-    const BaichuanParams p = bcParams(e.rec.addr, e.rec.username, e.password);
-    const int ch = e.channel;
-    const device::CameraCommands commands = m_commands;
-    m_pending.addFuture(QtConcurrent::run([this, row, p, ch, commands] {
-        const QVariantMap m = commands.fetchAlerts(p, ch);
-        QMetaObject::invokeMethod(
-            this, [this, row, m] {
-                if (m.contains(QStringLiteral("push")))
-                    m_pushEnabled[row] = m.value(QStringLiteral("push")).toInt();
-                emit alertsLoaded(row, m);
-            }, Qt::QueuedConnection);
-    }));
-}
-
-bool DeviceManager::pushEnabledFor(qint64 hostId, int channel) const
-{
-    const int row = rowOfHostChannel(hostId, channel);
-    // Unknown (cache cold, or push not reported by the device) => allow the
-    // notification; only an explicit disabled (0) suppresses it.
-    return m_pushEnabled.value(row, 1) != 0;
-}
-
-QString DeviceManager::mdZoneBits(const QString &valueTable, int cells) const
-{
-    const QByteArray raw = QByteArray::fromBase64(valueTable.toLatin1());
-    QString out;
-    out.reserve(cells);
-    for (int i = 0; i < cells; ++i) {
-        const int byte = i / 8;
-        const bool on = byte < raw.size()
-                        && ((static_cast<quint8>(raw[byte]) >> (7 - (i % 8))) & 1);
-        out += on ? QLatin1Char('1') : QLatin1Char('0');
-    }
-    return out;
-}
-
-QString DeviceManager::mdZoneTable(const QString &bits) const
-{
-    const int cells = bits.size();
-    QByteArray raw((cells + 7) / 8, '\0');
-    for (int i = 0; i < cells; ++i)
-        if (bits.at(i) == QLatin1Char('1'))
-            raw[i / 8] = static_cast<char>(static_cast<quint8>(raw[i / 8])
-                                           | (1 << (7 - (i % 8))));
-    return QString::fromLatin1(raw.toBase64());
-}
-
 void DeviceManager::warmPushCache()
 {
-    int i = 0;
-    for (int row = 0; row < m_entries.size(); ++row) {
-        const Entry &e = m_entries.at(row);
+    QStringList keys;
+    for (const Entry &e : m_entries) {
         if (!e.reolinkReady())
             continue;
         m_pushWarmed = true;   // a camera is ready; don't re-warm every poll cycle
-        // Stagger so we never open several Baichuan settings sessions at once.
-        QTimer::singleShot(i++ * 1200, this, [this, row] { fetchAlerts(row); });
+        keys << QStringLiteral("%1:%2").arg(e.rec.id).arg(e.channel);
     }
+    m_settings->warmPushCache(keys);
 }
 
-void DeviceManager::setAlertEnable(int row, const QString &kind, bool enable)
+QString DeviceManager::cameraKeyAt(int row) const
 {
     if (row < 0 || row >= m_entries.size())
-        return;
+        return {};
     const Entry &e = m_entries.at(row);
-    if (!e.isAdmin) {
-        emit settingApplied(row, kind, false, tr("requires an administrator account"));
-        return;
-    }
-    quint32 getCmd = 0, setCmd = 0;
-    if (!device::CameraCommands::alertCommandIds(kind, getCmd, setCmd))
-        return;
-    const BaichuanParams p = bcParams(e.rec.addr, e.rec.username, e.password);
-    const int ch = e.channel;
-    const device::CameraCommands commands = m_commands;
-    m_pending.addFuture(QtConcurrent::run([this, row, p, ch, kind, enable, commands] {
-        const bool ok = commands.setAlert(p, ch, kind, enable).ok;
-        QMetaObject::invokeMethod(
-            this,
-            [this, row, kind, ok, enable] {
-                if (ok && kind == QLatin1String("push"))
-                    m_pushEnabled[row] = enable ? 1 : 0;
-                emit settingApplied(row, kind, ok,
-                                    ok ? QString() : tr("couldn't reach the device"));
-            },
-            Qt::QueuedConnection);
-    }));
-}
-
-void DeviceManager::fetchRecSchedule(int row)
-{
-    if (row < 0 || row >= m_entries.size()) {
-        emit recScheduleLoaded(row, {});
-        return;
-    }
-    const Entry &e = m_entries.at(row);
-    if (!e.reolinkReady()) {
-        emit recScheduleLoaded(row, {});
-        return;
-    }
-    const BaichuanParams p = bcParams(e.rec.addr, e.rec.username, e.password);
-    const int ch = e.channel;
-    const device::CameraCommands commands = m_commands;
-    m_pending.addFuture(QtConcurrent::run([this, row, p, ch, commands] {
-        const QVariantMap m = commands.fetchRecSchedule(p, ch);
-        QMetaObject::invokeMethod(
-            this, [this, row, m] { emit recScheduleLoaded(row, m); }, Qt::QueuedConnection);
-    }));
-}
-
-void DeviceManager::writeRecSchedule(int row, const QString &type, const QString &table)
-{
-    if (row < 0 || row >= m_entries.size())
-        return;
-    const Entry &e = m_entries.at(row);
-    if (!e.isAdmin) {
-        emit settingApplied(row, QStringLiteral("SetRecSchedule"), false,
-                            tr("requires an administrator account"));
-        return;
-    }
-    const BaichuanParams p = bcParams(e.rec.addr, e.rec.username, e.password);
-    const int ch = e.channel;
-    const device::CameraCommands commands = m_commands;
-    m_pending.addFuture(QtConcurrent::run([this, row, p, ch, type, table, commands] {
-        const device::CommandResult r = commands.writeRecSchedule(p, ch, type, table);
-        QString err;
-        switch (r.failure) {
-        case device::CommandFailure::None: break;
-        case device::CommandFailure::Unreachable: err = tr("couldn't reach the device"); break;
-        case device::CommandFailure::NotFound: err = tr("schedule type not found on this device"); break;
-        default: err = tr("device rejected the schedule (status %1)").arg(r.status); break;
-        }
-        const bool ok = r.ok;
-        QMetaObject::invokeMethod(
-            this,
-            [this, row, ok, err] {
-                emit settingApplied(row, QStringLiteral("SetRecSchedule"), ok, err);
-            },
-            Qt::QueuedConnection);
-    }));
-}
-
-void DeviceManager::fetchBcConfig(int row, int cmdId, const QString &reqBody)
-{
-    if (row < 0 || row >= m_entries.size()) {
-        emit bcConfigLoaded(row, cmdId, {});
-        return;
-    }
-    const Entry &e = m_entries.at(row);
-    if (!e.reolinkReady()) {
-        emit bcConfigLoaded(row, cmdId, {});
-        return;
-    }
-    const BaichuanParams p = bcParams(e.rec.addr, e.rec.username, e.password);
-    const int ch = e.channel;
-    const QByteArray body = reqBody.toUtf8();
-    const device::CameraCommands commands = m_commands;
-    m_pending.addFuture(QtConcurrent::run([this, row, cmdId, p, ch, body, commands] {
-        const QVariantMap m = commands.fetchConfig(p, ch, static_cast<quint32>(cmdId), body);
-        QMetaObject::invokeMethod(
-            this, [this, row, cmdId, m] { emit bcConfigLoaded(row, cmdId, m); },
-            Qt::QueuedConnection);
-    }));
-}
-
-void DeviceManager::writeBcConfig(int row, int getCmd, int setCmd, const QVariantMap &changes,
-                                  const QString &reqBody)
-{
-    if (row < 0 || row >= m_entries.size())
-        return;
-    const Entry &e = m_entries.at(row);
-    const QString label = QStringLiteral("Set%1").arg(setCmd);
-    if (!e.isAdmin) {
-        emit settingApplied(row, label, false, tr("requires an administrator account"));
-        return;
-    }
-    const BaichuanParams p = bcParams(e.rec.addr, e.rec.username, e.password);
-    const int ch = e.channel;
-    const QByteArray body = reqBody.toUtf8();
-    const device::CameraCommands commands = m_commands;
-    m_pending.addFuture(QtConcurrent::run(
-        [this, row, getCmd, setCmd, p, ch, changes, body, label, commands] {
-            const bool ok = commands
-                                .writeConfig(p, ch, static_cast<quint32>(getCmd),
-                                             static_cast<quint32>(setCmd), changes, body)
-                                .ok;
-            QMetaObject::invokeMethod(
-                this,
-                [this, row, label, ok] {
-                    emit settingApplied(row, label, ok,
-                                        ok ? QString() : tr("couldn't reach the device"));
-                },
-                Qt::QueuedConnection);
-        }));
+    return QStringLiteral("%1:%2").arg(e.rec.id).arg(e.channel);
 }
 
 QString DeviceManager::nameAt(int row) const

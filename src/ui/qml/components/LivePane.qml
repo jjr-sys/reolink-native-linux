@@ -851,10 +851,10 @@ Rectangle {
             break;
         case "talk": talk.active ? talk.stop() : Devices.startTalk(root.deviceRow, talk); break;
         case "siren":
-            Devices.applySetting(root.deviceRow, "AudioAlarmPlay",
+            Devices.settings.applySetting(Devices.cameraKeyAt(root.deviceRow), "AudioAlarmPlay",
                 { "alarm_mode": "times", "times": 1, "channel": Devices.channelOf(root.deviceRow) });
             break;
-        case "floodlight": root.floodOn = !root.floodOn; Devices.toggleFloodlight(root.deviceRow); break;
+        case "floodlight": root.floodOn = !root.floodOn; Devices.settings.toggleFloodlight(Devices.cameraKeyAt(root.deviceRow)); break;
         case "popout": if (root.hasSource) root.popOut(root.deviceRow, root.label); break;
         case "maximise": if (root.hasSource) root.toggleMaximize(root.deviceRow); break;
         }

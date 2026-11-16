@@ -92,9 +92,12 @@ signals:
     void settingsLoaded(const QString &key, const QVariantMap &values);
     void settingsFailed(const QString &key, const QString &error);
     void settingApplied(const QString &key, const QString &command, bool ok, const QString &error);
+    // clips: [{id, name}]. error empty and no clips: the device has none; error set: the
+    // list couldn't be read at all (offline, refused, unsupported).
     void quickRepliesLoaded(const QString &key, const QVariantList &clips, int maxFiles,
                             const QString &error);
     void quickReplyPlayed(const QString &key, int clipId, bool ok, const QString &error);
+    // setting: { enable, fileId (-1 = none), timeout }; empty with `error` set: unavailable.
     void autoReplyLoaded(const QString &key, const QVariantMap &setting, const QVariantList &clips,
                          const QString &error);
     void autoReplySaved(const QString &key, bool ok, const QString &error);

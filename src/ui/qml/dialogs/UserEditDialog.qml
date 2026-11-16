@@ -79,13 +79,13 @@ Dialog {
         if (dialog.mode === "add") {
             if (nameField.text.length === 0 || passField.text.length === 0)
                 return;
-            Devices.applySetting(dialog.deviceRow, "AddUser",
+            Devices.settings.applySetting(Devices.cameraKeyAt(dialog.deviceRow), "AddUser",
                 { "User": { "userName": nameField.text, "password": passField.text,
                             "level": levelBox.currentText } });
         } else {
             if (passField.text.length === 0)
                 return;
-            Devices.applySetting(dialog.deviceRow, "ModifyUser",
+            Devices.settings.applySetting(Devices.cameraKeyAt(dialog.deviceRow), "ModifyUser",
                 { "User": { "userName": dialog.userName, "newPassword": passField.text,
                             "oldPassword": oldPassField.text } });
         }

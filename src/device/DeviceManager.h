@@ -2,7 +2,7 @@
 
 #include "core/CredentialStore.h"
 #include "core/Database.h"
-#include "CameraCommands.h"
+#include "DeviceSettings.h"
 #include "DeviceKind.h"
 #include "Detections.h"
 #include "EventHistory.h"
@@ -59,6 +59,7 @@ class DeviceManager : public QAbstractListModel
     Q_OBJECT
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
     Q_PROPERTY(rl::RecorderDays *days READ days CONSTANT)
+    Q_PROPERTY(rl::DeviceSettings *settings READ settings CONSTANT)
 
 public:
     enum Role {
@@ -253,6 +254,11 @@ public:
     // answers dayFound / dayFailed / dayNotReady, keyed by camera and dated
     // (wayfinder/architecture tickets 01, 07).
     RecorderDays *days() const { return m_days; }
+    // A camera's settings commands, by camera key (wayfinder/architecture ticket 08):
+    // settings->fetchSettings(key, ...) and the rest answer with the same key.
+    DeviceSettings *settings() const { return m_settings; }
+    // The camera key ("hostId:channel") of a row; "" for none.
+    Q_INVOKABLE QString cameraKeyAt(int row) const;
     // A direct (Frigate) camera's playable URL from startEpoch (Unix seconds); "" otherwise.
     Q_INVOKABLE QString playbackUrl(int row, qint64 startEpoch);
 
@@ -292,63 +298,6 @@ public:
     // that isn't ready or has no talk capability.
     Q_INVOKABLE void startTalk(int row, rl::TalkSession *session);
 
-    // Settings: fetch a batch of Get* commands (emits settingsLoaded with a map
-    // of cmd -> value) and apply one Set* command (emits settingApplied).
-    Q_INVOKABLE void fetchSettings(int row, const QStringList &getCommands);
-    Q_INVOKABLE void applySetting(int row, const QString &setCommand, const QVariantMap &param);
-
-    // Doorbell quick replies. fetchQuickReplies asks the device for its clips (HTTP
-    // first, then Baichuan cmd 347 — an NVR may answer only one) and emits
-    // quickRepliesLoaded. playQuickReply plays one clip on this camera's channel and
-    // emits quickReplyPlayed. Both target the row's own NVR channel.
-    Q_INVOKABLE void fetchQuickReplies(int row);
-    Q_INVOKABLE void playQuickReply(int row, int clipId);
-    // Doorbell auto-reply (play a clip by itself when nobody answers): read the setting
-    // and its clip choices; change it (needs an administrator account).
-    Q_INVOKABLE void fetchAutoReply(int row);
-    Q_INVOKABLE void setAutoReply(int row, bool enable, int fileId, int timeout);
-    // Toggle the camera's white-LED / floodlight on<->off. Reads GetWhiteLed first
-    // so only the on/off state flips, leaving brightness and the auto/schedule mode
-    // untouched. Emits settingApplied("SetWhiteLed", ...) for UI feedback.
-    Q_INVOKABLE void toggleFloodlight(int row);
-    Q_INVOKABLE void reboot(int row);
-
-    // Alert-action config (push / email / ftp enable) over the native Baichuan
-    // protocol (TCP 9000). The NVR's HTTP-CGI 502s on these commands under load,
-    // but the app-native BC transport the official clients use is reliable.
-    // fetchAlerts reads the current enables (emits alertsLoaded with keys
-    // ok/push/email/ftp, each 0/1 or -1); setAlertEnable toggles one over BC and
-    // emits settingApplied(kind, ...). kind = "push" | "email" | "ftp".
-    Q_INVOKABLE void fetchAlerts(int row);
-    Q_INVOKABLE void setAlertEnable(int row, const QString &kind, bool enable);
-
-    // Whether this camera's Push Notifications action is enabled, from a cache
-    // warmed shortly after startup and updated whenever alerts are read/toggled.
-    // Gates desktop notifications for new detections; unknown => treated enabled.
-    bool pushEnabledFor(qint64 hostId, int channel) const;
-
-    // Motion-detection zone (grid mask) helpers. The device stores the zone as a
-    // base64 <valueTable> in the MdAlarm config: one bit per cell (1 = detect),
-    // row-major over columns x rows. mdZoneBits decodes it to a '0'/'1' string of
-    // `cells` chars for the editor; mdZoneTable re-encodes a bit string to the
-    // base64 the device expects (write it back via writeBcConfig(row, 46, 47, ...)).
-    Q_INVOKABLE QString mdZoneBits(const QString &valueTable, int cells) const;
-    Q_INVOKABLE QString mdZoneTable(const QString &bits) const;
-
-    // Generic settings over Baichuan: read a command's config into a flat
-    // { tag: value } map (emits bcConfigLoaded), and read-modify-write leaf tags
-    // (emits settingApplied("Set<setCmd>", ...)). reqBody is the optional GET
-    // request XML some commands need (e.g. AI detection selects an ai_type).
-    // These bypass the 502-prone HTTP-CGI, like the official apps.
-    Q_INVOKABLE void fetchBcConfig(int row, int cmdId, const QString &reqBody = QString());
-    // Weekly recording schedule (BC cmd 81/82): per-type 168-char '0'/'1'
-    // tables (7 days x 24 hours). fetchRecSchedule emits recScheduleLoaded with
-    // { enable, <type>: table } (types e.g. Normal/MD/people/vehicle/dog_cat);
-    // writeRecSchedule RMWs one type's table (emits settingApplied).
-    Q_INVOKABLE void fetchRecSchedule(int row);
-    Q_INVOKABLE void writeRecSchedule(int row, const QString &type, const QString &table);
-    Q_INVOKABLE void writeBcConfig(int row, int getCmd, int setCmd, const QVariantMap &changes,
-                                   const QString &reqBody = QString());
 
 signals:
     void countChanged();
@@ -359,19 +308,6 @@ signals:
                           const QString &model, const QString &problem);
     void snapshotSaved(int row, const QString &path);
     void snapshotFailed(int row, const QString &error);
-    void settingsLoaded(int row, const QVariantMap &values);
-    void settingsFailed(int row, const QString &error);
-    void settingApplied(int row, const QString &command, bool ok, const QString &error);
-    // clips: [{id, name}]. error empty + no clips = the device has none; error set =
-    // the list could not be read at all (offline, refused, unsupported).
-    void quickRepliesLoaded(int row, const QVariantList &clips, int maxFiles, const QString &error);
-    void quickReplyPlayed(int row, int clipId, bool ok, const QString &error);
-    // setting: { enable, fileId (-1 = none), timeout }; empty with `error` set = unavailable.
-    void autoReplyLoaded(int row, const QVariantMap &setting, const QVariantList &clips, const QString &error);
-    void autoReplySaved(int row, bool ok, const QString &error);
-    void alertsLoaded(int row, const QVariantMap &values);
-    void bcConfigLoaded(int row, int cmdId, const QVariantMap &values);
-    void recScheduleLoaded(int row, const QVariantMap &values);
     // Emitted on each detection 0->1 transition (feeds the event inbox).
     void detectionEvent(qint64 hostId, int channel, const QString &type, const QString &camera,
                         qint64 at);
@@ -462,6 +398,7 @@ private:
     QVector<Entry> m_entries;
     QFutureSynchronizer<void> m_pending; // drains in-flight validations at teardown
     RecorderDays *m_days = nullptr;      // child; goes first at teardown (its searches stop)
+    DeviceSettings *m_settings = nullptr; // child; its commands finish before the rows go
 
     QTimer m_pollTimer;
     std::shared_ptr<LiveBufferPool> m_liveBuffers = std::make_shared<LiveBufferPool>();
@@ -487,11 +424,9 @@ private:
     void ensureFrigateLive(qint64 hostId, const QString &host, int port);
     void onFrigateLiveEvent(qint64 hostId, const QString &camera, const QString &label, double start);
     QHash<QString, int> frigateChannels(qint64 hostId) const; // camera key -> channel
-    QHash<int, int> m_pushEnabled;  // row -> push enable (1/0/-1) for notif gating
     // Per-host login, retry-backoff and poll-health rules (see HostSession.h).
     device::HostSessions m_sessions;
     BaichuanOpener m_baichuan = realBaichuanOpener();
-    device::CameraCommands m_commands{m_baichuan};
     void probeHostAlive(qint64 hostId, const QString &hostName);
     void markHostUnreachable(qint64 hostId, const QString &hostName);
     bool m_pushWarmed = false;      // one-time warm of the push cache after priming

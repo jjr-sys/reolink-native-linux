@@ -12,6 +12,8 @@ Item {
     id: page
 
     property int deviceRow: -1
+    // The camera's key for its settings commands, which answer with it (Devices.settings).
+    readonly property string deviceKey: Devices.cameraKeyAt(deviceRow)
     signal addDeviceRequested()
     property string category: "system"
     // App-level sections, above the camera picker; they ignore the chosen camera.
@@ -74,7 +76,7 @@ Item {
     function saveAutoReply(enable, fileId, timeout) {
         if (enable && fileId < 0 && page.autoReplyClips.length > 0)
             fileId = page.autoReplyClips[0].id;   // a reply needs a clip: default to the first
-        Devices.setAutoReply(page.deviceRow, enable, fileId, timeout);
+        Devices.settings.setAutoReply(page.deviceKey, enable, fileId, timeout);
     }
     // Recording config over Baichuan (cmd 54 flat map).
     property var rec: ({})
@@ -97,34 +99,34 @@ Item {
             var httpCmds = cmdsFor(page.category);
             page.status = httpCmds.length > 0 ? qsTr("Loading…") : "";
             if (httpCmds.length > 0)
-                Devices.fetchSettings(page.deviceRow, httpCmds);
+                Devices.settings.fetchSettings(page.deviceKey, httpCmds);
             if (page.category === "detection") {
                 page.alerts = ({});
-                Devices.fetchAlerts(page.deviceRow);
+                Devices.settings.fetchAlerts(page.deviceKey);
                 page.aiSens = ({});
                 page.md = ({});
-                Devices.fetchBcConfig(page.deviceRow, 46);
+                Devices.settings.fetchBcConfig(page.deviceKey, 46);
                 var aiTypes = ["people", "vehicle", "dog_cat"];
                 for (var i = 0; i < aiTypes.length; i++)
-                    Devices.fetchBcConfig(page.deviceRow, 342, page.aiBody(aiTypes[i]));
+                    Devices.settings.fetchBcConfig(page.deviceKey, 342, page.aiBody(aiTypes[i]));
                 page.autoReply = ({});
                 page.autoReplyClips = [];
                 page.autoReplyError = "";
                 page.autoReplyReady = false;
                 if (page.hasAutoReply)
-                    Devices.fetchAutoReply(page.deviceRow);
+                    Devices.settings.fetchAutoReply(page.deviceKey);
             }
             if (page.category === "image") {
                 page.img = ({});
                 page.imgReady = false;
-                Devices.fetchBcConfig(page.deviceRow, 26);
+                Devices.settings.fetchBcConfig(page.deviceKey, 26);
             }
             if (page.category === "recording") {
                 page.rec = ({});
                 page.recSched = ({});
                 page.recReady = false;
-                Devices.fetchBcConfig(page.deviceRow, 54);
-                Devices.fetchRecSchedule(page.deviceRow);
+                Devices.settings.fetchBcConfig(page.deviceKey, 54);
+                Devices.settings.fetchRecSchedule(page.deviceKey);
             }
         } else {
             page.status = qsTr("Select a device");
@@ -141,20 +143,20 @@ Item {
     }
 
     Connections {
-        target: Devices
-        function onSettingsLoaded(row, values) {
-            if (row === page.deviceRow) {
+        target: Devices.settings
+        function onSettingsLoaded(key, values) {
+            if (key === page.deviceKey) {
                 page.settings = values;
                 page.fetched = true;
                 var f = values["_failed"] || [];
                 page.status = f.length > 0 ? qsTr("%1 unavailable on this device").arg(f.join(", ")) : "";
             }
         }
-        function onSettingsFailed(row, error) {
-            if (row === page.deviceRow) { page.fetched = true; page.status = error; }
+        function onSettingsFailed(key, error) {
+            if (key === page.deviceKey) { page.fetched = true; page.status = error; }
         }
-        function onSettingApplied(row, command, ok, error) {
-            if (row !== page.deviceRow)
+        function onSettingApplied(key, command, ok, error) {
+            if (key !== page.deviceKey)
                 return;
             page.status = ok ? qsTr("%1 saved").arg(command) : (command + ": " + error);
             // Reflect user add/remove/password changes immediately.
@@ -163,43 +165,43 @@ Item {
             // Re-read alert enables after a Baichuan toggle so the switch reflects
             // the device's confirmed state.
             if (command === "push" || command === "email" || command === "ftp")
-                Devices.fetchAlerts(page.deviceRow);
+                Devices.settings.fetchAlerts(page.deviceKey);
             if (command === "Set25")   // image write over Baichuan
-                Devices.fetchBcConfig(page.deviceRow, 26);
+                Devices.settings.fetchBcConfig(page.deviceKey, 26);
             if (command === "Set55")   // recording write over Baichuan
-                Devices.fetchBcConfig(page.deviceRow, 54);
+                Devices.settings.fetchBcConfig(page.deviceKey, 54);
             if (command === "Set47")   // motion write over Baichuan
-                Devices.fetchBcConfig(page.deviceRow, 46);
+                Devices.settings.fetchBcConfig(page.deviceKey, 46);
             if (command === "Set343") {   // AI sensitivity write over Baichuan
                 var ts = ["people", "vehicle", "dog_cat"];
                 for (var i = 0; i < ts.length; i++)
-                    Devices.fetchBcConfig(page.deviceRow, 342, page.aiBody(ts[i]));
+                    Devices.settings.fetchBcConfig(page.deviceKey, 342, page.aiBody(ts[i]));
             }
         }
-        function onAutoReplyLoaded(row, setting, clips, error) {
-            if (row !== page.deviceRow)
+        function onAutoReplyLoaded(key, setting, clips, error) {
+            if (key !== page.deviceKey)
                 return;
             page.autoReply = setting;
             page.autoReplyClips = clips;
             page.autoReplyError = error;
             page.autoReplyReady = true;
         }
-        function onAutoReplySaved(row, ok, error) {
-            if (row !== page.deviceRow)
+        function onAutoReplySaved(key, ok, error) {
+            if (key !== page.deviceKey)
                 return;
             page.status = ok ? qsTr("Auto-reply saved") : qsTr("Auto-reply: %1").arg(error);
-            Devices.fetchAutoReply(page.deviceRow);   // show what the device confirmed
+            Devices.settings.fetchAutoReply(page.deviceKey);   // show what the device confirmed
         }
-        function onAlertsLoaded(row, values) {
-            if (row === page.deviceRow)
+        function onAlertsLoaded(key, values) {
+            if (key === page.deviceKey)
                 page.alerts = values;
         }
-        function onRecScheduleLoaded(row, values) {
-            if (row === page.deviceRow)
+        function onRecScheduleLoaded(key, values) {
+            if (key === page.deviceKey)
                 page.recSched = values;
         }
-        function onBcConfigLoaded(row, cmdId, values) {
-            if (row !== page.deviceRow)
+        function onBcConfigLoaded(key, cmdId, values) {
+            if (key !== page.deviceKey)
                 return;
             if (cmdId === 26) {
                 page.img = values;
@@ -391,7 +393,7 @@ Item {
         id: confirmDialog
         onConfirmed: (payload) => {
             if (payload && payload.action === "format")
-                Devices.applySetting(page.deviceRow, "Format", { "HddInfo": { "id": [payload.id] } });
+                Devices.settings.applySetting(page.deviceKey, "Format", { "HddInfo": { "id": [payload.id] } });
         }
     }
     function confirmFormat(diskId, label) {
@@ -486,46 +488,46 @@ Item {
                 SliderRow {
                     label: qsTr("Brightness"); enabledCtl: page.isAdmin
                     value: parseInt(page.img.bright || "128")
-                    onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 26, 25, { "bright": v })
+                    onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 26, 25, { "bright": v })
                 }
                 SliderRow {
                     label: qsTr("Contrast"); enabledCtl: page.isAdmin
                     value: parseInt(page.img.contrast || "128")
-                    onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 26, 25, { "contrast": v })
+                    onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 26, 25, { "contrast": v })
                 }
                 SliderRow {
                     label: qsTr("Saturation"); enabledCtl: page.isAdmin
                     value: parseInt(page.img.saturation || "128")
-                    onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 26, 25, { "saturation": v })
+                    onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 26, 25, { "saturation": v })
                 }
                 SliderRow {
                     label: qsTr("Sharpness"); enabledCtl: page.isAdmin
                     value: parseInt(page.img.sharpen || "128")
-                    onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 26, 25, { "sharpen": v })
+                    onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 26, 25, { "sharpen": v })
                 }
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
                 SwitchRow {
                     label: qsTr("Mirror (horizontal)"); enabledCtl: page.isAdmin
                     checked: parseInt(page.img.mirror || "0") === 1
-                    onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 26, 25, { "mirror": v ? 1 : 0 })
+                    onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 26, 25, { "mirror": v ? 1 : 0 })
                 }
                 SwitchRow {
                     label: qsTr("Flip (vertical)"); enabledCtl: page.isAdmin
                     checked: parseInt(page.img.flip || "0") === 1
-                    onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 26, 25, { "flip": v ? 1 : 0 })
+                    onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 26, 25, { "flip": v ? 1 : 0 })
                 }
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
                 EnumRow {
                     label: qsTr("Day / Night"); enabledCtl: page.isAdmin
                     options: ["auto", "color", "blackAndWhite"]
                     value: page.img["DayNight/mode"] || "auto"
-                    onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 26, 25, { "DayNight/mode": v })
+                    onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 26, 25, { "DayNight/mode": v })
                 }
                 EnumRow {
                     label: qsTr("Day/Night threshold"); enabledCtl: page.isAdmin
                     options: ["low", "medium", "high"]
                     value: page.img["DayNight/Threshold"] || "medium"
-                    onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 26, 25, { "DayNight/Threshold": v })
+                    onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 26, 25, { "DayNight/Threshold": v })
                 }
                 Item { Layout.fillHeight: true }
                 Text {
@@ -545,7 +547,7 @@ Item {
             SliderRow {
                 label: qsTr("Sensitivity"); from: 1; to: 50; enabledCtl: page.isAdmin
                 value: parseInt(page.md.sensitivity || "25")
-                onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 46, 47,
+                onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 46, 47,
                     { "sensitivityInfoList//sensitivity": v })
             }
             // Detection-zone (grid mask) editor — disable detection over parts of
@@ -569,40 +571,40 @@ Item {
             SwitchRow {
                 label: qsTr("People"); enabledCtl: page.isAdmin
                 checked: page.val("GetAiCfg","AiDetectType","people") === 1
-                onCommit: (v) => Devices.applySetting(page.deviceRow, "SetAiCfg",
+                onCommit: (v) => Devices.settings.applySetting(page.deviceKey, "SetAiCfg",
                     { "channel": Devices.channelOf(page.deviceRow), "AiDetectType": { "people": v ? 1 : 0 } })
             }
             SliderRow {
                 label: qsTr("  People sensitivity"); from: 0; to: 100; enabledCtl: page.isAdmin
                 visible: page.aiSens["people"] !== undefined
                 value: parseInt((page.aiSens["people"] && page.aiSens["people"].sensitivity) || "50")
-                onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 342, 343, { "sensitivity": v }, page.aiBody("people"))
+                onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 342, 343, { "sensitivity": v }, page.aiBody("people"))
             }
 
             SwitchRow {
                 label: qsTr("Vehicles"); enabledCtl: page.isAdmin
                 checked: page.val("GetAiCfg","AiDetectType","vehicle") === 1
-                onCommit: (v) => Devices.applySetting(page.deviceRow, "SetAiCfg",
+                onCommit: (v) => Devices.settings.applySetting(page.deviceKey, "SetAiCfg",
                     { "channel": Devices.channelOf(page.deviceRow), "AiDetectType": { "vehicle": v ? 1 : 0 } })
             }
             SliderRow {
                 label: qsTr("  Vehicle sensitivity"); from: 0; to: 100; enabledCtl: page.isAdmin
                 visible: page.aiSens["vehicle"] !== undefined
                 value: parseInt((page.aiSens["vehicle"] && page.aiSens["vehicle"].sensitivity) || "50")
-                onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 342, 343, { "sensitivity": v }, page.aiBody("vehicle"))
+                onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 342, 343, { "sensitivity": v }, page.aiBody("vehicle"))
             }
 
             SwitchRow {
                 label: qsTr("Animals (pets)"); enabledCtl: page.isAdmin
                 checked: page.val("GetAiCfg","AiDetectType","dog_cat") === 1
-                onCommit: (v) => Devices.applySetting(page.deviceRow, "SetAiCfg",
+                onCommit: (v) => Devices.settings.applySetting(page.deviceKey, "SetAiCfg",
                     { "channel": Devices.channelOf(page.deviceRow), "AiDetectType": { "dog_cat": v ? 1 : 0 } })
             }
             SliderRow {
                 label: qsTr("  Animal sensitivity"); from: 0; to: 100; enabledCtl: page.isAdmin
                 visible: page.aiSens["dog_cat"] !== undefined
                 value: parseInt((page.aiSens["dog_cat"] && page.aiSens["dog_cat"].sensitivity) || "50")
-                onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 342, 343, { "sensitivity": v }, page.aiBody("dog_cat"))
+                onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 342, 343, { "sensitivity": v }, page.aiBody("dog_cat"))
             }
 
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
@@ -611,19 +613,19 @@ Item {
                 label: qsTr("Push notifications")
                 enabledCtl: page.isAdmin && page.alerts.ok === true
                 checked: page.alerts.push === 1
-                onCommit: (v) => Devices.setAlertEnable(page.deviceRow, "push", v)
+                onCommit: (v) => Devices.settings.setAlertEnable(page.deviceKey, "push", v)
             }
             SwitchRow {
                 label: qsTr("Email on alarm")
                 enabledCtl: page.isAdmin && page.alerts.ok === true
                 checked: page.alerts.email === 1
-                onCommit: (v) => Devices.setAlertEnable(page.deviceRow, "email", v)
+                onCommit: (v) => Devices.settings.setAlertEnable(page.deviceKey, "email", v)
             }
             SwitchRow {
                 label: qsTr("FTP upload on alarm")
                 enabledCtl: page.isAdmin && page.alerts.ok === true
                 checked: page.alerts.ftp === 1
-                onCommit: (v) => Devices.setAlertEnable(page.deviceRow, "ftp", v)
+                onCommit: (v) => Devices.settings.setAlertEnable(page.deviceKey, "ftp", v)
             }
             Text {
                 visible: page.alerts.ok === false
@@ -738,7 +740,7 @@ Item {
                 Switch {
                     checked: page.val("GetEnc","Enc","audio") === 1
                     enabled: page.isAdmin
-                    onToggled: Devices.applySetting(page.deviceRow, "SetEnc",
+                    onToggled: Devices.settings.applySetting(page.deviceKey, "SetEnc",
                         { "Enc": { "channel": Devices.channelOf(page.deviceRow), "audio": checked ? 1 : 0 } })
                 }
             }
@@ -760,7 +762,7 @@ Item {
                 Switch {
                     checked: page.val("GetOsd","Osd","osdChannel","enable") === 1
                     enabled: page.isAdmin
-                    onToggled: Devices.applySetting(page.deviceRow, "SetOsd",
+                    onToggled: Devices.settings.applySetting(page.deviceKey, "SetOsd",
                         { "Osd": { "channel": Devices.channelOf(page.deviceRow), "osdChannel": { "enable": checked ? 1 : 0 } } })
                 }
             }
@@ -769,7 +771,7 @@ Item {
                 Switch {
                     checked: page.val("GetOsd","Osd","osdTime","enable") === 1
                     enabled: page.isAdmin
-                    onToggled: Devices.applySetting(page.deviceRow, "SetOsd",
+                    onToggled: Devices.settings.applySetting(page.deviceKey, "SetOsd",
                         { "Osd": { "channel": Devices.channelOf(page.deviceRow), "osdTime": { "enable": checked ? 1 : 0 } } })
                 }
             }
@@ -781,7 +783,7 @@ Item {
                     enabled: page.isAdmin
                     color: Theme.text
                     background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
-                    onEditingFinished: Devices.applySetting(page.deviceRow, "SetOsd",
+                    onEditingFinished: Devices.settings.applySetting(page.deviceKey, "SetOsd",
                         { "Osd": { "channel": Devices.channelOf(page.deviceRow), "osdChannel": { "name": text } } })
                 }
             }
@@ -824,7 +826,7 @@ Item {
                     font.pixelSize: 12
                 }
                 HoverHandler { id: rebootHover; enabled: page.isAdmin }
-                TapHandler { enabled: page.isAdmin; onTapped: Devices.reboot(page.deviceRow) }
+                TapHandler { enabled: page.isAdmin; onTapped: Devices.settings.reboot(page.deviceKey) }
             }
         }
     }
@@ -860,7 +862,7 @@ Item {
                 SwitchRow {
                     label: qsTr("Overwrite when full"); enabledCtl: page.isAdmin
                     checked: parseInt(page.rec.cycle || "1") === 1
-                    onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 54, 55, { "cycle": v ? 1 : 0 })
+                    onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 54, 55, { "cycle": v ? 1 : 0 })
                 }
                 // Weekly per-type recording schedule (7x24 grid, cmd 81/82).
                 Rectangle {
@@ -880,12 +882,12 @@ Item {
                 SliderRow {
                     label: qsTr("Pre-record (s)"); from: 0; to: 15; enabledCtl: page.isAdmin
                     value: parseInt(page.rec.preRecordTime || "0")
-                    onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 54, 55, { "preRecordTime": v })
+                    onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 54, 55, { "preRecordTime": v })
                 }
                 SliderRow {
                     label: qsTr("Post-record (s)"); from: 0; to: 300; enabledCtl: page.isAdmin
                     value: parseInt(page.rec.recordDelayTime || "0")
-                    onCommit: (v) => Devices.writeBcConfig(page.deviceRow, 54, 55, { "recordDelayTime": v })
+                    onCommit: (v) => Devices.settings.writeBcConfig(page.deviceKey, 54, 55, { "recordDelayTime": v })
                 }
                 InfoRow { label: qsTr("File split")
                     value: (page.rec.packageTime !== undefined ? page.rec.packageTime + qsTr(" min") : "") }
@@ -1011,7 +1013,7 @@ Item {
                         danger: parent.confirming
                         onClicked: {
                             if (parent.confirming) {
-                                Devices.applySetting(page.deviceRow, "DelUser",
+                                Devices.settings.applySetting(page.deviceKey, "DelUser",
                                     { "User": { "userName": modelData.userName } });
                                 parent.confirming = false;
                             } else {
@@ -1062,7 +1064,7 @@ Item {
             SwitchRow {
                 label: qsTr("Sync from NTP"); enabledCtl: page.isAdmin
                 checked: page.val("GetNtp","Ntp","enable") === 1
-                onCommit: (v) => Devices.applySetting(page.deviceRow, "SetNtp",
+                onCommit: (v) => Devices.settings.applySetting(page.deviceKey, "SetNtp",
                     { "Ntp": { "enable": v ? 1 : 0,
                                "server": page.val("GetNtp","Ntp","server") || "pool.ntp.org",
                                "port": page.val("GetNtp","Ntp","port") || 123,
@@ -1078,7 +1080,7 @@ Item {
                     text: page.val("GetNtp","Ntp","server") || ""
                     color: Theme.text
                     background: Rectangle { color: Theme.surfaceAlt; border.color: Theme.border; radius: 4 }
-                    onEditingFinished: if (text.length > 0) Devices.applySetting(page.deviceRow, "SetNtp",
+                    onEditingFinished: if (text.length > 0) Devices.settings.applySetting(page.deviceKey, "SetNtp",
                         { "Ntp": { "enable": page.val("GetNtp","Ntp","enable") || 1, "server": text,
                                    "port": page.val("GetNtp","Ntp","port") || 123,
                                    "interval": page.val("GetNtp","Ntp","interval") || 1440 } })

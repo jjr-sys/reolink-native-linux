@@ -173,7 +173,7 @@ Dialog {
                 onClicked: {
                     var t = dlg.tableString();
                     var sched = dlg.schedule; sched[dlg.currentType] = t; dlg.schedule = sched;
-                    Devices.writeRecSchedule(dlg.deviceRow, dlg.currentType, t);
+                    Devices.settings.writeRecSchedule(Devices.cameraKeyAt(dlg.deviceRow), dlg.currentType, t);
                     dlg.dirty = false;
                 }
             }

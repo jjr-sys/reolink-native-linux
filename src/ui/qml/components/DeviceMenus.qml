@@ -108,7 +108,7 @@ Item {
                     case "settings": root.openSettings(host.firstRow); break;
                     case "reconnect": Devices.reconnect(host.firstRow); break;
                     case "credentials": credsDialog.openFor(host.firstRow); break;
-                    case "reboot": Devices.reboot(host.firstRow); break;
+                    case "reboot": Devices.settings.reboot(Devices.cameraKeyAt(host.firstRow)); break;
                     case "remove": Devices.removeDevice(host.firstRow); break;
                     }
                 }

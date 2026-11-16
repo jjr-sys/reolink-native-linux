@@ -197,7 +197,7 @@ void EventManager::onDetection(qint64 hostId, int channel, const QString &type,
 
     // Desktop notification for this detection, gated on the camera's Push
     // Notifications being enabled (mirrors how the official apps gate push).
-    if (m_desktopNotifications && m_devices->pushEnabledFor(hostId, channel)) {
+    if (m_desktopNotifications && m_devices->settings()->pushEnabledFor(QStringLiteral("%1:%2").arg(hostId).arg(channel))) {
         QString what;
         if (type == QLatin1String("person"))       what = tr("Person detected");
         else if (type == QLatin1String("vehicle")) what = tr("Vehicle detected");

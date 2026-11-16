@@ -29,7 +29,7 @@ Dialog {
         deviceRow = row;
         cols = parseInt(md.columns || md.width || "120");
         rows = parseInt(md.rows || md.height || "33");
-        var bits = Devices.mdZoneBits(md.valueTable || "", cols * rows);
+        var bits = Devices.settings.mdZoneBits(md.valueTable || "", cols * rows);
         var arr = new Array(bits.length);
         for (var i = 0; i < bits.length; ++i) arr[i] = bits.charAt(i) === '1';
         cells = arr;
@@ -139,8 +139,8 @@ Dialog {
             TxtBtn {
                 text: qsTr("Save"); edge: Theme.accent
                 onClicked: {
-                    Devices.writeBcConfig(dlg.deviceRow, 46, 47,
-                        { "valueTable": Devices.mdZoneTable(dlg.bitsString()) });
+                    Devices.settings.writeBcConfig(Devices.cameraKeyAt(dlg.deviceRow), 46, 47,
+                        { "valueTable": Devices.settings.mdZoneTable(dlg.bitsString()) });
                     dlg.close();
                 }
             }
