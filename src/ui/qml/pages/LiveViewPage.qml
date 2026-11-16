@@ -358,12 +358,12 @@ Item {
         var p = replayPane();
         return !!p && p.replayKey(k);
     }
-    // Test hook (RL_LIVE_REPLAY, main.cpp).
+    // Test hook (RL_LIVE_REPLAY, TestHooks.h).
     Timer {
         interval: 8000
-        running: page.active && typeof liveReplayTest !== "undefined" && liveReplayTest !== ""
+        running: page.active && TestHooks.liveReplayTest !== ""
         onTriggered: {
-            var parts = liveReplayTest.split(";");
+            var parts = TestHooks.liveReplayTest.split(";");
             page.selectedKey = parts[0];
             var joiners = parts.length > 3 && parts[3] !== "" ? parts[3].split(",") : [];
             if (joiners.length === 0)

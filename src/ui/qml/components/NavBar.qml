@@ -9,7 +9,7 @@ Rectangle {
     height: Theme.navHeight
     color: Theme.surface
 
-    property int currentIndex: (typeof initialPage !== "undefined") ? initialPage : 0
+    property int currentIndex: TestHooks.initialPage
     signal fullscreenRequested()
 
     RowLayout {

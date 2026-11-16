@@ -6,6 +6,7 @@
 #include "ui/FisheyeLens.h"
 #include "ui/LiveReplay.h"
 #include "ui/PaneBarRules.h"
+#include "ui/TestHooks.h"
 
 #include <QGuiApplication>
 #include <QQmlComponent>
@@ -29,6 +30,7 @@ class TestLiveStreamQml : public QObject
     std::unique_ptr<BoschTourController> m_bosch;
     rl::FisheyeAims m_aims;
     rl::PaneBarRules m_paneBar;
+    rl::TestHooks m_testHooks;
     std::unique_ptr<QQmlEngine> m_engine;
     qint64 m_host = 0;
 
@@ -66,6 +68,7 @@ private slots:
         qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "FisheyeAims", &m_aims);
         // Every video pane's bottom bar (live-replay ticket 11) and its sound button.
         qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "PaneBarRules", &m_paneBar);
+        qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "TestHooks", &m_testHooks);
         qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(RL_QML_SOURCE_DIR "/AudioPrefs.qml")),
                                  "ReolinkApp", 1, 0, "AudioPrefs");
         m_engine = std::make_unique<QQmlEngine>();

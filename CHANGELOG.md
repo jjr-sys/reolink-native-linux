@@ -208,6 +208,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
 - **A live report of an event without a picture fills it in.** When Frigate's history filed
   an event whose snapshot never came, the live report of the same event now grabs a frame
   for it (it used to stay blank).
+- **Internal:** the on-screen check hooks QML reads (`RL_INITIAL_PAGE`, `RL_EVENTS_KEYS`,
+  `RL_PLAYBACK_*`, `RL_LIVE_REPLAY`, ...) are one `TestHooks` singleton with their
+  documentation, instead of 17 context properties in `main.cpp`.
 - **Internal:** every event reaches the store through one `Inbox` (tested): it decides what
   is stored (switch-offs, retention, a history batch's bursts, the same event, the cap) and
   what is announced. The Events list puts a history sync's rows at their place instead of

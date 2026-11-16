@@ -233,16 +233,16 @@ ApplicationWindow {
         }
     }
     Component.onCompleted: {
-        if (typeof openClipTarget !== "undefined" && String(openClipTarget) !== "") {
-            var ct = String(openClipTarget).split(":");
+        if (String(TestHooks.openClipTarget) !== "") {
+            var ct = String(TestHooks.openClipTarget).split(":");
             openClipTimer.hostId = parseInt(ct[0]);
             openClipTimer.channel = parseInt(ct[1]);
             openClipTimer.start();
         }
-        if (typeof mockDoorbell !== "undefined" && mockDoorbell) {
+        if (TestHooks.mockDoorbell) {
             // RL_MOCK_DOORBELL=<hostId>:<channel> aims the mock at a real doorbell.
             // Optionally "@<secs>": ring that long after start (live-replay 14).
-            var at = String(mockDoorbellTarget).split("@");
+            var at = String(TestHooks.mockDoorbellTarget).split("@");
             var t = at[0].split(":");
             doorbell.camera = "Front Door";
             if (t.length === 2) {

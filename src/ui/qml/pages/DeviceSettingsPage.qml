@@ -17,8 +17,8 @@ Item {
     // App-level sections, above the camera picker; they ignore the chosen camera.
     readonly property bool appCategory: category === "sites" || category === "highlights"
     Component.onCompleted: {
-        if (typeof initialSettingsCategory !== "undefined" && initialSettingsCategory)
-            category = initialSettingsCategory;
+        if (TestHooks.initialSettingsCategory)
+            category = TestHooks.initialSettingsCategory;
     }
     property var settings: ({})      // cmd -> value map from the last fetch
     property bool isAdmin: false

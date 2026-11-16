@@ -204,7 +204,7 @@ Item {
         var row = rowsByKey()[key];
         if (row === undefined || !day.wantSearch(key, Date.now(), force))
             return;
-        if (typeof mockRecordings !== "undefined" && mockRecordings) {
+        if (TestHooks.mockRecordings) {
             Qt.callLater(() => page.mockAnswer(key, row));
             return;
         }
@@ -652,27 +652,25 @@ Item {
         flushResume();
         stillsWhereMissing();
         // Test hook: play the first recording once to check the video path.
-        if (typeof playbackAutoplay !== "undefined" && playbackAutoplay && segments.length > 0 && !_autoplayed) {
+        if (TestHooks.playbackAutoplay && segments.length > 0 && !_autoplayed) {
             _autoplayed = true;
-            if (typeof playbackHd !== "undefined" && playbackHd)
+            if (TestHooks.playbackHd)
                 toggleHd(selectedKey);
-            if (typeof playbackBackSteps !== "undefined" && playbackBackSteps > 0) {
+            if (TestHooks.playbackBackSteps > 0) {
                 group.playBackward();
-                for (var b = 1; b < playbackBackSteps; b++)
+                for (var b = 1; b < TestHooks.playbackBackSteps; b++)
                     group.stepFast(-1);
             }
-            playAt(typeof playbackAtSecs !== "undefined" && playbackAtSecs >= 0 ? playbackAtSecs
-                                                                              : segments[0].start);
-            if (typeof playbackFastSteps !== "undefined")
-                for (var n = 0; n < playbackFastSteps; n++)
-                    group.stepFast(1);
-            if (typeof playbackStopMs !== "undefined" && playbackStopMs > 0)
+            playAt(TestHooks.playbackAtSecs >= 0 ? TestHooks.playbackAtSecs : segments[0].start);
+            for (var n = 0; n < TestHooks.playbackFastSteps; n++)
+                group.stepFast(1);
+            if (TestHooks.playbackStopMs > 0)
                 autoStop.start();
         }
     }
     Timer {   // test hook: RL_PLAYBACK_STOP_MS
         id: autoStop
-        interval: typeof playbackStopMs !== "undefined" ? playbackStopMs : 0
+        interval: TestHooks.playbackStopMs
         onTriggered: page.stopAllPanes()
     }
 
@@ -733,7 +731,7 @@ Item {
         group.setMonth(selYear, selMonth);
         restoreSelection();
         pruneTimer.start();   // the device list may be complete already (no rowsInserted)
-        if (typeof mockRecordings !== "undefined" && mockRecordings)
+        if (TestHooks.mockRecordings)
             playheadSecs = 32400;
     }
     // The calendar pages through months itself (which ends its bindings); a date set here

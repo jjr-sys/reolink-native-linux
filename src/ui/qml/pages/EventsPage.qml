@@ -1197,16 +1197,16 @@ Item {
     onOnScreenChanged: if (!onScreen) clipPlayer.stop()
     // RL_EVENTS_PLAY test hook: play the newest event once, after the feed loads.
     Timer {
-        running: typeof eventsAutoPlay !== "undefined" && eventsAutoPlay && feed.count > 0
+        running: TestHooks.eventsAutoPlay && feed.count > 0
                  && !clipPlayer.active && !played
         interval: 1500
         property bool played: false
         onTriggered: { played = true; page.playRow(feed.stepEvent(-1, 1)); }
     }
-    // RL_EVENTS_KEYS test hook: the steps and their syntax are documented in main.cpp.
+    // RL_EVENTS_KEYS test hook: the steps and their syntax are documented in TestHooks.h.
     Timer {
         id: keysHook
-        running: typeof eventsKeys !== "undefined" && eventsKeys !== "" && clipPlayer.playing && !started
+        running: TestHooks.eventsKeys !== "" && clipPlayer.playing && !started
         interval: 4000
         property bool started: false
         property var steps: []
@@ -1236,7 +1236,7 @@ Item {
         }
         onTriggered: {
             started = true;
-            steps = eventsKeys.split(",").map(k => k.trim());
+            steps = TestHooks.eventsKeys.split(",").map(k => k.trim());
             keysLog.start();
             next();
         }
@@ -1284,7 +1284,7 @@ Item {
         Timer { id: toastTimer; interval: 3000; onTriggered: toast.opacity = 0 }
     }
 
-    // TEST HOOK: RL_EVENTS_AUTOSCROLL (see main.cpp).
+    // TEST HOOK: RL_EVENTS_AUTOSCROLL (see TestHooks.h).
     Timer {
         id: autoScroll
         property real last: 0
@@ -1294,7 +1294,7 @@ Item {
         property int over100: 0
         interval: 16
         repeat: true
-        running: typeof eventsAutoScroll !== "undefined" && eventsAutoScroll && page.visible
+        running: TestHooks.eventsAutoScroll && page.visible
                  && feedView.count > 0
         onTriggered: {
             const t = Date.now();

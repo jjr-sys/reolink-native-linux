@@ -193,8 +193,8 @@ Item {
     // ---- The pill -------------------------------------------------------------------------
     Rectangle {
         id: pill
-        // paneBarsShown: the RL_PANE_BARS screenshot hook (main.cpp).
-        visible: bar.shown || bar.busy || (typeof paneBarsShown !== "undefined" && paneBarsShown)
+        // TestHooks.paneBarsShown: the RL_PANE_BARS screenshot hook.
+        visible: bar.shown || bar.busy || TestHooks.paneBarsShown
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 8

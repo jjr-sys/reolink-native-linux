@@ -5,6 +5,7 @@
 #include "core/Paths.h"
 #include "core/SingleInstance.h"
 #include "core/Updater.h"
+#include "ui/TestHooks.h"
 #include "ui/TrayIcon.h"
 #include "device/DeviceDiscovery.h"
 #include "device/BoschTourController.h"
@@ -245,71 +246,11 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Updater", &updater);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Downloads", &downloads);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Tray", &tray);
+    // The hooks on-screen checks drive the app with (RL_* variables; see TestHooks.h).
+    rl::TestHooks testHooks;
+    qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "TestHooks", &testHooks);
 
     QQmlApplicationEngine engine;
-    // Lets tests/screenshots open a specific page (0=Live,1=Playback,2=Events,3=Settings).
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("initialPage"), qEnvironmentVariableIntValue("RL_INITIAL_PAGE"));
-    // RL_EVENTS_AUTOSCROLL=1 scrolls the Events feed to its end, logs the longest stall
-    // between scroll steps, and quits: for checking the feed scrolls smoothly.
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("eventsAutoScroll"), qEnvironmentVariableIsSet("RL_EVENTS_AUTOSCROLL"));
-    // RL_EVENTS_PLAY=1 plays the shown camera's newest event in the Events clip player once
-    // the feed has loaded: for checking the player without a click.
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("eventsAutoPlay"), qEnvironmentVariableIsSet("RL_EVENTS_PLAY"));
-    // RL_EVENTS_KEYS="J,J,K": with RL_EVENTS_PLAY, those keys go to the clip player 4 s after
-    // its first picture (live-replay ticket 12): for checking speeds and reverse headless.
-    // Steps, comma-separated: a key (J K L Left Right), "SD" (HD off), "KEEP" (Keep playing,
-    // only once the clip has ended, as on screen) or "+N" (wait N seconds). From the first
-    // step on, the clip's phase, speed and shown time are logged each second.
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("eventsKeys"), qEnvironmentVariable("RL_EVENTS_KEYS"));
-    // RL_SETTINGS_CATEGORY=<key> opens Settings on a section (e.g. "highlights", "mosaics").
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("initialSettingsCategory"), qEnvironmentVariable("RL_SETTINGS_CATEGORY"));
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("mockRecordings"), qEnvironmentVariableIsSet("RL_MOCK_RECORDINGS"));
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("mockDoorbell"), qEnvironmentVariableIsSet("RL_MOCK_DOORBELL"));
-    // RL_MOCK_DOORBELL=<hostId>:<channel>[@<secs>] points the mock at a real camera row
-    // (and rings it that many seconds after start).
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("mockDoorbellTarget"), qEnvironmentVariable("RL_MOCK_DOORBELL"));
-    // RL_OPEN_CLIP=<hostId>:<channel> opens the detection clip for "30 s ago" at startup.
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("openClipTarget"), qEnvironmentVariable("RL_OPEN_CLIP"));
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("playbackAutoplay"), qEnvironmentVariableIsSet("RL_PLAYBACK_AUTOPLAY"));
-    // RL_PLAYBACK_STOP_MS=<ms>: with RL_PLAYBACK_AUTOPLAY, press Stop that long after it starts.
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("playbackStopMs"), qEnvironmentVariableIntValue("RL_PLAYBACK_STOP_MS"));
-    // RL_PLAYBACK_AT=<secs into the day>: with RL_PLAYBACK_AUTOPLAY, play from there instead.
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("playbackAtSecs"),
-        qEnvironmentVariableIsSet("RL_PLAYBACK_AT") ? qEnvironmentVariableIntValue("RL_PLAYBACK_AT") : -1);
-    // RL_PLAYBACK_HD=1: with RL_PLAYBACK_AUTOPLAY, switch the selected pane to HD first.
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("playbackHd"), qEnvironmentVariableIsSet("RL_PLAYBACK_HD"));
-    // RL_PLAYBACK_BACK=<n>: with RL_PLAYBACK_AUTOPLAY, play backwards: 1 = ◀ 1×, n > 1 = « n-1 times.
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("playbackBackSteps"), qEnvironmentVariableIntValue("RL_PLAYBACK_BACK"));
-    // RL_PLAYBACK_FAST=<n>: with RL_PLAYBACK_AUTOPLAY, press » (fast forward) n times once it plays.
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("playbackFastSteps"), qEnvironmentVariableIntValue("RL_PLAYBACK_FAST"));
-    // RL_PANE_BARS=1 shows every video pane's bottom bar without hover (live-replay ticket 11):
-    // for screenshots, which have no pointer.
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("paneBarsShown"), qEnvironmentVariableIsSet("RL_PANE_BARS"));
-    // RL_LIVE_REPLAY="<hostId:channel>;<action>": Live View maximises that camera and, 8 s
-    // later, starts Live replay: action "J" (◀ from now) or "<secs behind now>:<1|-1>"
-    // (play from there forwards or backwards), optionally ":<» presses>" (live-replay 07);
-    // optionally ";<secs>": ● Live that many seconds after replay starts (live-replay 08d);
-    // optionally ";<key>,<key>": with the grid not maximised, those panes press J 2 s after
-    // replay starts — joining it (live-replay 15b; "<secs>" may be empty); optionally
-    // ";<key>@<secs>": maximise that camera then, and back to the grid 5 s later.
-    engine.rootContext()->setContextProperty(
-        QStringLiteral("liveReplayTest"), qEnvironmentVariable("RL_LIVE_REPLAY"));
     engine.rootContext()->setContextProperty(QStringLiteral("startHidden"),
                                              parser.isSet(hiddenOption) && tray.available());
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
