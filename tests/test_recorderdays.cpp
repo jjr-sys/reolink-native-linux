@@ -206,6 +206,10 @@ private slots:
         QCOMPARE(notReady.first().at(3).toInt(), 16);
         QCOMPARE(failed.count(), 1);
         QCOMPARE(found.count(), 1);
+
+        days.search(QStringLiteral("1:6"), 2026, 2, 30);   // no such day: a failure, for good
+        QTRY_COMPARE(failed.count(), 2);
+        QCOMPARE(notReady.count(), 1);
     }
 
     // The module going (the app quitting) stops a search in flight and doesn't wait it out.

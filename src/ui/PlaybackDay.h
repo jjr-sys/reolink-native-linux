@@ -22,6 +22,7 @@ class PlaybackDay : public QObject
     Q_PROPERTY(QStringList paneOrder READ paneOrder WRITE setPaneOrder NOTIFY changed)
     Q_PROPERTY(QString selectedKey READ selectedKey WRITE setSelectedKey NOTIFY changed)
     Q_PROPERTY(QStringList directKeys READ directKeys WRITE setDirectKeys NOTIFY changed)
+    Q_PROPERTY(double searchGapMs READ searchGapMs CONSTANT)   // for the page's retry timer
 
 public:
     static constexpr double kDayEnd = 86399;
@@ -32,6 +33,7 @@ public:
     static constexpr double kSearchGapMs = 10000;
 
     explicit PlaybackDay(QObject *parent = nullptr);
+    double searchGapMs() const { return kSearchGapMs; }
 
     QStringList paneOrder() const { return m_order; }
     void setPaneOrder(const QStringList &keys);
@@ -68,8 +70,12 @@ public:
     // previous recording's end / the next one's start), Nothing, or Ignore (not the lead's).
     Q_INVOKABLE double carryOn(const QString &key, int direction, double playhead) const;
     // Whether to ask for `key`'s day now (and note that it was): never twice within 10 s; an
-    // answered day only while it came back empty, at most three times; `force` regardless.
+    // unanswered day until it answers; an answered day only while it came back empty, at most
+    // three times; `force` regardless.
     Q_INVOKABLE bool wantSearch(const QString &key, double nowMs, bool force);
+    // The last search for `key` couldn't be asked (device not ready): not a try, and the
+    // camera may be asked again at once.
+    Q_INVOKABLE void notReady(const QString &key);
 
     // The playhead after `dt` seconds at `speed` going `direction`, inside the day; off 1×, the
     // driving pane's frame time when there is one (driverSecs >= 0).

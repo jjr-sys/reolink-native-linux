@@ -356,7 +356,8 @@ rules Playback and `LiveReplay` share.
 ### 3c: RecorderDays, one camera's day of recordings (`9a508dc`, `1eb48de`, review fixes)
 
 **Module.** `RecorderDays` (`src/device/RecorderDays.{h,cpp}`): `search(key, y, m, d)` answers
-`dayFound(key, y, m, d, segments, monthDays)` / `dayFailed(key, y, m, d, error)`. Vendors are
+`dayFound(key, y, m, d, segments, monthDays)` / `dayFailed(key, y, m, d, error)` /
+`dayNotReady(key, y, m, d)` (the camera can't be asked yet; added for ticket 07). Vendors are
 adapters behind a `DaySearch` (`reolinkDaySearch`: the HTTP `Search` over `ReolinkTransport`;
 `frigateDaySearch`: recordings + summary, with a cancel flag). `daySegments(files, date)` is
 the one segment rule. `DeviceManager` hands it key → search (`rowOfCameraKey`, exact) and
@@ -383,7 +384,9 @@ owns it (`Devices.days`); the four old searches and five old signals are gone.
    old `searchReplayDay` refused it.
 9. Behaviour unchanged on screen: Playback (two recorders + Frigate) and Live replay (from
    now, joined) log and draw as before. Found while checking, older than this work: a Frigate
-   camera's Playback day stays empty when Playback opens at start (ticket 07).
+   camera's Playback day stayed empty when Playback opened at start (ticket 07, fixed:
+   "not ready" is its own answer and not a try; Playback asks for unanswered days every 10 s
+   while it shows).
 
 Revert: the review-fix commit, then `1eb48de`, then `9a508dc` (each builds and passes alone).
 

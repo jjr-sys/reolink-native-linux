@@ -50,13 +50,15 @@ DaySearch frigateDaySearch(const QString &host, int port, const QString &camera)
 
 // One camera's day of recordings, from whichever vendor holds them (wayfinder/architecture
 // ticket 01). Ask with search(key, y, m, d); the answer always names the camera key
-// ("hostId:channel") and the day, so a page takes only answers for a camera and day it shows.
+// ("hostId:channel") and the day, so a page takes only answers for a camera and day it shows:
+// dayFound (its recordings), dayFailed (the device said no, or no such day) or dayNotReady
+// (the camera can't be asked yet; ticket 07).
 class RecorderDays : public QObject
 {
     Q_OBJECT
 public:
     // The camera's search, or an empty one when it can't be searched now (device not ready:
-    // answered with dayNotReady). An invalid date is answered the same way.
+    // answered with dayNotReady).
     using Sources = std::function<DaySearch(const QString &key)>;
     explicit RecorderDays(Sources sources, QObject *parent = nullptr);
     ~RecorderDays() override;   // stops searches in flight, waits at most 2 s

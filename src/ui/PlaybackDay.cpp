@@ -111,6 +111,15 @@ bool PlaybackDay::wantSearch(const QString &key, double nowMs, bool force)
     return true;
 }
 
+void PlaybackDay::notReady(const QString &key)
+{
+    const auto it = m_searches.find(key);
+    if (it == m_searches.end())
+        return;
+    it->count = qMax(0, it->count - 1);
+    it->lastAskedMs = -1;
+}
+
 double PlaybackDay::advance(double playhead, double dt, double speed, int direction, double driverSecs)
 {
     if (driverSecs >= 0)

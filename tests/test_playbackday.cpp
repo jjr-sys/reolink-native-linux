@@ -129,10 +129,24 @@ private slots:
         QVERIFY(!d.wantSearch("1:2", 50000, false));
         d.clear();
         QVERIFY(d.wantSearch("1:2", 50001, false));
-        // No answer yet (its device not ready): asked again every 10 s, with no limit, until
-        // one comes (ticket 07: a Frigate login loaded after a minute is still searched).
-        for (int i = 0; i < 6; ++i)
-            QVERIFY(d.wantSearch("2:2", 100000 + i * 10000, false));
+    }
+
+    // A camera that can't be asked yet (its device not connected, a Frigate login not loaded;
+    // wayfinder/architecture ticket 07) hasn't answered: that ask isn't one of its three tries
+    // and it may be asked again at once (its device changing); a real failure later still gets
+    // all three.
+    void notReadyIsNotATry()
+    {
+        PlaybackDay d;
+        for (int i = 0; i < 5; ++i) {
+            QVERIFY(d.wantSearch("3:0", i * 1000, false));   // not 10 s apart: nothing was asked
+            d.notReady("3:0");
+        }
+        QVERIFY(d.wantSearch("3:0", 5000, false));   // ready now: asked
+        d.setSegments("3:0", {});                     // refused (a wrong password)
+        QVERIFY(d.wantSearch("3:0", 15000, false));
+        QVERIFY(d.wantSearch("3:0", 25000, false));   // the third
+        QVERIFY(!d.wantSearch("3:0", 35000, false));
     }
 
     // The playhead runs with the clock at the group's speed and direction, inside the day; off

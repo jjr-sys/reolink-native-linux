@@ -98,8 +98,9 @@ DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject
         if (row < 0)
             return {};
         const Entry &e = m_entries.at(row);
-        if (e.kindCaps().frigateApi)   // once validated: its login is loaded (ticket 07)
-            return e.primed ? frigateDaySearch(e.rec.addr, e.rec.port, e.serverName()) : DaySearch{};
+        if (e.kindCaps().frigateApi)   // not before its login is loaded (ticket 07)
+            return e.frigateReady() ? frigateDaySearch(e.rec.addr, e.rec.port, e.serverName())
+                                    : DaySearch{};
         const auto client = clientFor(row);
         return client ? reolinkDaySearch(client, e.channel) : DaySearch{};
     }, this);
@@ -117,6 +118,12 @@ DeviceManager::DeviceManager(Database *db, CredentialStore *credentials, QObject
                 qCInfo(lcCore).noquote() << "recording search" << searchLabel(key)
                                          << QDate(y, m, d).toString(Qt::ISODate) << ":"
                                          << segments.size() << "recordings";
+            });
+    connect(m_days, &RecorderDays::dayNotReady, this,
+            [searchLabel](const QString &key, int y, int m, int d) {
+                qCInfo(lcCore).noquote() << "recording search" << searchLabel(key)
+                                         << QDate(y, m, d).toString(Qt::ISODate)
+                                         << ": not ready yet";
             });
     connect(m_days, &RecorderDays::dayFailed, this,
             [searchLabel](const QString &key, int y, int m, int d, const QString &error) {

@@ -660,6 +660,31 @@ private slots:
         QVERIFY(r.oldestFound());
         QCOMPARE(r.oldest(), at(2026, 11, 14, 1, 0));
     }
+    // Answers are shared with Playback (wayfinder/architecture tickets 01, 07): failures for a
+    // day replay isn't searching don't cost it that day's footage or extra searches.
+    void anotherPagesFailureIsNotReplays()
+    {
+        LiveReplay r;
+        r.setNow(kNow);
+        Recorder rec(r);
+        rec.months[202611] = days({14, 15});
+        rec.months[202610] = days({});
+        rec.book[QDate(2026, 11, 14)] = segs({{3600, 7200}});
+        rec.book[QDate(2026, 11, 15)] = segs({{3600, 7200}});
+        r.start(QStringLiteral("5:0"));
+        QSignalSpy play(&r, &LiveReplay::playWanted);
+        r.playFrom(kNow, -1);
+        QCOMPARE(rec.asked.first(), kToday);
+        for (int i = 0; i < 3; ++i)   // not in flight: someone else's
+            r.dayFailed(r.cameraKey(), 2026, 11, 14);
+        rec.answerAll();
+        QVERIFY(rec.ever.count(QDate(2026, 11, 14)) <= 1);   // nothing asked on its account
+        QCOMPARE(play.count(), 1);
+        QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 15, 2, 0));   // today's footage
+        r.playFrom(at(2026, 11, 15, 0, 30), -1);   // back over midnight: the 14th still has it
+        rec.answerAll();
+        QCOMPARE(play.last().at(0).toDouble(), at(2026, 11, 14, 2, 0));
+    }
     // A recording that starts the evening before (a file over midnight, listed on its last
     // day) lands on its own day when played forwards to it.
     void forwardsToAFileStartingTheDayBeforeLandsOnThatDay()

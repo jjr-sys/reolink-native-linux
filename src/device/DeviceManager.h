@@ -250,7 +250,8 @@ public:
     void captureEventThumbnail(qint64 hostId, int channel, qint64 eventId);
 
     // A camera's day of recordings, for Playback and Live replay: days->search(key, y, m, d)
-    // answers dayFound / dayFailed keyed by camera and dated (wayfinder/architecture 01).
+    // answers dayFound / dayFailed / dayNotReady, keyed by camera and dated
+    // (wayfinder/architecture tickets 01, 07).
     RecorderDays *days() const { return m_days; }
     // A direct (Frigate) camera's playable URL from startEpoch (Unix seconds); "" otherwise.
     Q_INVOKABLE QString playbackUrl(int row, qint64 startEpoch);
@@ -401,6 +402,8 @@ private:
         }
         // A Reolink host whose credentials are loaded: HTTP/Baichuan commands may be sent.
         bool reolinkReady() const { return kindCaps().reolinkProtocol && primed; }
+        // Validated (its Frigate login loaded): its API can be asked.
+        bool frigateReady() const { return kindCaps().frigateApi && primed; }
         int channel = 0;   // channel index on the host
         QString chanName;  // camera name for this channel
         QString sourceName; // the camera's own name on its server (Frigate key), kept through a rename

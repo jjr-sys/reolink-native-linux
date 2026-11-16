@@ -108,7 +108,13 @@ RecorderDays::~RecorderDays()
 void RecorderDays::search(const QString &key, int year, int month, int day)
 {
     const QDate date(year, month, day);
-    const DaySearch source = date.isValid() ? m_sources(key) : DaySearch{};
+    if (!date.isValid()) {
+        QMetaObject::invokeMethod(this, [this, key, year, month, day] {
+            emit dayFailed(key, year, month, day, tr("no such day"));
+        }, Qt::QueuedConnection);
+        return;
+    }
+    const DaySearch source = m_sources(key);
     if (!source) {
         // Queued, as a search's answer is: callers never see it inside their own call.
         QMetaObject::invokeMethod(this, [this, key, year, month, day] {
