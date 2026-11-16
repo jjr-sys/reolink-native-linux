@@ -182,6 +182,31 @@ private slots:
         QCOMPARE(db.recentEvents(10, {}, {7}).size(), 2);
     }
 
+    // Ticket 03: a history sync's rows go in the list at their place by time (newest first),
+    // not on top, and a sync doesn't count anything unread.
+    void historyRowsLandAtTheirPlaceInTheList()
+    {
+        QTemporaryDir dir;
+        Database db(dir.filePath("t.db"), QStringLiteral("sw_place"));
+        QVERIFY(db.open());
+        CredentialStore credentials;
+        DeviceManager devices(&db, &credentials);
+        EventManager events(&db, &devices);
+        const qint64 now = QDateTime::currentSecsSinceEpoch();
+        devices.reportDetection(7, 1, QStringLiteral("person"), QStringLiteral("Gate"));
+        devices.reportDetection(7, 1, QStringLiteral("person"), QStringLiteral("Gate"), now - 3600);
+        const int unread = events.unread();
+        events.applyFrigateHistory(9, {{QStringLiteral("drive"), 2}},
+            {{QStringLiteral("e1"), QStringLiteral("drive"), QStringLiteral("person"), double(now - 600)}});
+        QCOMPARE(events.rowCount(), 3);
+        QCOMPARE(events.unread(), unread);
+        QList<qint64> times;
+        for (int i = 0; i < 3; ++i)
+            times << events.data(events.index(i), EventManager::TimestampRole).toLongLong();
+        QVERIFY2(times.at(0) >= now && times.at(1) == now - 600 && times.at(2) == now - 3600,
+                 qPrintable(QStringLiteral("%1 %2 %3").arg(times.at(0)).arg(times.at(1)).arg(times.at(2))));
+    }
+
     // An event that couldn't be stored is not counted as unread (nor pictured or announced).
     void anEventThatWasntStoredIsntCounted()
     {

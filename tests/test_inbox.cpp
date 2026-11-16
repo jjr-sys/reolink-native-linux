@@ -129,12 +129,12 @@ private slots:
         const QVector<Inbox::Filing> f = s.inbox.fileHistory({   // newest first, as Frigate
             seen(9, 2, "person", kNow - 40), seen(9, 2, "person", kNow - 590),
             seen(9, 2, "vehicle", kNow - 595), seen(9, 2, "person", kNow - 600)});
-        QCOMPARE(f.size(), 4);
-        QCOMPARE(f.at(0).row.timestamp, kNow - 600);   // oldest first
-        QCOMPARE(f.at(0).verdict, Verdict::Stored);
-        QCOMPARE(f.at(1).verdict, Verdict::Stored);    // vehicle at 595
-        QCOMPARE(f.at(2).verdict, Verdict::SameBurst); // person 10 s after 600
-        QCOMPARE(f.at(3).verdict, Verdict::Stored);    // person at 40
+        QCOMPARE(f.size(), 4);                          // in the batch's order
+        QCOMPARE(f.at(0).verdict, Verdict::Stored);     // person at 40
+        QCOMPARE(f.at(1).verdict, Verdict::SameBurst);  // person 10 s after 600 (filed first)
+        QCOMPARE(f.at(2).verdict, Verdict::Stored);     // vehicle at 595
+        QCOMPARE(f.at(3).verdict, Verdict::Stored);
+        QCOMPARE(f.at(3).row.timestamp, kNow - 600);
         QStringList stored;
         for (const EventRecord &r : s.rows(9))
             stored << QStringLiteral("%1@%2").arg(r.type).arg(kNow - r.timestamp);
@@ -203,6 +203,21 @@ private slots:
             capped += r.type == QLatin1String("person");
         QCOMPARE(capped, 3);
         QCOMPARE(s.rows(7).size(), 4);
+    }
+
+    // Rows deleted another way (a switch-off) are counted afresh, so the cap doesn't trim
+    // too early.
+    void aRecountForgetsTheRecordersCount()
+    {
+        Store s("recount", 2);
+        QSignalSpy trimmed(&s.inbox, &Inbox::trimmed);
+        s.inbox.file(seen(7, 1, "person", kNow - 300), Source::History);
+        s.inbox.file(seen(7, 1, "vehicle", kNow - 200), Source::History);
+        QVERIFY(s.db.deleteEvents(7, 1, QStringLiteral("vehicle")));
+        s.inbox.recount(7);
+        s.inbox.file(seen(7, 1, "person", kNow - 100), Source::History);
+        QCOMPARE(trimmed.count(), 0);
+        QCOMPARE(s.rows(7).size(), 2);
     }
 
     void retentionDropsOldRowsAndTheirPictures()

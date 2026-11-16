@@ -8,6 +8,7 @@
 #include <QFile>
 
 #include <algorithm>
+#include <numeric>
 
 namespace rl {
 
@@ -61,28 +62,27 @@ Inbox::Filing Inbox::file(const Candidate &c, Source source)
     return f;
 }
 
-QVector<Inbox::Filing> Inbox::fileHistory(QVector<Candidate> batch)
+QVector<Inbox::Filing> Inbox::fileHistory(const QVector<Candidate> &batch)
 {
     // Oldest first, so the burst gate sees them in the order they happened.
-    std::stable_sort(batch.begin(), batch.end(),
-                     [](const Candidate &a, const Candidate &b) { return a.at < b.at; });
+    QVector<int> order(batch.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(),
+                     [&batch](int a, int b) { return batch.at(a).at < batch.at(b).at; });
     device::BurstGate burst;   // the live poller's rule: a lingering person is one event
-    QVector<Filing> out;
-    out.reserve(batch.size());
-    for (const Candidate &c : batch) {
+    QVector<Filing> out(batch.size());
+    for (int i : order) {
+        const Candidate &c = batch.at(i);
         if (m_switches && m_switches->isOff(c.hostId, c.channel, c.type)) {
-            out.append({Verdict::SwitchedOff, {}, false, false});
+            out[i].verdict = Verdict::SwitchedOff;
             continue;
         }
         const QString camera = QString::number(c.hostId) + u':' + QString::number(c.channel);
         if (!burst.admit(camera, c.type, c.at)) {
-            Filing f;
-            f.verdict = Verdict::SameBurst;
-            f.row.timestamp = qint64(c.at);
-            out.append(f);
+            out[i].verdict = Verdict::SameBurst;
             continue;
         }
-        out.append(file(c, Source::History));
+        out[i] = file(c, Source::History);
     }
     return out;
 }
@@ -142,6 +142,14 @@ void Inbox::enforceRetention()
     m_cappedCount.clear();   // recounted on each recorder's next event
     dropPictures(pictures);
     emit trimmed();
+}
+
+void Inbox::recount(qint64 hostId)
+{
+    if (hostId < 0)
+        m_cappedCount.clear();
+    else
+        m_cappedCount.remove(hostId);
 }
 
 void Inbox::dropPictures(const QStringList &paths)

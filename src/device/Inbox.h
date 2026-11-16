@@ -65,8 +65,8 @@ public:
 
     Filing file(const Candidate &c, Source source);
     // A history batch, in any order: filed oldest first, one per camera, type and burst.
-    // The filings come back in that (oldest-first) order.
-    QVector<Filing> fileHistory(QVector<Candidate> batch);
+    // The filings come back in the batch's order (one per candidate).
+    QVector<Filing> fileHistory(const QVector<Candidate> &batch);
     // A connectivity change: one Status row per camera named (device::statusRows). Announced
     // once, by the first filing (also when no row was written: a host whose cameras were
     // all in that state already).
@@ -75,6 +75,11 @@ public:
 
     // The age purge (motion 24 h, the rest 30 days), with the removed rows' pictures.
     void enforceRetention();
+    // Rows went another way (a clear, a switch-off): count the recorder (-1: every one)
+    // afresh for the cap.
+    void recount(qint64 hostId = -1);
+    // Deletes removed rows' picture files.
+    static void dropPictures(const QStringList &paths);
 
 signals:
     // Stored rows went: a retention purge or a cap trim. The list reloads.
@@ -84,7 +89,6 @@ private:
     qint64 now() const;
     Filing store(EventRecord rec, bool announce);
     void enforceCap(qint64 hostId, const QString &type);
-    static void dropPictures(const QStringList &paths);
 
     Database *m_db;
     EventSwitches *m_switches;

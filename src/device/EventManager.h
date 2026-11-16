@@ -5,6 +5,7 @@
 #include "device/EventHistory.h"
 #include "device/FirstSwitchOffs.h"
 #include "device/FrigateApi.h"
+#include "device/Inbox.h"
 
 #include <QAbstractListModel>
 #include <QFutureSynchronizer>
@@ -18,8 +19,9 @@ namespace rl {
 class DeviceManager;
 class EventSwitches;
 
-// The event inbox: persists detection events (from DeviceManager's poller) and
-// exposes the newest of them to QML, with an unread counter. The store keeps its own history (motion 24 h; everything else 30 days under a
+// The Events list: files detection, history and status events through the Inbox (which
+// decides what is stored) and exposes the newest of them to QML, with an unread counter
+// and desktop notices. The store keeps its own history (motion 24 h; everything else 30 days under a
 // per-recorder cap, see EventHistory.h); the list and the per-day lookups query it.
 class EventManager : public QAbstractListModel
 {
@@ -140,22 +142,17 @@ private:
     // The cameras the first switch-offs can name: stored event names, and the DB's channel
     // list (with each channel's event types). Bare streams raise nothing and are left out.
     QVector<device::KnownCamera> knownCameras() const;
-    // Files one event: stores it, puts it at the top of the list, and keeps its recorder
-    // under the cap.
-    void fileEvent(EventRecord &rec);
-    // The per-recorder cap: counts capped (non-motion) events in memory and trims the
-    // recorder only once it goes over.
-    void enforceCap(qint64 hostId, const QString &type);
-    void dropThumbnails(const QStringList &paths);
+    // Puts a stored row in the list at its place by time (newest first), unless the Inbox
+    // trimmed the store meanwhile: then the list reloads instead.
+    void show(const EventRecord &row);
+    // The Inbox trimmed the store (cap, retention) during a filing: reload once it's done.
+    void reloadIfTrimmed();
     // One-time cleanup: events stored under a Frigate camera's raw config key
     // ("bosch_camera") before the display-name fix shipped are rewritten in
     // place in the database to the pretty form ("Bosch Camera")
     // so they line up with the filter dropdown and the property/camera shown
     // on the row. No-op once everything is already in the pretty form.
     void normalizeStoredCameraNames();
-    // Age-based purge of the whole store (motion 24 h, the rest 30 days). Deletes the
-    // removed rows' thumbnail files and reloads the list if anything went.
-    void enforceRetention();
     // Backfilled events have no live thumbnail to grab (the camera's not showing that
     // moment any more), so this pulls Frigate's own saved frame for each one instead —
     // (local db event id, Frigate's own event id) pairs, fetched on a worker thread.
@@ -177,7 +174,8 @@ private:
     qint64 m_runId = -1;             // this launch's app_runs row
     QFutureSynchronizer<void> m_pending; // drains in-flight history syncs at teardown
     QVector<EventRecord> m_rows;     // the list: newest first
-    QHash<qint64, int> m_cappedCount; // recorder -> capped events, counted lazily
+    Inbox m_inbox;                   // what is stored (wayfinder/architecture ticket 03)
+    bool m_trimmed = false;          // the Inbox trimmed during the current filing
     QSet<qint64> m_frigateHistoryChecked;
     QVector<EventSwitchKey> m_offeredSwitchOffs; // what the first switch-offs dialog shows // hosts already considered for the one-time catch-up
     int m_unread = 0;

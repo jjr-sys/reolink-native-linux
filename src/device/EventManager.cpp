@@ -24,12 +24,15 @@ namespace rl {
 
 
 EventManager::EventManager(Database *db, DeviceManager *devices, QObject *parent)
-    : QAbstractListModel(parent), m_db(db), m_devices(devices)
+    : QAbstractListModel(parent), m_db(db), m_devices(devices),
+      m_inbox(db, devices->eventSwitches())
 {
+    connect(&m_inbox, &Inbox::trimmed, this, [this] { m_trimmed = true; });
     m_desktopNotifications =
         QSettings().value(QStringLiteral("notifications/desktop"), true).toBool();
     normalizeStoredCameraNames();
-    enforceRetention();
+    m_inbox.enforceRetention();
+    m_trimmed = false;
     reload();
 
     // This launch's run, stamped every minute, so a gap (app closed or crashed) can be
@@ -50,7 +53,10 @@ EventManager::EventManager(Database *db, DeviceManager *devices, QObject *parent
 
     // The age purge runs hourly; the cap is checked as events arrive.
     m_retentionTimer.setInterval(3600'000);
-    connect(&m_retentionTimer, &QTimer::timeout, this, [this] { enforceRetention(); });
+    connect(&m_retentionTimer, &QTimer::timeout, this, [this] {
+        m_inbox.enforceRetention();
+        reloadIfTrimmed();   // rows without thumbnails may have gone too
+    });
     m_retentionTimer.start();
 
     // A Frigate host the inbox has never filed anything for gets one automatic
@@ -114,38 +120,6 @@ void EventManager::normalizeStoredCameraNames()
     }
 }
 
-void EventManager::dropThumbnails(const QStringList &paths)
-{
-    for (const QString &path : paths)
-        QFile::remove(path);
-}
-
-void EventManager::enforceRetention()
-{
-    const QStringList thumbs = m_db->purgeExpiredEvents(
-        QDateTime::currentSecsSinceEpoch(), device::kMotionKeepSecs, device::kOtherKeepSecs);
-    m_cappedCount.clear(); // recounted on each recorder's next event
-    dropThumbnails(thumbs);
-    reload(); // rows without thumbnails may have gone too
-}
-
-void EventManager::enforceCap(qint64 hostId, const QString &type)
-{
-    if (type == QLatin1String("motion"))
-        return;
-    auto it = m_cappedCount.find(hostId);
-    if (it == m_cappedCount.end())
-        it = m_cappedCount.insert(hostId, m_db->countCappedEvents(hostId)); // includes this one
-    else
-        ++it.value();
-    if (it.value() <= device::kCapPerRecorder)
-        return;
-    const QStringList thumbs = m_db->trimHostEvents(hostId, device::kCapPerRecorder);
-    it.value() = m_db->countCappedEvents(hostId);
-    dropThumbnails(thumbs);
-    reload();
-}
-
 void EventManager::reload()
 {
     beginResetModel();
@@ -207,30 +181,20 @@ QHash<int, QByteArray> EventManager::roleNames() const
 void EventManager::onDetection(qint64 hostId, int channel, const QString &type,
                                const QString &camera, qint64 at)
 {
-    EventRecord rec;
-    rec.hostId = hostId;
-    rec.channel = channel;
-    // When the source saw it (Frigate's start: a poll after an outage reports late), never
-    // ahead of our clock.
-    const qint64 now = QDateTime::currentSecsSinceEpoch();
-    rec.timestamp = at > 0 ? qMin(at, now) : now;
-    rec.type = type;
-    rec.camera = camera;
-    // At the source's own time (Frigate), the history sync may have filed it already: the
-    // same event, not a new one (wayfinder/architecture ticket 02). Detections at "now"
-    // (Reolink) have no history to meet and file as they come.
-    if (at > 0) {
-        const auto near = m_db->eventNear(hostId, channel, type, rec.timestamp,
-                                          qint64(frigate::kBurstGapSecs));
-        if (near && device::sameBurstWindow(near->timestamp, rec.timestamp))
-            return;
+    // `at`: when the source saw it (Frigate's start: a poll after an outage reports late).
+    const Inbox::Filing f = m_inbox.file({hostId, channel, type, camera, double(at)},
+                                         Inbox::Source::Live);
+    if (f.verdict == Inbox::Verdict::Stored) {
+        show(f.row);
+        emit storedChanged(hostId);
     }
-    fileEvent(rec);
-    if (rec.id <= 0)
-        return; // not stored: nothing to picture, count or announce
-    // Grab a frame from the camera for the inbox thumbnail (quiet; the row
-    // updates in place when it lands).
-    m_devices->captureEventThumbnail(hostId, channel, rec.id);
+    reloadIfTrimmed();
+    // Grab a frame from the camera for the row's thumbnail (quiet; the row updates in
+    // place when it lands): a new row, or the same event history filed without one.
+    if (f.needsPicture)
+        m_devices->captureEventThumbnail(hostId, channel, f.row.id);
+    if (!f.announce)
+        return; // not stored, or already known: nothing to count or announce
     ++m_unread;
     emit unreadChanged();
 
@@ -246,17 +210,23 @@ void EventManager::onDetection(qint64 hostId, int channel, const QString &type,
         else                                        what = tr("Motion detected");
         m_notifier.notify(camera.isEmpty() ? tr("Camera") : camera, what,
                           QStringLiteral("io.github.todesengelx.ReolinkLinux"),
-                          hostId, channel, rec.timestamp);
+                          hostId, channel, f.row.timestamp);
     }
 }
 
-void EventManager::fileEvent(EventRecord &rec)
+void EventManager::show(const EventRecord &row)
 {
-    rec.id = m_db->addEvent(rec);
-    if (rec.id <= 0)
+    if (m_trimmed)
+        return;   // the list reloads from the store (reloadIfTrimmed)
+    // Newest first; a history row lands among the older ones.
+    const auto at = std::find_if(m_rows.cbegin(), m_rows.cend(), [&row](const EventRecord &r) {
+        return r.timestamp <= row.timestamp;
+    });
+    const int i = int(at - m_rows.cbegin());
+    if (i >= kListLimit)
         return;
-    beginInsertRows({}, 0, 0);
-    m_rows.prepend(rec);
+    beginInsertRows({}, i, i);
+    m_rows.insert(i, row);
     endInsertRows();
     if (m_rows.size() > kListLimit) {
         beginRemoveRows({}, m_rows.size() - 1, m_rows.size() - 1);
@@ -264,8 +234,14 @@ void EventManager::fileEvent(EventRecord &rec)
         endRemoveRows();
     }
     emit countChanged();
-    emit storedChanged(rec.hostId);
-    enforceCap(rec.hostId, rec.type);
+}
+
+void EventManager::reloadIfTrimmed()
+{
+    if (!m_trimmed)
+        return;
+    m_trimmed = false;
+    reload();
 }
 
 void EventManager::setDesktopNotifications(bool on)
@@ -283,12 +259,23 @@ void EventManager::onConnectivity(qint64 hostId, int channel, const QString &nam
     // Health alert: a camera (channel >= 0) or a whole host dropped or returned. A
     // host's change is filed as Status on each camera that flipped with it. Counted and
     // notified once — a dead camera can't announce itself, so the client has to.
-    const qint64 now = QDateTime::currentSecsSinceEpoch();
-    for (EventRecord rec : device::statusRows(hostId, channel, name, online, changed, now))
-        fileEvent(rec);
+    bool announce = false, stored = false;
+    for (const Inbox::Filing &f : m_inbox.fileStatus(hostId, channel, name, online, changed)) {
+        if (f.verdict == Inbox::Verdict::Stored) {
+            show(f.row);
+            stored = true;
+        }
+        announce = announce || f.announce;
+    }
+    if (stored)
+        emit storedChanged(hostId);
+    reloadIfTrimmed();
+    if (!announce)
+        return;
     ++m_unread;
     emit unreadChanged();
 
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
     if (m_desktopNotifications)
         m_notifier.notify(name.isEmpty() ? tr("Device") : name,
                           online ? tr("Back online") : tr("Went offline \u26a0"),
@@ -364,7 +351,7 @@ void EventManager::clear()
     for (const QString &f : dir.entryList({QStringLiteral("event_*.jpg")}, QDir::Files))
         dir.remove(f);
     m_db->clearEvents();
-    m_cappedCount.clear();
+    m_inbox.recount();
     m_unread = 0;
     emit unreadChanged();
     reload();
@@ -432,10 +419,10 @@ bool EventManager::switchOffAll(const QVector<EventSwitchKey> &pairs)
             continue;
         }
         thumbs += removed;
-        m_cappedCount.remove(k.hostId); // recounted on the recorder's next event
+        m_inbox.recount(k.hostId);
         deleted = true;
     }
-    dropThumbnails(thumbs);
+    Inbox::dropPictures(thumbs);
     if (deleted)
         reload();
     return ok;
@@ -591,56 +578,34 @@ void EventManager::syncAllFrigateHistory()
 void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> &channelOf,
                                        const QVector<frigate::Event> &events)
 {
-    const qint64 now = QDateTime::currentSecsSinceEpoch();
-    const qint64 cutoff = now - device::kOtherKeepSecs;
-    device::BurstGate burst; // the live poller's gate, so a lingering person doesn't
-                             // become a dozen separate rows.
-    bool added = false;
-    QVector<QPair<qint64, QString>> newThumbs; // (local db id, Frigate's own event id)
-    // Frigate returns newest first; walk oldest first so the burst gate sees them
-    // in the order they actually happened.
-    for (int i = events.size() - 1; i >= 0; --i) {
-        const frigate::Event &ev = events.at(i);
-        if (ev.start < cutoff || !channelOf.contains(ev.camera))
-            continue;
+    QVector<Inbox::Candidate> batch;
+    QVector<QString> frigateIds;   // beside each candidate: Frigate's own event id
+    for (const frigate::Event &ev : events) {
         const QString type = frigate::typeForLabel(ev.label);
-        if (type.isEmpty())
+        if (type.isEmpty() || !channelOf.contains(ev.camera))
             continue;
-        const int channel = channelOf.value(ev.camera);
-        if (m_devices->eventSwitches()->isOff(hostId, channel, type))
-            continue; // switched off: never stored, pictured or counted
-        if (!burst.admit(ev.camera, type, ev.start))
-            continue;
-
-        // Never ahead of our clock (as onDetection), so a live report of it meets this row.
-        const qint64 ts = qMin(static_cast<qint64>(ev.start), now);
-        // Skip anything that already covers this moment — a rerun of the sync, or
-        // the live poller having already caught it — but if that existing row is
-        // still missing its thumbnail (e.g. it was filed before this sync could
-        // fetch one), pick that up now rather than leaving it blank forever.
-        const auto near = m_db->eventNear(hostId, channel, type, ts, qint64(frigate::kBurstGapSecs));
-        if (near && device::sameBurstWindow(near->timestamp, ts)) {
-            if (near->thumbnail.isEmpty())
-                newThumbs.append({near->id, ev.id});
-            continue;
-        }
-
-        EventRecord rec;
-        rec.hostId = hostId;
-        rec.channel = channel;
-        rec.timestamp = ts;
-        rec.type = type;
-        rec.camera = frigate::displayCameraName(ev.camera);
-        const qint64 dbId = m_db->addEvent(rec);
-        if (dbId > 0) {
-            added = true;
-            newThumbs.append({dbId, ev.id});
-            enforceCap(hostId, rec.type);
-        }
+        batch.append({hostId, channelOf.value(ev.camera), type,
+                      frigate::displayCameraName(ev.camera), ev.start});
+        frigateIds.append(ev.id);
     }
-    if (added)
-        reload();
-    fetchHistoryThumbnails(hostId, newThumbs);
+    bool stored = false;
+    QVector<QPair<qint64, QString>> pictures; // (local db id, Frigate's own event id)
+    const QVector<Inbox::Filing> filed = m_inbox.fileHistory(batch);
+    for (int i = 0; i < filed.size(); ++i) {
+        const Inbox::Filing &f = filed.at(i);
+        if (f.verdict == Inbox::Verdict::Stored) {
+            show(f.row);
+            stored = true;
+        }
+        // A new row, or one already covering this moment (a rerun, or the live poller
+        // caught it) whose picture never came.
+        if (f.needsPicture)
+            pictures.append({f.row.id, frigateIds.at(i)});
+    }
+    if (stored)
+        emit storedChanged(hostId);
+    reloadIfTrimmed();
+    fetchHistoryThumbnails(hostId, pictures);
 }
 
 void EventManager::fetchHistoryThumbnails(qint64 hostId, const QVector<QPair<qint64, QString>> &ids)
