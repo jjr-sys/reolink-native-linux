@@ -3,6 +3,9 @@
 #include <QByteArray>
 #include <QJsonObject>
 #include <QObject>
+
+#include <functional>
+#include <optional>
 #include <QUrl>
 #include <QVariantList>
 
@@ -47,6 +50,10 @@ class BoschTourController : public QObject
     Q_PROPERTY(bool irisAvailable READ irisAvailable NOTIFY irisChanged)
     Q_PROPERTY(QVariantList selectionTourRoute READ selectionTourRoute NOTIFY selectionTourRouteChanged)
     Q_PROPERTY(bool touring READ touring NOTIFY patrolChanged)
+    // A manual move stopped the tour (ticket 03): until a tour starts again.
+    Q_PROPERTY(bool manualStopped READ manualStopped NOTIFY patrolChanged)
+    // One line for the PTZ pad: "Touring · <step>", "Manual · tour stopped", or "".
+    Q_PROPERTY(QString tourStatus READ tourStatus NOTIFY patrolChanged)
     Q_PROPERTY(bool selectionTourMode READ selectionTourMode NOTIFY selectionTourModeChanged)
     Q_PROPERTY(bool selectionTourRestoring READ selectionTourRestoring NOTIFY selectionTourRestoringChanged)
 
@@ -82,6 +89,8 @@ public:
     bool irisAvailable() const { return m_irisAvailable; }
     QVariantList selectionTourRoute() const { return m_selectionTourRequestedRoute; }
     bool touring() const;
+    bool manualStopped() const { return m_manualStopped; }
+    QString tourStatus() const;
     bool selectionTourMode() const { return m_selectionTourMode; }
     bool selectionTourRestoring() const { return m_selectionTourSession && !m_selectionTourMode; }
 
@@ -205,6 +214,23 @@ private:
     int m_selectionTourOriginalSpeed = 40;
     int m_selectionTourOriginalDwell = 1;
     QString m_pendingSelectionTourPreset;
+
+    // A manual move during a tour stops it first (lascelles-bosch-tour ticket 03).
+    struct HeldMove {
+        QString pan, tilt, zoom;
+    };
+    // Stop HA's patrol, then run `then` (the move); a second press while stopping replaces it.
+    void stopTourForManualMove(std::function<void()> then);
+    // The direction still held once the tour has stopped: moved now, else nothing.
+    void playHeldMove();
+    void setManualStopped(bool on);
+    // Turning T off; a manual press leaves without the ONVIF Stop (its move follows).
+    void leaveSelectionTour(bool stopMotion);
+    std::optional<HeldMove> m_heldMove;
+    std::function<void()> m_afterManualStop;
+    bool m_manualStopPending = false;
+    bool m_manualTakeover = false;   // a selection tour being left for a manual move
+    bool m_manualStopped = false;
 };
 
 } // namespace rl

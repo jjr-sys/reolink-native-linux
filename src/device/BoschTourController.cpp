@@ -232,6 +232,11 @@ void BoschTourController::disconnectHomeAssistant()
     m_patrolRequestPending = false;
     m_presetsRequestPending = false;
     m_ptzRequestPending = false;
+    m_heldMove.reset();
+    m_afterManualStop = {};
+    m_manualStopPending = false;
+    m_manualTakeover = false;
+    m_manualStopped = false;
     setBusy(false);
     if (m_credentials)
         m_credentials->removeSecret(kCredentialKey);
@@ -671,6 +676,8 @@ void BoschTourController::setLocalTourState(const QString &state)
     if (m_tourState == state)
         return;
     m_tourState = state;
+    if (touring())
+        m_manualStopped = false;   // a tour started: no longer manual
     emit patrolChanged();
 }
 
@@ -704,13 +711,17 @@ void BoschTourController::applyPatrolResponse(const QJsonObject &response)
     }
     const QString error = response.value(QStringLiteral("error")).toString();
     const bool routeWasChanged = newRoute != m_route;
-    const bool patrolWasChanged = state != m_tourState || position != m_currentPosition
+    bool patrolWasChanged = state != m_tourState || position != m_currentPosition
                                   || error != m_tourError || speed != m_travelSpeed
                                   || dwell != m_dwellSeconds;
     m_route = newRoute;
     m_travelSpeed = std::clamp(speed, 10, 100);
     m_dwellSeconds = std::clamp(dwell, 0, 3600);
     m_tourState = state;
+    if (touring() && m_manualStopped) {   // a tour started (either side): no longer manual
+        m_manualStopped = false;
+        patrolWasChanged = true;
+    }
     m_currentPosition = position;
     m_tourError = error;
     if (routeWasChanged)
@@ -896,8 +907,12 @@ void BoschTourController::gotoPreset(const QString &token)
         setMessage(QStringLiteral("Position queued until the tour stops and its saved route is restored."));
         return;
     }
+    if (touring()) {   // a manual move stops the tour first (ticket 03)
+        stopTourForManualMove([this, key] { gotoPreset(key); });
+        return;
+    }
     if (m_tourState != QLatin1String("stopped")) {
-        setMessage(QStringLiteral("Stop the tour before moving the camera to a preset."));
+        setMessage(QStringLiteral("Wait for Home Assistant to report the tour state before moving the camera."));
         return;
     }
     const QString positionName = presetNameForToken(key);
@@ -919,8 +934,25 @@ void BoschTourController::gotoPreset(const QString &token)
 void BoschTourController::moveCamera(const QString &pan, const QString &tilt,
                                      const QString &zoom)
 {
+    if (pan.isEmpty() && tilt.isEmpty() && zoom.isEmpty())
+        return;
+    // A press during T (or while its saved route is restored) leaves T; the move follows
+    // once the route is back (finishSelectionTourSession).
+    if (m_selectionTourSession) {
+        m_heldMove = HeldMove{pan, tilt, zoom};
+        if (m_selectionTourMode) {
+            m_manualTakeover = m_selectionTourStarted || touring();
+            leaveSelectionTour(false);
+        }
+        return;
+    }
+    if (touring()) {   // a manual move stops the tour first (ticket 03)
+        m_heldMove = HeldMove{pan, tilt, zoom};
+        stopTourForManualMove([this] { playHeldMove(); });
+        return;
+    }
     if (m_tourState != QLatin1String("stopped")) {
-        setMessage(QStringLiteral("Stop the tour before moving the camera."));
+        setMessage(QStringLiteral("Wait for Home Assistant to report the tour state before moving the camera."));
         return;
     }
     if (m_ptzRequestPending || (pan.isEmpty() && tilt.isEmpty() && zoom.isEmpty()))
@@ -946,6 +978,7 @@ void BoschTourController::moveCamera(const QString &pan, const QString &tilt,
 
 void BoschTourController::stopCamera()
 {
+    m_heldMove.reset();   // released: a move waiting on the tour's stop is dropped
     callOnvif(QJsonObject{{QStringLiteral("entity_id"), m_cameraEntity},
                           {QStringLiteral("move_mode"), QStringLiteral("Stop")}},
              QStringLiteral("Stop Bosch camera movement"), false);
@@ -1149,6 +1182,11 @@ void BoschTourController::toggleSelectionTourPosition(const QString &rawToken)
 
 void BoschTourController::endSelectionTour()
 {
+    leaveSelectionTour(true);
+}
+
+void BoschTourController::leaveSelectionTour(bool stopMotion)
+{
     if (m_selectionTourMode) {
         m_selectionTourMode = false;
         m_selectionTourRequestedRoute.clear();
@@ -1159,7 +1197,8 @@ void BoschTourController::endSelectionTour()
         setMessage(QStringLiteral("Stopping the tour and restoring the Home Assistant route…"));
         // Stop a manual goto as well as an HA patrol so turning T off always
         // stops camera motion immediately from the user's point of view.
-        stopCamera();
+        if (stopMotion)
+            stopCamera();
     }
     reconcileSelectionTour();
 }
@@ -1265,8 +1304,53 @@ void BoschTourController::finishSelectionTourSession()
     m_selectionTourStopRequested = false;
     emit selectionTourRouteChanged();
     emit selectionTourRestoringChanged();
+    if (std::exchange(m_manualTakeover, false))
+        setManualStopped(true);
     if (!pendingPreset.isEmpty())
         gotoPreset(pendingPreset);
+    playHeldMove();
+}
+
+void BoschTourController::stopTourForManualMove(std::function<void()> then)
+{
+    m_afterManualStop = std::move(then);
+    if (m_manualStopPending)
+        return;
+    m_manualStopPending = true;
+    setMessage(QStringLiteral("Stopping the tour for a manual move…"));
+    callService(QStringLiteral("bosch_camera_stop_patrol"), {}, false, true,
+                [this](int status, const QByteArray &body, const QString &networkError) {
+        m_manualStopPending = false;
+        const std::function<void()> then = std::exchange(m_afterManualStop, {});
+        if (status < 200 || status >= 300) {
+            m_heldMove.reset();
+            operationFailed(QStringLiteral("Stop Bosch tour for a manual move"), status, body,
+                            networkError);
+            return;
+        }
+        setLocalTourState(QStringLiteral("stopped"));
+        setManualStopped(true);
+        refreshPatrol();
+        if (then)
+            then();
+    });
+}
+
+void BoschTourController::playHeldMove()
+{
+    if (!m_heldMove)
+        return;
+    const HeldMove move = *m_heldMove;
+    m_heldMove.reset();
+    moveCamera(move.pan, move.tilt, move.zoom);
+}
+
+void BoschTourController::setManualStopped(bool on)
+{
+    if (m_manualStopped == on)
+        return;
+    m_manualStopped = on;
+    emit patrolChanged();
 }
 
 QString BoschTourController::currentStep() const
@@ -1279,6 +1363,15 @@ QString BoschTourController::currentStep() const
             return QStringLiteral("%1 / %2").arg(i + 1).arg(m_route.size());
     }
     return {};
+}
+
+QString BoschTourController::tourStatus() const
+{
+    if (touring()) {
+        const QString step = currentStep();
+        return step.isEmpty() ? QStringLiteral("Touring") : QStringLiteral("Touring · %1").arg(step);
+    }
+    return m_manualStopped ? QStringLiteral("Manual · tour stopped") : QString();
 }
 
 bool BoschTourController::touring() const

@@ -217,6 +217,15 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Changed
 
+- **A manual move stops the Bosch tour.** A direction press or a saved-position tap while the
+  Lascelles Bosch camera tours (Home Assistant's tour or the T selection) no longer gets
+  "Stop the tour first": the tour stops, then the camera moves. A direction still held when
+  the stop lands moves the camera; one let go before only stops it. In T, a direction press
+  leaves T (the saved route is restored first, as with T off). Under the PTZ pad a line shows
+  "Touring · <step>", or "Manual · tour stopped" until a tour starts again from either side.
+  Saving positions and editing the route still need the tour stopped. Home Assistant's own
+  controls are unchanged (its side is a separate step).
+
 - **Offline and back-online pop-ups moved to Offline alerts.** The 7 s "Went offline" /
   "Back online" notice under Desktop notifications is gone; the new Offline alerts (above)
   replace it, so one outage never gives two pop-ups. Events' Status rows are unchanged.

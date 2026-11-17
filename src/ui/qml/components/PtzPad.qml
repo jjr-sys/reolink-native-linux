@@ -11,11 +11,14 @@ Rectangle {
     property bool showZoom: true
     property bool boschCamera: false
     property bool boschMoveRequested: false
+    // A press during a tour (HA's or T's) stops it first, then moves (lascelles-bosch-tour 03).
     readonly property bool movementEnabled: !boschCamera
-        || (BoschTour.connected && BoschTour.tourState === "stopped" && !BoschTour.busy)
+        || (BoschTour.connected && !BoschTour.busy
+            && (BoschTour.tourState === "stopped" || BoschTour.touring || BoschTour.selectionTourMode))
+    readonly property bool statusShown: boschCamera && BoschTour.tourStatus !== ""
 
     width: 120
-    height: showZoom ? 168 : 120
+    height: (showZoom ? 168 : 120) + (statusShown ? 18 : 0)
     radius: Theme.radius
     color: "#e60d141b"
     border.color: Theme.border
@@ -87,7 +90,7 @@ Rectangle {
                 }
                 MouseArea {
                     anchors.fill: parent
-                    enabled: pad.movementEnabled
+                    enabled: pad.movementEnabled || pressed   // held through the tour's stop
                     onPressed: pad.move(parent.op)
                     onReleased: pad.stop()
                     onCanceled: pad.stop()
@@ -120,7 +123,7 @@ Rectangle {
                 MouseArea {
                     id: zpress
                     anchors.fill: parent
-                    enabled: pad.movementEnabled
+                    enabled: pad.movementEnabled || pressed   // held through the tour's stop
                     onPressed: pad.move(parent.op)
                     onReleased: pad.stop()
                     onCanceled: pad.stop()
@@ -128,6 +131,18 @@ Rectangle {
             }
             Zoom { op: "ZoomDec"; glyph: "−" }
             Zoom { op: "ZoomInc"; glyph: "+" }
+        }
+
+        // "Touring · <step>" or "Manual · tour stopped" (ticket 03).
+        Text {
+            visible: pad.statusShown
+            width: pad.width - 12
+            anchors.horizontalCenter: parent.horizontalCenter
+            horizontalAlignment: Text.AlignHCenter
+            text: BoschTour.tourStatus
+            color: BoschTour.manualStopped ? Theme.accent : Theme.textMuted
+            font.pixelSize: 10
+            elide: Text.ElideRight
         }
 
     }

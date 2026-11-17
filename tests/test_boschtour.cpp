@@ -289,11 +289,132 @@ private slots:
         QCOMPARE(saved.takeFirst().at(0).toBool(), true);
     }
 
-    void gotoPresetNeedsStoppedTour()
+    // ---- a manual move during a tour stops it (lascelles-bosch-tour ticket 03) ----
+
+    void gotoPresetDuringTourStopsItThenMoves()
     {
         connectAndSettle(svc(R"({"status":"dwelling","config":{}})"));
         c->gotoPreset(QStringLiteral("1"));
+        QCOMPARE(ht->count(QStringLiteral("bosch_camera_stop_patrol")), 1);
+        QCOMPARE(ht->count(QStringLiteral("bosch_camera_goto_preset")), 0);   // stop first
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        QCOMPARE(ht->peekBody(QStringLiteral("bosch_camera_goto_preset")).value("token").toString(),
+                 QStringLiteral("1"));
+        QVERIFY(c->manualStopped());
+        QCOMPARE(c->tourStatus(), QStringLiteral("Manual · tour stopped"));
+    }
+
+    void gotoPresetWithUnknownStateIsStillRefused()
+    {
+        connectAndSettle(svc(R"({"status":"unknown","config":{}})"));
+        c->gotoPreset(QStringLiteral("1"));
         QVERIFY(ht->pending.empty());
+    }
+
+    void moveDuringTourStopsItThenMovesWhileHeld()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        QCOMPARE(ht->count(QStringLiteral("ptz")), 0);
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        const QJsonObject move = ht->peekBody(QStringLiteral("ptz"));
+        QCOMPARE(move.value("move_mode").toString(), QStringLiteral("ContinuousMove"));
+        QCOMPARE(move.value("pan").toString(), QStringLiteral("LEFT"));
+        QVERIFY(c->manualStopped());
+    }
+
+    void releasedBeforeTheStopLandsOnlyStops()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        c->stopCamera();   // released
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        for (const auto &p : ht->pending)
+            QVERIFY(QJsonDocument::fromJson(p.body).object().value("move_mode").toString()
+                    != QStringLiteral("ContinuousMove"));
+        QVERIFY(c->manualStopped());
+    }
+
+    void failedStopNeitherMovesNorMarksManual()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        c->gotoPreset(QStringLiteral("1"));
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 500, "{}");
+        QCOMPARE(ht->count(QStringLiteral("bosch_camera_goto_preset")), 0);
+        QVERIFY(!c->manualStopped());
+        QCOMPARE(c->tourStatus(), QStringLiteral("Touring"));
+    }
+
+    void manualStaysThroughStoppedReadsAndClearsWhenATourStarts()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        c->gotoPreset(QStringLiteral("1"));
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        ht->answer(QStringLiteral("bosch_camera_goto_preset"), 200, "");
+        settle();   // HA reads "stopped"
+        QVERIFY(c->manualStopped());
+        // HA starts the tour again (its own dashboard): Manual clears.
+        c->refresh();
+        settle(svc(R"({"status":"travelling","config":{}})"));
+        QVERIFY(!c->manualStopped());
+        QCOMPARE(c->tourStatus(), QStringLiteral("Touring"));
+    }
+
+    void startTourClearsManual()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{"route":[{"token":"1","label":"Driveway"}]}})"));
+        c->gotoPreset(QStringLiteral("1"));
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        ht->answer(QStringLiteral("bosch_camera_goto_preset"), 200, "");
+        settle();
+        c->startTour();
+        ht->answer(QStringLiteral("bosch_camera_start_patrol"), 200, svc(R"({"status":"starting"})"));
+        QVERIFY(!c->manualStopped());
+    }
+
+    void editsStayBlockedDuringATour()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        QSignalSpy saved(c, &BoschTourController::tourSaved);
+        c->saveTour({QVariantMap{{"token", "1"}, {"label", "Driveway"}}}, 40, 1);
+        QCOMPARE(saved.takeFirst().at(0).toBool(), false);
+        QVERIFY(ht->pending.empty());
+    }
+
+    void padPressInSelectionModeEndsItThenMoves()
+    {
+        connectAndSettle();
+        QVERIFY(c->beginSelectionTour());
+        c->toggleSelectionTourPosition(QStringLiteral("1"));   // one stop: nothing runs
+        c->moveCamera(QStringLiteral("RIGHT"), QString(), QString());
+        QVERIFY(!c->selectionTourMode());
+        QCOMPARE(ht->count(QStringLiteral("ptz")), 0);   // after T's usual stop lands
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        QVERIFY(!c->selectionTourRestoring());
+        QCOMPARE(ht->count(QStringLiteral("ptz")), 1);   // the move, no Stop racing it
+        QCOMPARE(ht->peekBody(QStringLiteral("ptz")).value("pan").toString(), QStringLiteral("RIGHT"));
+        QVERIFY(!c->manualStopped());   // no tour was running
+    }
+
+    void padPressDuringASelectionTourStopsRestoresThenMoves()
+    {
+        connectAndSettle();
+        QVERIFY(c->beginSelectionTour());
+        c->toggleSelectionTourPosition(QStringLiteral("1"));
+        c->toggleSelectionTourPosition(QStringLiteral("3"));
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        ht->answer(QStringLiteral("bosch_camera_set_patrol"), 200, "{}");
+        ht->answer(QStringLiteral("bosch_camera_start_patrol"), 200, svc(R"({"status":"starting"})"));
+        QVERIFY(c->touring());
+
+        c->moveCamera(QStringLiteral("RIGHT"), QString(), QString());
+        QVERIFY(!c->selectionTourMode());
+        QCOMPARE(ht->count(QStringLiteral("ptz")), 0);   // not before the route is restored
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        ht->answer(QStringLiteral("bosch_camera_set_patrol"), 200, "{}");
+        QVERIFY(!c->selectionTourRestoring());
+        QCOMPARE(ht->peekBody(QStringLiteral("ptz")).value("pan").toString(), QStringLiteral("RIGHT"));
+        QVERIFY(c->manualStopped());
     }
 
     // ---- tour selection -------------------------------------------------

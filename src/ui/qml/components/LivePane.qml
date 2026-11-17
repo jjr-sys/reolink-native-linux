@@ -967,7 +967,7 @@ Rectangle {
                                 : BoschTour.connected
                                     && (!BoschTour.busy || BoschTour.selectionTourRestoring)
                                     && (BoschTour.selectionTourMode || BoschTour.selectionTourRestoring
-                                        || BoschTour.tourState === "stopped"))
+                                        || BoschTour.tourState === "stopped" || BoschTour.touring))
                         width: pickerRows.width
                         height: 32
                         radius: 4
