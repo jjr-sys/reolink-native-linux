@@ -60,11 +60,14 @@ QVector<OfflineAlert> OfflineAlerts::change(const Change &c, qint64 now)
                       t.drops.end());
         t.drops.append(now);
 
-        // A recorder down covers its cameras still in their grace.
+        // A recorder down covers its cameras still in their grace: they are forgotten, and
+        // one still down once the recorder is back is reported afresh.
         if (c.channel < 0) {
             for (auto it = m_tracks.begin(); it != m_tracks.end(); ++it)
-                if (it->hostId == c.hostId && it.key() != key && it->state == State::Waiting)
+                if (it->hostId == c.hostId && it.key() != key && it->state == State::Waiting) {
                     it->state = State::Up;
+                    it->down = false;
+                }
         }
 
         if (t.state == State::Unstable)
@@ -87,6 +90,20 @@ QVector<OfflineAlert> OfflineAlerts::change(const Change &c, qint64 now)
         return {};
     }
 
+    // A recorder back brings back the cameras it names: their own outages end too.
+    QVector<OfflineAlert> out;
+    if (c.channel < 0) {
+        for (const CameraRef &cam : c.cameras) {
+            const QString camKey = keyOf(c.hostId, cam.channel);
+            if (camKey != key && m_tracks.contains(camKey))
+                out += cameUp(camKey, m_tracks[camKey], now);
+        }
+    }
+    return cameUp(key, m_tracks[key], now) + out;
+}
+
+QVector<OfflineAlert> OfflineAlerts::cameUp(const QString &key, Track &t, qint64 now)
+{
     if (!t.down)
         return {};
     t.down = false;
@@ -96,8 +113,9 @@ QVector<OfflineAlert> OfflineAlerts::change(const Change &c, qint64 now)
         return {};
     case State::Alerted:
         t.state = State::Up;
-        return alert(OfflineAlert::Kind::BackOnline, tr("%1 back online").arg(t.name),
-                     tr("Back after %1").arg(span(now - t.since)), false);
+        return {{OfflineAlert::Kind::BackOnline, key, t.hostId, t.channel,
+                 tr("%1 back online").arg(t.name), tr("Back after %1").arg(span(now - t.since)),
+                 false}};
     case State::Unstable:
         t.since = now;
         return {};
@@ -107,16 +125,28 @@ QVector<OfflineAlert> OfflineAlerts::change(const Change &c, qint64 now)
     return {};
 }
 
+qint64 OfflineAlerts::dueAt(const Track &t) const
+{
+    if (t.state == State::Waiting)
+        return t.since + m_timing.graceSecs;
+    if (t.state == State::Unstable && !t.down)
+        return t.since + m_timing.stableSecs;
+    return -1;
+}
+
 QVector<OfflineAlert> OfflineAlerts::tick(qint64 now)
 {
     QVector<OfflineAlert> out;
     for (auto it = m_tracks.begin(); it != m_tracks.end(); ++it) {
         Track &t = it.value();
-        if (t.state == State::Waiting && now >= t.since + m_timing.graceSecs) {
+        const qint64 due = dueAt(t);
+        if (due < 0 || now < due)
+            continue;
+        if (t.state == State::Waiting) {
             t.state = State::Alerted;
             out.append({OfflineAlert::Kind::Offline, it.key(), t.hostId, t.channel,
                         offlineTitle(t), offlineBody(t), true});
-        } else if (t.state == State::Unstable && !t.down && now >= t.since + m_timing.stableSecs) {
+        } else {   // Unstable, up long enough
             t.state = State::Up;
             t.drops.clear();
             out.append({OfflineAlert::Kind::Stable, it.key(), t.hostId, t.channel,
@@ -131,11 +161,7 @@ qint64 OfflineAlerts::nextDue() const
 {
     qint64 due = -1;
     for (const Track &t : m_tracks) {
-        qint64 at = -1;
-        if (t.state == State::Waiting)
-            at = t.since + m_timing.graceSecs;
-        else if (t.state == State::Unstable && !t.down)
-            at = t.since + m_timing.stableSecs;
+        const qint64 at = dueAt(t);
         if (at >= 0 && (due < 0 || at < due))
             due = at;
     }

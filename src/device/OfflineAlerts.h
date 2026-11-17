@@ -63,6 +63,7 @@ public:
     // The next time tick() has something to decide (epoch seconds), or -1.
     qint64 nextDue() const;
 
+    // The camera key ("hostId:channel", as device::cameraKey); channel -1 = the whole host.
     static QString keyOf(qint64 hostId, int channel);
 
 private:
@@ -79,6 +80,10 @@ private:
         int cameraCount = 0;       // cameras that went down with it
     };
 
+    // The end of an outage for one key: "back online" after an alert, silent otherwise.
+    QVector<OfflineAlert> cameUp(const QString &key, Track &t, qint64 now);
+    // When tick() next has something to decide for this track, or -1.
+    qint64 dueAt(const Track &t) const;
     static QString offlineTitle(const Track &t);
     static QString offlineBody(const Track &t);
 

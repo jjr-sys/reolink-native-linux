@@ -338,9 +338,15 @@ Item {
         maximizedKey = key;
         selectedKey = key;
     }
-    // An offline alert's click (urgent-offline-alerts 05): maximise that camera when it's
-    // among the picked panes; otherwise Live View stays as it is.
-    function showCameraIfPicked(key) {
+    // An offline alert's click (urgent-offline-alerts 05): a camera is maximised when it's
+    // among the picked panes (otherwise Live View stays as it is); a recorder (channel -1)
+    // shows the whole mosaic.
+    function showOfflineAlert(hostId, channel) {
+        if (channel < 0) {
+            maximizedKey = "";
+            return;
+        }
+        var key = hostId + ":" + channel;   // the camera key
         if (selection.contains(key))
             showLive(key);
     }

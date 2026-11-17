@@ -222,17 +222,24 @@ void DeviceManager::applyConnectivity(qint64 hostId, bool transportOk,
     } else if (action == PollAction::Recovered) {
         // Cameras this same poll reports down stay down (the channel loop below would
         // only flip them back, filing a false online/offline pair).
-        QVector<device::CameraRef> changed;
+        QVector<device::CameraRef> changed, stillDown;
         for (int i = 0; i < m_entries.size(); ++i) {
             Entry &e = m_entries[i];
-            if (e.rec.id != hostId || e.online || !chanOnline.value(e.channel, true))
+            if (e.rec.id != hostId || e.online)
                 continue;
+            if (!chanOnline.value(e.channel, true)) {
+                stillDown.append({e.channel, displayName(e.chanName, e.rec.kind)});
+                continue;
+            }
             e.online = true;
             e.status = tr("online");
             changed.append({e.channel, displayName(e.chanName, e.rec.kind)});
             emit dataChanged(index(i), index(i));
         }
         emit connectivityChanged(hostId, -1, hostName, true, changed);
+        // Already filed offline with the host; the alerts hear them on their own now.
+        for (const device::CameraRef &cam : std::as_const(stillDown))
+            emit connectivityKnown(hostId, cam.channel, cam.name, false, {});
     }
 
     // Channel-level (NVRs): flip individual cameras that dropped or returned.
@@ -1039,11 +1046,12 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
 
     // The offline alerts hear what this run's first connect found, and a host found
     // unreachable connecting after all.
-    const bool firstConnect = !m_connectSeen.contains(hostId);
     m_connectSeen.insert(hostId);
+    const bool firstListing = !m_listedOnce.contains(hostId);   // also after a failed start
+    m_listedOnce.insert(hostId);
     if (m_downAtConnect.remove(hostId))
         emit connectivityKnown(hostId, -1, rec.name, true, {});
-    if (firstConnect)
+    if (firstListing)
         for (const Entry &e : std::as_const(fresh))
             if (!e.online)
                 emit connectivityKnown(hostId, e.channel, displayName(e.chanName, rec.kind),

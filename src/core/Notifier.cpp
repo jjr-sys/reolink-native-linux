@@ -13,6 +13,14 @@ namespace rl {
 static constexpr auto kService = "org.freedesktop.Notifications";
 static constexpr auto kPath = "/org/freedesktop/Notifications";
 static constexpr auto kInterface = "org.freedesktop.Notifications";
+static constexpr auto kAppId = "io.github.todesengelx.ReolinkLinux";
+
+// The hints every notice carries: the app's desktop entry (icon, name, focus on click).
+static QVariantMap appHints()
+{
+    return {{QStringLiteral("desktop-entry"), QString::fromLatin1(kAppId)},
+            {QStringLiteral("x-kde-xdgTokenAppId"), QString::fromLatin1(kAppId)}};
+}
 
 Notifier::Notifier(QObject *parent) : QObject(parent)
 {
@@ -52,12 +60,7 @@ void Notifier::notify(const QString &title, const QString &body, const QString &
         << title                               // summary
         << body                                // body
         << actions                             // actions
-        << QVariantMap{                        // hints
-               {QStringLiteral("desktop-entry"),
-                QStringLiteral("io.github.todesengelx.ReolinkLinux")},
-               {QStringLiteral("x-kde-xdgTokenAppId"),
-                QStringLiteral("io.github.todesengelx.ReolinkLinux")},
-           }
+        << appHints()                          // hints
         << qint32(7000);                       // expire timeout (ms)
 
     if (hostId < 0) {
@@ -82,13 +85,15 @@ void Notifier::alert(const QString &key, const QString &title, const QString &bo
     if (!bus.isConnected())
         return;
 
-    QVariantMap hints{
-        {QStringLiteral("desktop-entry"), QStringLiteral("io.github.todesengelx.ReolinkLinux")},
-        {QStringLiteral("x-kde-xdgTokenAppId"),
-         QStringLiteral("io.github.todesengelx.ReolinkLinux")},
-        // The spec types urgency as a byte: 1 normal, 2 critical (stays until dismissed).
-        {QStringLiteral("urgency"), QVariant::fromValue(uchar(critical ? 2 : 1))},
-    };
+    // One request per key at a time: a later alert waits for the earlier bubble's id, so it
+    // replaces that bubble instead of leaving it behind.
+    if (m_alertSending.contains(key)) {
+        m_alertQueued.insert(key, {title, body, critical, hostId, channel});
+        return;
+    }
+    QVariantMap hints = appHints();
+    // The spec types urgency as a byte: 1 normal, 2 critical (stays until dismissed).
+    hints.insert(QStringLiteral("urgency"), QVariant::fromValue(uchar(critical ? 2 : 1)));
     if (critical)   // freedesktop sound theme; played once by the notification daemon
         hints.insert(QStringLiteral("sound-name"), QStringLiteral("alarm-clock-elapsed"));
 
@@ -97,21 +102,27 @@ void Notifier::alert(const QString &key, const QString &title, const QString &bo
         QStringLiteral("Notify"));
     msg << QStringLiteral("Reolink Client")
         << m_alertIds.value(key, 0)                // replaces the key's earlier bubble
-        << QStringLiteral("io.github.todesengelx.ReolinkLinux")
+        << QString::fromLatin1(kAppId)
         << title << body
         << QStringList{QStringLiteral("default"), tr("Open Live View")}
         << hints
         << qint32(critical ? 0 : 7000);           // 0 = never expires
 
+    m_alertSending.insert(key);
     auto *watcher = new QDBusPendingCallWatcher(bus.asyncCall(msg), this);
     connect(watcher, &QDBusPendingCallWatcher::finished, this,
             [this, key, hostId, channel](QDBusPendingCallWatcher *w) {
                 QDBusPendingReply<quint32> reply = *w;
                 w->deleteLater();
-                if (reply.isError())
-                    return;
-                m_alertIds.insert(key, reply.value());
-                m_pending.insert(reply.value(), {hostId, channel, 0, QString(), true});
+                m_alertSending.remove(key);
+                if (!reply.isError()) {
+                    m_alertIds.insert(key, reply.value());
+                    m_pending.insert(reply.value(), {hostId, channel, 0, QString(), true});
+                }
+                if (m_alertQueued.contains(key)) {
+                    const QueuedAlert q = m_alertQueued.take(key);
+                    alert(key, q.title, q.body, q.critical, q.hostId, q.channel);
+                }
             });
 }
 

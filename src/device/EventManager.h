@@ -191,7 +191,7 @@ private:
     DeviceManager *m_devices;
     bool m_desktopNotifications = true;
     bool m_offlineAlerts = true;
-    Notifier m_notifier;             // desktop notifications for new detections
+    Notifier m_notifier;             // detection notices and offline alerts
     device::OfflineAlerts m_offline; // when a connectivity change becomes an alert
     QTimer m_offlineTimer;           // wakes at m_offline.nextDue()
     QTimer m_retentionTimer;         // hourly age-based purge

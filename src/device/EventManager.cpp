@@ -313,11 +313,9 @@ void EventManager::alertConnectivity(qint64 hostId, int channel, const QString &
                                      bool online, const QVector<device::CameraRef> &changed,
                                      bool atStart)
 {
-    // A whole NVR or Frigate server is a recorder ("… offline · N cameras"); a lone
-    // camera's host is worded as that camera.
-    const device::Kind kind =
-        device::kindFromString(m_devices->hostInfo(hostId).value(QStringLiteral("kind")).toString());
-    const bool recorder = channel < 0 && (kind == device::Kind::Nvr || kind == device::Kind::Frigate);
+    // A multi-camera host is a recorder ("… offline · N cameras"); a lone camera's host is
+    // worded as that camera.
+    const bool recorder = channel < 0 && m_devices->hostCaps(hostId).multiChannel;
     device::OfflineAlerts::Change c{hostId, channel, name.isEmpty() ? tr("Device") : name,
                                     online, changed, recorder, atStart};
     showOfflineAlerts(m_offline.change(c, QDateTime::currentSecsSinceEpoch()));

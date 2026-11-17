@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QSet>
 #include <QObject>
 #include <QString>
 
@@ -56,6 +57,14 @@ private:
     };
     QHash<quint32, Payload> m_pending; // notification id -> event to jump to
     QHash<QString, quint32> m_alertIds; // offline alert key -> its bubble, to replace it
+    struct QueuedAlert {
+        QString title, body;
+        bool critical;
+        qint64 hostId;
+        int channel;
+    };
+    QSet<QString> m_alertSending;              // keys with a Notify call in flight
+    QHash<QString, QueuedAlert> m_alertQueued; // the latest alert waiting on that call
 };
 
 } // namespace rl

@@ -19,10 +19,13 @@ While the project is pre-1.0, minor versions may still change behaviour.
   ("stable again"). A recorder going down covers its cameras still waiting out their 30 s.
   A click opens Live View, maximising that camera when it is among the picked panes. It has
   its own switch, on by default, in Settings → Detection highlights and the Events page's ⋯
-  menu. The old 7 s "Went offline" notice under Desktop notifications is gone, so one outage
-  never gives two pop-ups; Events' Status rows are unchanged.
+  menu. A recorder that comes back with some cameras still dead reports those cameras, and
+  something already down when the app starts is reported after the same 30 s (a recorder then
+  without its camera count, not yet known).
   **Internal:** rules in `device::OfflineAlerts` (pure, clock passed in, `test_offlinealerts`);
-  `Notifier::alert` (one bubble per key, `liveActivated`); test hook `RL_FAKE_OFFLINE`.
+  `Notifier::alert` (one bubble per key, `liveActivated`); `DeviceManager::connectivityKnown`
+  (alert-only: what the first connect found, cameras still down after a recovery); test hook
+  `RL_FAKE_OFFLINE`.
 
 - **Live replay starts from now.** Each Live pane of a Reolink recorder camera keeps the last
   five minutes of its own live stream in memory (in the quality it shows; about 250 MB for an
@@ -213,6 +216,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
   first picture is logged (`clip: first picture after … ms`).
 
 ### Changed
+
+- **Offline and back-online pop-ups moved to Offline alerts.** The 7 s "Went offline" /
+  "Back online" notice under Desktop notifications is gone; the new Offline alerts (above)
+  replace it, so one outage never gives two pop-ups. Events' Status rows are unchanged.
 
 - **A key that can't act says why.** J on a Frigate event clip, J / L while Playback's speed
   is locked to 1× (Frigate panes only), and K, L or → on a Live pane at live (nothing ahead

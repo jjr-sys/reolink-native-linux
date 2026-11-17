@@ -186,6 +186,12 @@ public:
     }
     // The row of a camera key ("hostId:channel", as the pages name cameras); -1 if none.
     int rowOfCameraKey(const QString &key) const;
+    // What a host's kind can do (an unknown host: a camera's).
+    device::Capabilities hostCaps(qint64 hostId) const
+    {
+        const int row = rowForHostId(hostId);
+        return row < 0 ? device::capabilities(device::Kind::Camera) : m_entries.at(row).kindCaps();
+    }
     // A URL stream or Frigate camera: plays from liveUrl() only (no Baichuan HD path).
     Q_INVOKABLE bool isDirectAt(int row) const
     {
@@ -404,6 +410,7 @@ private:
     QVector<Entry> m_entries;
     QSet<qint64> m_connectSeen;    // hosts whose first connect of this run has landed
     QSet<qint64> m_downAtConnect;  // ... and found unreachable, until one succeeds
+    QSet<qint64> m_listedOnce;     // hosts whose cameras this run has listed
     QFutureSynchronizer<void> m_pending; // drains in-flight validations at teardown
     RecorderDays *m_days = nullptr;      // child; goes first at teardown (its searches stop)
     DeviceSettings *m_settings = nullptr; // child; its commands finish before the rows go

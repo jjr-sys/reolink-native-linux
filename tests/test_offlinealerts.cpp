@@ -188,6 +188,32 @@ private slots:
         QVERIFY(b.tick(t0 + 30).isEmpty());
     }
 
+    void swallowedCameraAlertsAfreshOnceTheRecorderIsBack()
+    {
+        // Waiting when the recorder dropped: forgotten. Still down when it's back: alerts anew.
+        OfflineAlerts a;
+        a.change(camera(5, 1, "Shed", false), t0);
+        a.change(recorder(5, "NVR", false), t0 + 10);
+        a.change(recorder(5, "NVR", true, {{0, "A"}}), t0 + 60);
+        QVERIFY(a.change(camera(5, 1, "Shed", false), t0 + 60).isEmpty());
+        QCOMPARE(a.tick(t0 + 90).value(0).title, QStringLiteral("Shed offline"));
+    }
+
+    void recorderBackClosesItsReturnedCamerasAlerts()
+    {
+        OfflineAlerts a;
+        a.change(camera(5, 1, "Shed", false), t0);
+        a.tick(t0 + 30);   // Shed alerted on its own
+        a.change(recorder(5, "NVR", false), t0 + 100);
+        const auto out = a.change(recorder(5, "NVR", true, {{1, "Shed"}, {2, "Yard"}}), t0 + 200);
+        QCOMPARE(out.size(), 2);   // the recorder's and Shed's bubbles
+        QCOMPARE(out[1].key, OfflineAlerts::keyOf(5, 1));
+        QCOMPARE(out[1].kind, Kind::BackOnline);
+        // Shed's next drop is a fresh outage.
+        a.change(camera(5, 1, "Shed", false), t0 + 300);
+        QCOMPARE(a.tick(t0 + 330).value(0).kind, Kind::Offline);
+    }
+
     void clickTargetIsTheCameraOrTheRecorder()
     {
         OfflineAlerts a;

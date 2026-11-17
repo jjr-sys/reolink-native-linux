@@ -223,8 +223,7 @@ ApplicationWindow {
             window.raise();
             window.requestActivate();
             nav.currentIndex = 0;
-            if (channel >= 0)
-                liveViewPage.showCameraIfPicked(hostId + ":" + channel);
+            liveViewPage.showOfflineAlert(hostId, channel);
         }
     }
 
