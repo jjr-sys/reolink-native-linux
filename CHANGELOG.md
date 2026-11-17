@@ -217,6 +217,14 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Changed
 
+- **Bosch tour: "Manual" now comes from Home Assistant.** When the app stops the tour to move the
+  camera, it tells Home Assistant the reason ("manual"), and it shows "Manual · tour stopped"
+  whenever Home Assistant says the tour stopped for a manual move, including a move from Home
+  Assistant's own dashboard. A plain Stop clears it. A Home Assistant that doesn't report a
+  reason yet leaves the app's own flag as before.
+  **Internal:** `BoschTourController::applyPatrolResponse` reads `stop_reason`;
+  `stopTourForManualMove` sends `reason: manual` (lascelles-bosch-tour ticket 10).
+
 - **A manual move stops the Bosch tour.** A direction press or a saved-position tap while the
   Lascelles Bosch camera tours (Home Assistant's tour or the T selection) no longer gets
   "Stop the tour first": the tour stops, then the camera moves. A direction still held when

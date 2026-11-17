@@ -716,6 +716,13 @@ void BoschTourController::applyPatrolResponse(const QJsonObject &response)
     m_tourState = state;
     if (clearManualWhileTouring())
         patrolWasChanged = true;
+    // Home Assistant says why the tour stopped (lascelles-bosch-tour ticket 10), which covers a move from its own
+    // dashboard too; one from before that says nothing, and the fork's own flag stands.
+    if (response.contains(QStringLiteral("stop_reason")) && !touring()) {
+        const bool manual = response.value(QStringLiteral("stop_reason")).toString() == QLatin1String("manual");
+        if (std::exchange(m_manualStopped, manual) != manual)
+            patrolWasChanged = true;
+    }
     m_currentPosition = position;
     m_tourError = error;
     if (routeWasChanged)
@@ -1324,7 +1331,8 @@ void BoschTourController::stopTourForManualMove(std::function<void()> afterStop)
         return;
     m_manualStopPending = true;
     setMessage(QStringLiteral("Stopping the tour for a manual move…"));
-    callService(QStringLiteral("bosch_camera_stop_patrol"), {}, false, true,
+    // The reason is kept by Home Assistant, so its own dashboard shows "Manual" too (ticket 10).
+    callService(QStringLiteral("bosch_camera_stop_patrol"), {{QStringLiteral("reason"), QStringLiteral("manual")}}, false, true,
                 [this](int status, const QByteArray &body, const QString &networkError) {
         m_manualStopPending = false;
         const std::function<void()> afterStop = std::exchange(m_afterManualStop, {});

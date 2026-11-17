@@ -304,6 +304,37 @@ private slots:
         QCOMPARE(c->tourStatus(), QStringLiteral("Manual · tour stopped"));
     }
 
+    // ---- Home Assistant says why the tour stopped (lascelles-bosch-tour ticket 10) ----
+
+    void aManualStopTellsHomeAssistantWhy()
+    {
+        connectAndSettle(svc(R"({"status":"dwelling","config":{}})"));
+        c->gotoPreset(QStringLiteral("1"));
+        QCOMPARE(ht->peekBody(QStringLiteral("bosch_camera_stop_patrol")).value("reason").toString(),
+                 QStringLiteral("manual"));
+    }
+
+    void homeAssistantsStopReasonDecidesManual()
+    {
+        // A move from Home Assistant's own dashboard: the fork made none, but HA says "manual".
+        connectAndSettle(svc(R"({"status":"stopped","stop_reason":"manual","config":{}})"));
+        QVERIFY(c->manualStopped());
+        QCOMPARE(c->tourStatus(), QStringLiteral("Manual · tour stopped"));
+    }
+
+    void homeAssistantsPlainStopClearsManual()
+    {
+        connectAndSettle(svc(R"({"status":"dwelling","config":{}})"));
+        c->gotoPreset(QStringLiteral("1"));
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        QVERIFY(c->manualStopped());
+        // Later someone pressed Stop in Home Assistant after starting it again: its word wins.
+        ht->answer(QStringLiteral("bosch_camera_get_patrol"), 200,
+                   svc(R"({"status":"stopped","stop_reason":"stopped","config":{}})"));
+        QVERIFY(!c->manualStopped());
+        QCOMPARE(c->tourStatus(), QString());
+    }
+
     void gotoPresetWithUnknownStateIsStillRefused()
     {
         connectAndSettle(svc(R"({"status":"unknown","config":{}})"));
