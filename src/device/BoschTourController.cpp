@@ -169,6 +169,7 @@ void BoschTourController::connectHomeAssistant(const QString &url, const QString
     m_patrolRequestPending = false;
     m_presetsRequestPending = false;
     m_ptzRequestPending = false;
+    resetManualMoves();   // a stop in flight is from the old connection: its answer is dropped
     setBusy(false);
     setMessage({});
     setConnectionStatus(QStringLiteral("Checking Home Assistant access…"), false);
@@ -232,11 +233,7 @@ void BoschTourController::disconnectHomeAssistant()
     m_patrolRequestPending = false;
     m_presetsRequestPending = false;
     m_ptzRequestPending = false;
-    m_heldMove.reset();
-    m_afterManualStop = {};
-    m_manualStopPending = false;
-    m_manualTakeover = false;
-    m_manualStopped = false;
+    resetManualMoves();
     setBusy(false);
     if (m_credentials)
         m_credentials->removeSecret(kCredentialKey);
@@ -676,8 +673,7 @@ void BoschTourController::setLocalTourState(const QString &state)
     if (m_tourState == state)
         return;
     m_tourState = state;
-    if (touring())
-        m_manualStopped = false;   // a tour started: no longer manual
+    clearManualWhileTouring();
     emit patrolChanged();
 }
 
@@ -718,10 +714,8 @@ void BoschTourController::applyPatrolResponse(const QJsonObject &response)
     m_travelSpeed = std::clamp(speed, 10, 100);
     m_dwellSeconds = std::clamp(dwell, 0, 3600);
     m_tourState = state;
-    if (touring() && m_manualStopped) {   // a tour started (either side): no longer manual
-        m_manualStopped = false;
+    if (clearManualWhileTouring())
         patrolWasChanged = true;
-    }
     m_currentPosition = position;
     m_tourError = error;
     if (routeWasChanged)
@@ -902,12 +896,21 @@ void BoschTourController::gotoPreset(const QString &token)
     const QString key = token.trimmed();
     if (key.isEmpty())
         return;
+    if (m_selectionTourMode) {   // a goto while T is on leaves T first, then moves
+        m_heldMove.reset();
+        m_pendingSelectionTourPreset = key;
+        m_manualTakeover = m_selectionTourStarted || touring();
+        leaveSelectionTour(false);
+        return;
+    }
     if (m_selectionTourSession && !m_selectionTourMode) {
+        m_heldMove.reset();
         m_pendingSelectionTourPreset = key;
         setMessage(QStringLiteral("Position queued until the tour stops and its saved route is restored."));
         return;
     }
-    if (touring()) {   // a manual move stops the tour first (ticket 03)
+    if (touring()) {   // a manual move stops the tour first
+        m_heldMove.reset();
         stopTourForManualMove([this, key] { gotoPreset(key); });
         return;
     }
@@ -940,13 +943,16 @@ void BoschTourController::moveCamera(const QString &pan, const QString &tilt,
     // once the route is back (finishSelectionTourSession).
     if (m_selectionTourSession) {
         m_heldMove = HeldMove{pan, tilt, zoom};
+        m_pendingSelectionTourPreset.clear();
+        // leaveSelectionTour always asks HA to stop first, so the session can't finish (and
+        // play this move) inside the call.
         if (m_selectionTourMode) {
             m_manualTakeover = m_selectionTourStarted || touring();
             leaveSelectionTour(false);
         }
         return;
     }
-    if (touring()) {   // a manual move stops the tour first (ticket 03)
+    if (touring()) {   // a manual move stops the tour first
         m_heldMove = HeldMove{pan, tilt, zoom};
         stopTourForManualMove([this] { playHeldMove(); });
         return;
@@ -955,7 +961,7 @@ void BoschTourController::moveCamera(const QString &pan, const QString &tilt,
         setMessage(QStringLiteral("Wait for Home Assistant to report the tour state before moving the camera."));
         return;
     }
-    if (m_ptzRequestPending || (pan.isEmpty() && tilt.isEmpty() && zoom.isEmpty()))
+    if (m_ptzRequestPending)
         return;
 
     QJsonObject data{
@@ -1311,9 +1317,9 @@ void BoschTourController::finishSelectionTourSession()
     playHeldMove();
 }
 
-void BoschTourController::stopTourForManualMove(std::function<void()> then)
+void BoschTourController::stopTourForManualMove(std::function<void()> afterStop)
 {
-    m_afterManualStop = std::move(then);
+    m_afterManualStop = std::move(afterStop);
     if (m_manualStopPending)
         return;
     m_manualStopPending = true;
@@ -1321,9 +1327,8 @@ void BoschTourController::stopTourForManualMove(std::function<void()> then)
     callService(QStringLiteral("bosch_camera_stop_patrol"), {}, false, true,
                 [this](int status, const QByteArray &body, const QString &networkError) {
         m_manualStopPending = false;
-        const std::function<void()> then = std::exchange(m_afterManualStop, {});
+        const std::function<void()> afterStop = std::exchange(m_afterManualStop, {});
         if (status < 200 || status >= 300) {
-            m_heldMove.reset();
             operationFailed(QStringLiteral("Stop Bosch tour for a manual move"), status, body,
                             networkError);
             return;
@@ -1331,8 +1336,8 @@ void BoschTourController::stopTourForManualMove(std::function<void()> then)
         setLocalTourState(QStringLiteral("stopped"));
         setManualStopped(true);
         refreshPatrol();
-        if (then)
-            then();
+        if (afterStop)
+            afterStop();
     });
 }
 
@@ -1343,6 +1348,23 @@ void BoschTourController::playHeldMove()
     const HeldMove move = *m_heldMove;
     m_heldMove.reset();
     moveCamera(move.pan, move.tilt, move.zoom);
+}
+
+bool BoschTourController::clearManualWhileTouring()
+{
+    if (!touring() || !m_manualStopped)
+        return false;
+    m_manualStopped = false;
+    return true;
+}
+
+void BoschTourController::resetManualMoves()
+{
+    m_heldMove.reset();
+    m_afterManualStop = {};
+    m_manualStopPending = false;
+    m_manualTakeover = false;
+    setManualStopped(false);
 }
 
 void BoschTourController::setManualStopped(bool on)
@@ -1410,6 +1432,9 @@ void BoschTourController::operationFailed(const QString &action, int status,
                                           const QByteArray &body,
                                           const QString &networkError)
 {
+    // A failed Home Assistant action drops a direction still waiting on a stop or a restore:
+    // moving later, out of the blue, would surprise whoever pressed it.
+    m_heldMove.reset();
     QString detail = responseMessage(body);
     if (status == 401 || status == 403) {
         m_pollTimer->stop();

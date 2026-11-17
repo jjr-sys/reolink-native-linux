@@ -381,6 +381,78 @@ private slots:
         QVERIFY(ht->pending.empty());
     }
 
+    void reconnectDuringTheStopDoesNotWedgeManualMoves()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        c->gotoPreset(QStringLiteral("1"));
+        QCOMPARE(ht->count(QStringLiteral("bosch_camera_stop_patrol")), 1);
+        // Reconnect: the old stop's answer is dropped (new generation).
+        c->connectHomeAssistant(QStringLiteral("https://ha.test"), QStringLiteral("tok"),
+                                QStringLiteral("camera.bosch"));
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        ht->answer(QStringLiteral(""), 200, R"({"message":"API running."})");
+        settle(svc(R"({"status":"travelling","config":{}})"));
+        QVERIFY(ht->pending.empty());
+        c->gotoPreset(QStringLiteral("2"));   // works again
+        QCOMPARE(ht->count(QStringLiteral("bosch_camera_stop_patrol")), 1);
+    }
+
+    void disconnectClearsManual()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        c->gotoPreset(QStringLiteral("1"));
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        QVERIFY(c->manualStopped());
+        c->disconnectHomeAssistant();
+        QVERIFY(!c->manualStopped());
+        QVERIFY(c->tourStatus().isEmpty());
+    }
+
+    void latestPressWinsWhileTheStopIsPending()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        c->gotoPreset(QStringLiteral("2"));   // the tap replaces the held direction
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        QCOMPARE(ht->count(QStringLiteral("bosch_camera_goto_preset")), 1);
+        QCOMPARE(ht->count(QStringLiteral("ptz")), 0);
+    }
+
+    void positionTapForTsTourEndsTThenMoves()
+    {
+        // The controller side of answer 4: a goto while T is on leaves T first.
+        connectAndSettle();
+        QVERIFY(c->beginSelectionTour());
+        c->toggleSelectionTourPosition(QStringLiteral("1"));
+        c->toggleSelectionTourPosition(QStringLiteral("3"));
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        ht->answer(QStringLiteral("bosch_camera_set_patrol"), 200, "{}");
+        ht->answer(QStringLiteral("bosch_camera_start_patrol"), 200, svc(R"({"status":"starting"})"));
+        c->gotoPreset(QStringLiteral("2"));
+        QVERIFY(!c->selectionTourMode());
+        QCOMPARE(ht->count(QStringLiteral("bosch_camera_goto_preset")), 0);
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        ht->answer(QStringLiteral("bosch_camera_set_patrol"), 200, "{}");
+        QCOMPARE(ht->peekBody(QStringLiteral("bosch_camera_goto_preset")).value("token").toString(),
+                 QStringLiteral("2"));
+        QVERIFY(c->manualStopped());
+    }
+
+    void failedRestoreDropsTheHeldMove()
+    {
+        connectAndSettle();
+        QVERIFY(c->beginSelectionTour());
+        c->toggleSelectionTourPosition(QStringLiteral("1"));
+        c->moveCamera(QStringLiteral("RIGHT"), QString(), QString());
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 500, "{}");
+        c->toggleSelectionTourPosition(QStringLiteral("2"));   // no effect; T is off
+        c->endSelectionTour();                                // retry the restore
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        for (const auto &p : ht->pending)   // only the retry's own traffic: no stale move
+            QVERIFY(QJsonDocument::fromJson(p.body).object().value("move_mode").toString()
+                    != QStringLiteral("ContinuousMove"));
+    }
+
     void padPressInSelectionModeEndsItThenMoves()
     {
         connectAndSettle();

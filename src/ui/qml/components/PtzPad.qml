@@ -11,7 +11,7 @@ Rectangle {
     property bool showZoom: true
     property bool boschCamera: false
     property bool boschMoveRequested: false
-    // A press during a tour (HA's or T's) stops it first, then moves (lascelles-bosch-tour 03).
+    // A press during a tour (HA's or T's) stops it first, then moves (lascelles-bosch-tour ticket 03).
     readonly property bool movementEnabled: !boschCamera
         || (BoschTour.connected && !BoschTour.busy
             && (BoschTour.tourState === "stopped" || BoschTour.touring || BoschTour.selectionTourMode))
@@ -133,7 +133,7 @@ Rectangle {
             Zoom { op: "ZoomInc"; glyph: "+" }
         }
 
-        // "Touring · <step>" or "Manual · tour stopped" (ticket 03).
+        // "Touring · <step>" or "Manual · tour stopped" (lascelles-bosch-tour ticket 03).
         Text {
             visible: pad.statusShown
             width: pad.width - 12
