@@ -516,6 +516,23 @@ key, critical with `sound-name`, a click → `liveActivated`) and arms one timer
 
 Revert: `b549b94`, then `f2577fb`, then `e363a33`.
 
+### Feature: a manual move stops the Bosch tour (`5efe794`, `f1a0e56`)
+
+`BoschTourController` (lascelles-bosch-tour ticket 03): `gotoPreset`/`moveCamera` during a
+patrol go through `stopTourForManualMove` (HA `stop_patrol`, then the move); in T they leave T
+(`leaveSelectionTour(false)`: no ONVIF Stop racing the move) and the move follows
+`finishSelectionTourSession`. The latest press wins (a held direction or a queued position).
+"Manual" is the fork's own flag (`manualStopped`, `tourStatus`) until HA reports a running
+patrol or the fork reconnects/disconnects; HA's own stop reason is ticket 10.
+
+Decisions / left as found: the zoom rocker counts as a manual move (it moves the camera);
+the "can move now" rule stays in PtzPad and LivePane's picker (different restoring rules; a
+shared property would need one notify across four signals). Known risk for the live check: if
+HA's `stop_patrol` returns before the patrol has stopped, the next read ("travelling") clears
+Manual and the held move sends a second stop.
+
+Revert: `f1a0e56`, then `5efe794`.
+
 ### Not built
 
 - **3c recorder media module:** day search built (above); DON'T for stream opening (one
