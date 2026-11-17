@@ -299,6 +299,12 @@ Item {
                                                       : qsTr("Desktop notifications: Off")
                     onTriggered: Events.desktopNotifications = !Events.desktopNotifications
                 }
+                ThemedMenuItem {
+                    // Status rows' own pop-ups (Settings → Detection highlights has the same switch).
+                    text: Events.offlineAlerts ? qsTr("Offline alerts: On")
+                                               : qsTr("Offline alerts: Off")
+                    onTriggered: Events.offlineAlerts = !Events.offlineAlerts
+                }
                 ThemedMenuSeparator {}
                 ThemedMenuItem {
                     text: qsTr("Delete all events…")

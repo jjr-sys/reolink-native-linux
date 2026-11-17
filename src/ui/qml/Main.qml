@@ -216,6 +216,16 @@ ApplicationWindow {
             window.requestActivate();
             window.openEventPlayback(hostId, channel, timestamp);
         }
+        // An offline alert's click: Live View, that camera maximised when it's picked there;
+        // a whole recorder (channel -1) opens Live View as it is.
+        function onOfflineAlertActivated(hostId, channel) {
+            window.show();
+            window.raise();
+            window.requestActivate();
+            nav.currentIndex = 0;
+            if (channel >= 0)
+                liveViewPage.showCameraIfPicked(hostId + ":" + channel);
+        }
     }
 
     // Detection sounds stay quiet while the doorbell pop-up is up.

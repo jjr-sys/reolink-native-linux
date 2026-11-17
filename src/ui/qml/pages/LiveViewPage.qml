@@ -338,6 +338,12 @@ Item {
         maximizedKey = key;
         selectedKey = key;
     }
+    // An offline alert's click (urgent-offline-alerts 05): maximise that camera when it's
+    // among the picked panes; otherwise Live View stays as it is.
+    function showCameraIfPicked(key) {
+        if (selection.contains(key))
+            showLive(key);
+    }
     // The pane the keys act on: the replaying one, else the maximised one, else the selected one.
     function replayPane() {
         var k = liveReplay.replaying ? liveReplay.cameraKey

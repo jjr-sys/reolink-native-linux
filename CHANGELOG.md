@@ -10,6 +10,20 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **Offline alerts on the desktop.** When a camera has been offline 30 s, or a whole recorder
+  can't be reached (the app's own check already takes about 35 s), a critical desktop pop-up
+  says so ("Kitchen offline", "Woorabinda offline · 8 cameras"), plays the alarm sound once
+  and stays until dismissed. When it's back, a "back online" notice with how long it was out
+  replaces it. Back inside the 30 s, nothing shows. A camera or recorder that drops 3 times
+  within 10 minutes gets one "unstable" alert, then none until it has stayed up 10 minutes
+  ("stable again"). A recorder going down covers its cameras still waiting out their 30 s.
+  A click opens Live View, maximising that camera when it is among the picked panes. It has
+  its own switch, on by default, in Settings → Detection highlights and the Events page's ⋯
+  menu. The old 7 s "Went offline" notice under Desktop notifications is gone, so one outage
+  never gives two pop-ups; Events' Status rows are unchanged.
+  **Internal:** rules in `device::OfflineAlerts` (pure, clock passed in, `test_offlinealerts`);
+  `Notifier::alert` (one bubble per key, `liveActivated`); test hook `RL_FAKE_OFFLINE`.
+
 - **Live replay starts from now.** Each Live pane of a Reolink recorder camera keeps the last
   five minutes of its own live stream in memory (in the quality it shows; about 250 MB for an
   HD pane, 10 MB for SD; 600 MB for all panes at most), stamped with the camera's clock. ◀

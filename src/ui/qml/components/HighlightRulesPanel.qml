@@ -130,6 +130,40 @@ ScrollView {
             Item { Layout.fillWidth: true }
         }
 
+        // Desktop offline alerts (wayfinder/urgent-offline-alerts 05): their own switch, apart
+        // from the highlights and from the Events page's desktop notifications.
+        Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: offlineBody.implicitHeight + 24
+            radius: Theme.radius
+            color: Theme.surfaceAlt
+            border.color: Theme.border
+            ColumnLayout {
+                id: offlineBody
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 6
+                RowLayout {
+                    spacing: Theme.spacing
+                    Switch {
+                        checked: Events.offlineAlerts
+                        onToggled: Events.offlineAlerts = checked
+                    }
+                    Text { text: qsTr("Offline alerts"); color: Theme.text; font.pixelSize: 14; font.bold: true }
+                    Text {
+                        visible: !Events.offlineAlerts
+                        text: qsTr("off")
+                        color: Theme.textMuted; font.pixelSize: 12
+                    }
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: qsTr("A desktop pop-up with a sound when a camera has been offline 30 s, or a whole recorder can't be reached. It stays until dismissed, and one notice follows when it's back. A camera dropping 3 times in 10 minutes gets one \"unstable\" alert, then none until it stays up 10 minutes. Separate from desktop notifications for detections.")
+                    color: Theme.textMuted; font.pixelSize: 12; wrapMode: Text.WordWrap
+                }
+            }
+        }
+
         Repeater {
             model: root.types
             Rectangle {

@@ -28,9 +28,18 @@ public:
                 const QString &iconName = QString(), qint64 hostId = -1,
                 int channel = 0, qint64 timestamp = 0);
 
+    // An offline alert (wayfinder/urgent-offline-alerts 05). One bubble per `key`: a later
+    // alert with the same key replaces it. Critical = urgency critical, never expires, plays
+    // the alarm sound once; otherwise an ordinary notice. A click emits liveActivated with
+    // hostId/channel (channel -1 = a whole recorder).
+    void alert(const QString &key, const QString &title, const QString &body, bool critical,
+               qint64 hostId, int channel);
+
 signals:
     // The user clicked a notification; jump to this event.
     void activated(qint64 hostId, int channel, qint64 timestamp);
+    // The user clicked an offline alert; show this camera (channel -1: the recorder) live.
+    void liveActivated(qint64 hostId, int channel);
 
 private slots:
     void onActionInvoked(quint32 id, const QString &actionKey);
@@ -43,8 +52,10 @@ private:
         int channel;
         qint64 timestamp;
         QString token; // xdg-activation token (Wayland focus grant)
+        bool live = false; // an offline alert: open Live View, not the recording
     };
     QHash<quint32, Payload> m_pending; // notification id -> event to jump to
+    QHash<QString, quint32> m_alertIds; // offline alert key -> its bubble, to replace it
 };
 
 } // namespace rl

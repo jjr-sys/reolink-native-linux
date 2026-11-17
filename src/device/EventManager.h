@@ -6,6 +6,7 @@
 #include "device/FirstSwitchOffs.h"
 #include "device/FrigateApi.h"
 #include "device/Inbox.h"
+#include "device/OfflineAlerts.h"
 
 #include <QAbstractListModel>
 #include <QFutureSynchronizer>
@@ -30,6 +31,9 @@ class EventManager : public QAbstractListModel
     Q_PROPERTY(int unread READ unread NOTIFY unreadChanged)
     // App-level master switch for desktop pop-ups (independent of the device Push flag).
     Q_PROPERTY(bool desktopNotifications READ desktopNotifications WRITE setDesktopNotifications NOTIFY desktopNotificationsChanged)
+    // Desktop offline alerts (wayfinder/urgent-offline-alerts 05): its own switch, on by
+    // default, independent of desktopNotifications.
+    Q_PROPERTY(bool offlineAlerts READ offlineAlerts WRITE setOfflineAlerts NOTIFY offlineAlertsChanged)
     // How many of the newest events the list shows.
     Q_PROPERTY(int listLimit READ listLimit CONSTANT)
 
@@ -62,6 +66,8 @@ public:
 
     bool desktopNotifications() const { return m_desktopNotifications; }
     void setDesktopNotifications(bool on);
+    bool offlineAlerts() const { return m_offlineAlerts; }
+    void setOfflineAlerts(bool on);
 
     Q_INVOKABLE void markAllRead();
     // Seconds-into-day of each detection event for this camera on the given day
@@ -117,6 +123,7 @@ public:
 
 signals:
     void desktopNotificationsChanged();
+    void offlineAlertsChanged();
     void countChanged();
     void unreadChanged();
     // Stored events changed: one recorder's (an event filed, a thumbnail landed), or
@@ -126,6 +133,8 @@ signals:
     void switchesChanged();
     // The user clicked a desktop notification — jump to this event's playback.
     void eventActivated(qint64 hostId, int channel, qint64 timestamp);
+    // The user clicked an offline alert — show this camera live (channel -1: a recorder).
+    void offlineAlertActivated(qint64 hostId, int channel);
 
 private slots:
     void onDetection(qint64 hostId, int channel, const QString &type, const QString &camera,
@@ -167,11 +176,24 @@ private:
     // DeviceManager::countChanged, it re-checks any host not yet looked at and, once
     // Frigate reports it online (cameras known), runs the catch-up if it has no events.
     void checkFrigateCatchup();
+    // Hands a connectivity change to the offline-alert rules, shows what they decide and
+    // re-arms the timer.
+    void alertConnectivity(qint64 hostId, int channel, const QString &name, bool online,
+                           const QVector<device::CameraRef> &changed);
+    void showOfflineAlerts(const QVector<device::OfflineAlert> &alerts);
+    void armOfflineTimer();
+    // Test hook RL_FAKE_OFFLINE="<hostId>:<channel>:<downSecs>" (channel -1 = the whole
+    // host): 5 s after start the alert rules see it go down, then back after downSecs.
+    // Only the alerts: nothing is filed.
+    void startFakeOffline(const QString &spec);
 
     Database *m_db;
     DeviceManager *m_devices;
     bool m_desktopNotifications = true;
+    bool m_offlineAlerts = true;
     Notifier m_notifier;             // desktop notifications for new detections
+    device::OfflineAlerts m_offline; // when a connectivity change becomes an alert
+    QTimer m_offlineTimer;           // wakes at m_offline.nextDue()
     QTimer m_retentionTimer;         // hourly age-based purge
     QTimer m_runTimer;               // stamps this app run's last_seen
     qint64 m_runId = -1;             // this launch's app_runs row

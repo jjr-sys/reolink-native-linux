@@ -2,6 +2,7 @@
 
 #include "DeviceManager.h"
 #include "device/EventHistory.h"
+#include "device/DeviceKind.h"
 #include "device/EventSnapshot.h"
 #include "device/FrigateApi.h"
 
@@ -30,6 +31,16 @@ EventManager::EventManager(Database *db, DeviceManager *devices, QObject *parent
     connect(&m_inbox, &Inbox::trimmed, this, [this] { m_trimmed = true; });
     m_desktopNotifications =
         QSettings().value(QStringLiteral("notifications/desktop"), true).toBool();
+    m_offlineAlerts =
+        QSettings().value(QStringLiteral("notifications/offlineAlerts"), true).toBool();
+    m_offlineTimer.setSingleShot(true);
+    connect(&m_offlineTimer, &QTimer::timeout, this, [this] {
+        showOfflineAlerts(m_offline.tick(QDateTime::currentSecsSinceEpoch()));
+        armOfflineTimer();
+    });
+    connect(&m_notifier, &Notifier::liveActivated, this, &EventManager::offlineAlertActivated);
+    if (qEnvironmentVariableIsSet("RL_FAKE_OFFLINE"))
+        startFakeOffline(qEnvironmentVariable("RL_FAKE_OFFLINE"));
     normalizeStoredCameraNames();
     m_inbox.enforceRetention();
     m_trimmed = false;   // the list isn't loaded yet: the reload below is the first
@@ -267,25 +278,97 @@ void EventManager::setDesktopNotifications(bool on)
     emit desktopNotificationsChanged();
 }
 
+void EventManager::setOfflineAlerts(bool on)
+{
+    if (m_offlineAlerts == on)
+        return;
+    m_offlineAlerts = on;
+    QSettings().setValue(QStringLiteral("notifications/offlineAlerts"), on);
+    emit offlineAlertsChanged();
+}
+
 void EventManager::onConnectivity(qint64 hostId, int channel, const QString &name, bool online,
                                   const QVector<device::CameraRef> &changed)
 {
     // Health alert: a camera (channel >= 0) or a whole host dropped or returned. A
     // host's change is filed as Status on each camera that flipped with it. Counted and
     // notified once — a dead camera can't announce itself, so the client has to.
+    // The desktop pop-up is the offline alert's (its own rules and switch), not the
+    // detection notices'.
     const QVector<Inbox::Filing> filed = m_inbox.fileStatus(hostId, channel, name, online, changed);
     take(hostId, filed);
+    alertConnectivity(hostId, channel, name, online, changed);
     if (std::none_of(filed.cbegin(), filed.cend(), [](const Inbox::Filing &f) { return f.announce; }))
         return;
     ++m_unread;
     emit unreadChanged();
+}
 
-    const qint64 now = QDateTime::currentSecsSinceEpoch();
-    if (m_desktopNotifications)
-        m_notifier.notify(name.isEmpty() ? tr("Device") : name,
-                          online ? tr("Back online") : tr("Went offline \u26a0"),
-                          QStringLiteral("io.github.todesengelx.ReolinkLinux"),
-                          hostId, qMax(0, channel), now);
+void EventManager::alertConnectivity(qint64 hostId, int channel, const QString &name,
+                                     bool online, const QVector<device::CameraRef> &changed)
+{
+    // A whole NVR or Frigate server is a recorder ("… offline · N cameras"); a lone
+    // camera's host is worded as that camera.
+    const device::Kind kind =
+        device::kindFromString(m_devices->hostInfo(hostId).value(QStringLiteral("kind")).toString());
+    const bool recorder = channel < 0 && (kind == device::Kind::Nvr || kind == device::Kind::Frigate);
+    device::OfflineAlerts::Change c{hostId, channel, name.isEmpty() ? tr("Device") : name,
+                                    online, changed, recorder};
+    showOfflineAlerts(m_offline.change(c, QDateTime::currentSecsSinceEpoch()));
+    armOfflineTimer();
+}
+
+void EventManager::showOfflineAlerts(const QVector<device::OfflineAlert> &alerts)
+{
+    // The rules run with the switch off too, so turning it on mid-outage stays consistent.
+    for (const device::OfflineAlert &a : alerts) {
+        qInfo("[offline-alert] %s: %s — %s", qPrintable(a.key), qPrintable(a.title),
+              qPrintable(a.body));
+        if (m_offlineAlerts)
+            m_notifier.alert(a.key, a.title, a.body, a.critical, a.hostId, a.channel);
+    }
+}
+
+void EventManager::armOfflineTimer()
+{
+    const qint64 due = m_offline.nextDue();
+    if (due < 0) {
+        m_offlineTimer.stop();
+        return;
+    }
+    const qint64 ms = qMax<qint64>(0, (due - QDateTime::currentSecsSinceEpoch()) * 1000);
+    m_offlineTimer.start(int(qMin<qint64>(ms, 3600'000)));
+}
+
+void EventManager::startFakeOffline(const QString &spec)
+{
+    const QStringList p = spec.split(QLatin1Char(':'));
+    if (p.size() != 3) {
+        qWarning("RL_FAKE_OFFLINE: expected <hostId>:<channel>:<downSecs>");
+        return;
+    }
+    const qint64 hostId = p[0].toLongLong();
+    const int channel = p[1].toInt();
+    const int downSecs = p[2].toInt();
+    const auto fire = [this, hostId, channel](bool online) {
+        QVector<device::CameraRef> cams;
+        QString name;
+        for (int row = 0; row < m_devices->rowCount(); ++row) {
+            const QStringList k = m_devices->cameraKeyAt(row).split(QLatin1Char(':'));
+            if (k.size() != 2 || k[0].toLongLong() != hostId)
+                continue;
+            if (channel < 0)
+                cams.append({k[1].toInt(), m_devices->nameAt(row)});
+            else if (k[1].toInt() == channel)
+                name = m_devices->nameAt(row);
+        }
+        if (channel < 0)
+            name = m_devices->hostInfo(hostId).value(QStringLiteral("name")).toString();
+        alertConnectivity(hostId, channel, name, online, cams);
+    };
+    QTimer::singleShot(5000, this, [fire] { fire(false); });
+    if (downSecs > 0)
+        QTimer::singleShot(5000 + downSecs * 1000, this, [fire] { fire(true); });
 }
 
 void EventManager::onThumbnailReady(qint64 eventId, const QString &path)
