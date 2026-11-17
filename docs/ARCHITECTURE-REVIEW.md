@@ -493,6 +493,29 @@ Baichuan opener; `CameraCommands` stays its protocol layer. `DeviceManager.cpp` 
 
 Revert: the review-fix commit, then `d70cdb9`, then `ccf87fc`.
 
+### Feature: OfflineAlerts, desktop offline alerts (`e363a33`, `f2577fb`, `b549b94`)
+
+**Module.** `OfflineAlerts` (`src/device/OfflineAlerts.{h,cpp}`, `test_offlinealerts`) decides
+when a connectivity change becomes a desktop alert. It is pure (the clock is passed in) and sits
+beside the Inbox: the Inbox files Status rows, OfflineAlerts decides pop-ups. `EventManager`
+hands it each change, shows what comes back through `Notifier::alert` (one bubble per camera
+key, critical with `sound-name`, a click → `liveActivated`) and arms one timer at `nextDue()`.
+
+**Decisions** (wayfinder/urgent-offline-alerts 05, 08).
+1. A camera waits 30 s; a whole host alerts at once, since `HostSession`'s 3 polls + Baichuan
+   probe already waited. Found down at the first connect (`atStart`), a host waits 30 s too.
+2. `DeviceManager::connectivityKnown` is alert-only (nothing filed): what this run's first
+   listing of a host finds down, and cameras still down when a host recovers. Changes stay
+   `connectivityChanged`.
+3. Recorder wording asks `capabilities().multiChannel`. At start-up a host's cameras aren't
+   listed yet, so that alert has no camera count.
+4. The old 7 s offline notice under `desktopNotifications` is removed (no double pop-ups).
+5. Left as found / declined (review judgement calls): EventManager now owns the alert timer and
+   switch (a small controller could take them if more alert kinds come); the
+   `(hostId, channel, name, online, cameras)` clump stays as the existing signal's shape.
+
+Revert: `b549b94`, then `f2577fb`, then `e363a33`.
+
 ### Not built
 
 - **3c recorder media module:** day search built (above); DON'T for stream opening (one
