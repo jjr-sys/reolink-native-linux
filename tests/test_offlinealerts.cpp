@@ -12,17 +12,17 @@ const QVector<CameraRef> eight = {{0, "A"}, {1, "B"}, {2, "C"}, {3, "D"},
 
 OfflineAlerts::Change camera(qint64 host, int ch, const QString &name, bool online)
 {
-    return {host, ch, name, online, {}, false};
+    return {host, ch, name, online, {}, false, false};
 }
 OfflineAlerts::Change recorder(qint64 host, const QString &name, bool online,
                                const QVector<CameraRef> &cams = eight)
 {
-    return {host, -1, name, online, cams, true};
+    return {host, -1, name, online, cams, true, false};
 }
 // A single-camera device: the whole host is that one camera.
 OfflineAlerts::Change lone(qint64 host, const QString &name, bool online)
 {
-    return {host, -1, name, online, {{0, name}}, false};
+    return {host, -1, name, online, {{0, name}}, false, false};
 }
 } // namespace
 
@@ -169,6 +169,23 @@ private slots:
         QCOMPARE(a.nextDue(), qint64(-1));
         a.change(camera(1, 2, "Kitchen", false), t0);
         QCOMPARE(a.nextDue(), t0 + 30);
+    }
+
+    void recorderFoundDownAtStartWaitsTheGrace()
+    {
+        // At start-up nothing has waited yet: a recorder found down waits 30 s like a camera.
+        OfflineAlerts a;
+        auto c = recorder(5, "Woorabinda NVR", false);
+        c.atStart = true;
+        QVERIFY(a.change(c, t0).isEmpty());
+        QCOMPARE(a.tick(t0 + 30).value(0).title, QStringLiteral("Woorabinda NVR offline · 8 cameras"));
+
+        OfflineAlerts b;   // and connecting inside the grace stays silent
+        b.change(c, t0);
+        auto up = recorder(5, "Woorabinda NVR", true);
+        up.atStart = true;
+        QVERIFY(b.change(up, t0 + 15).isEmpty());
+        QVERIFY(b.tick(t0 + 30).isEmpty());
     }
 
     void clickTargetIsTheCameraOrTheRecorder()

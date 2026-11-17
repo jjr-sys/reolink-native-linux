@@ -934,6 +934,20 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
         // login burns the firmware's 10-attempt lockout counter, so recovery
         // there is Reconnect / Update credentials in the sidebar.
         session.validationFailed(v.problem, now);
+        if (!m_connectSeen.contains(hostId)) {
+            m_connectSeen.insert(hostId);
+            if (v.problem == Problem::Unreachable) {
+                QVector<device::CameraRef> cams;
+                for (int i = first; i < first + oldCount; ++i)
+                    // At start-up a host is one placeholder row: its cameras aren't known
+                    // yet, so the alert names the recorder without a count.
+                    if (m_entries.at(i).validated)
+                        cams.append({m_entries.at(i).channel,
+                                     displayName(m_entries.at(i).chanName, rec.kind)});
+                m_downAtConnect.insert(hostId);
+                emit connectivityKnown(hostId, -1, rec.name, false, cams);
+            }
+        }
         return;
     }
     if (!v.degraded)
@@ -1022,6 +1036,18 @@ void DeviceManager::applyValidation(qint64 hostId, const Validation &vIn)
         m_entries.insert(first + j, fresh.at(j));
     endInsertRows();
     emit countChanged();
+
+    // The offline alerts hear what this run's first connect found, and a host found
+    // unreachable connecting after all.
+    const bool firstConnect = !m_connectSeen.contains(hostId);
+    m_connectSeen.insert(hostId);
+    if (m_downAtConnect.remove(hostId))
+        emit connectivityKnown(hostId, -1, rec.name, true, {});
+    if (firstConnect)
+        for (const Entry &e : std::as_const(fresh))
+            if (!e.online)
+                emit connectivityKnown(hostId, e.channel, displayName(e.chanName, rec.kind),
+                                       false, {});
 }
 
 void DeviceManager::numberFrigateCameras(qint64 hostId, QVector<ChannelResult> &channels)

@@ -50,6 +50,9 @@ public:
         bool online = false;
         QVector<CameraRef> cameras;
         bool recorder = false;
+        // Found this way when the app first connected: nothing has waited yet, so a whole
+        // host waits out the grace too.
+        bool atStart = false;
     };
 
     OfflineAlerts() = default;

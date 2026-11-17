@@ -318,6 +318,12 @@ signals:
     // the cameras that actually flipped with it (empty for a single camera).
     void connectivityChanged(qint64 hostId, int channel, const QString &name, bool online,
                              const QVector<rl::device::CameraRef> &changed);
+    // What the first connect of this run found (urgent-offline-alerts 05): a host unreachable
+    // (channel -1; `cameras` its known ones, empty when never listed) or a camera offline,
+    // and later that host connecting after all. For the offline alerts only: not a change,
+    // so nothing is filed.
+    void connectivityKnown(qint64 hostId, int channel, const QString &name, bool online,
+                           const QVector<rl::device::CameraRef> &cameras);
 
 private slots:
     void pollDetections();
@@ -396,6 +402,8 @@ private:
     CredentialStore *m_credentials;
     EventSwitches *m_eventSwitches;
     QVector<Entry> m_entries;
+    QSet<qint64> m_connectSeen;    // hosts whose first connect of this run has landed
+    QSet<qint64> m_downAtConnect;  // ... and found unreachable, until one succeeds
     QFutureSynchronizer<void> m_pending; // drains in-flight validations at teardown
     RecorderDays *m_days = nullptr;      // child; goes first at teardown (its searches stop)
     DeviceSettings *m_settings = nullptr; // child; its commands finish before the rows go

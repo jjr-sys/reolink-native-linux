@@ -79,7 +79,7 @@ QVector<OfflineAlert> OfflineAlerts::change(const Change &c, qint64 now)
                          true);
         }
         t.since = now;
-        if (c.channel < 0) {   // the host's own detection already waited out the grace
+        if (c.channel < 0 && !c.atStart) {   // the host check already waited out the grace
             t.state = State::Alerted;
             return alert(OfflineAlert::Kind::Offline, offlineTitle(t), offlineBody(t), true);
         }

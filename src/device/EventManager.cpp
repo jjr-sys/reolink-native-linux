@@ -61,6 +61,11 @@ EventManager::EventManager(Database *db, DeviceManager *devices, QObject *parent
             &EventManager::onThumbnailReady);
     connect(m_devices, &DeviceManager::connectivityChanged, this,
             &EventManager::onConnectivity);
+    connect(m_devices, &DeviceManager::connectivityKnown, this,
+            [this](qint64 hostId, int channel, const QString &name, bool online,
+                   const QVector<device::CameraRef> &cameras) {
+                alertConnectivity(hostId, channel, name, online, cameras, true);
+            });
 
     // The age purge runs hourly; the cap is checked as events arrive.
     m_retentionTimer.setInterval(3600'000);
@@ -305,7 +310,8 @@ void EventManager::onConnectivity(qint64 hostId, int channel, const QString &nam
 }
 
 void EventManager::alertConnectivity(qint64 hostId, int channel, const QString &name,
-                                     bool online, const QVector<device::CameraRef> &changed)
+                                     bool online, const QVector<device::CameraRef> &changed,
+                                     bool atStart)
 {
     // A whole NVR or Frigate server is a recorder ("… offline · N cameras"); a lone
     // camera's host is worded as that camera.
@@ -313,7 +319,7 @@ void EventManager::alertConnectivity(qint64 hostId, int channel, const QString &
         device::kindFromString(m_devices->hostInfo(hostId).value(QStringLiteral("kind")).toString());
     const bool recorder = channel < 0 && (kind == device::Kind::Nvr || kind == device::Kind::Frigate);
     device::OfflineAlerts::Change c{hostId, channel, name.isEmpty() ? tr("Device") : name,
-                                    online, changed, recorder};
+                                    online, changed, recorder, atStart};
     showOfflineAlerts(m_offline.change(c, QDateTime::currentSecsSinceEpoch()));
     armOfflineTimer();
 }

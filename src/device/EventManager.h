@@ -179,7 +179,7 @@ private:
     // Hands a connectivity change to the offline-alert rules, shows what they decide and
     // re-arms the timer.
     void alertConnectivity(qint64 hostId, int channel, const QString &name, bool online,
-                           const QVector<device::CameraRef> &changed);
+                           const QVector<device::CameraRef> &changed, bool atStart = false);
     void showOfflineAlerts(const QVector<device::OfflineAlert> &alerts);
     void armOfflineTimer();
     // Test hook RL_FAKE_OFFLINE="<hostId>:<channel>:<downSecs>" (channel -1 = the whole
