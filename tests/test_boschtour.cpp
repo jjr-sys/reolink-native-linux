@@ -310,8 +310,8 @@ private slots:
     {
         connectAndSettle(svc(R"({"status":"dwelling","config":{}})"));
         c->gotoPreset(QStringLiteral("1"));
-        QCOMPARE(ht->peekBody(QStringLiteral("bosch_camera_stop_patrol")).value("reason").toString(),
-                 QStringLiteral("manual"));
+        const QJsonObject stop = ht->peekBody(QStringLiteral("bosch_camera_stop_patrol"));
+        QCOMPARE(stop.value("reason").toString(), QStringLiteral("manual"));
     }
 
     void homeAssistantsStopReasonDecidesManual()
@@ -447,6 +447,22 @@ private slots:
         ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
         QCOMPARE(ht->count(QStringLiteral("bosch_camera_goto_preset")), 1);
         QCOMPARE(ht->count(QStringLiteral("ptz")), 0);
+    }
+
+    void aMoveThatEndsTsTourTellsHomeAssistantItWasManual()
+    {
+        // Ticket 10: the takeover's stop carries the reason, so HA's own word keeps "Manual".
+        connectAndSettle();
+        QVERIFY(c->beginSelectionTour());
+        c->toggleSelectionTourPosition(QStringLiteral("1"));
+        c->toggleSelectionTourPosition(QStringLiteral("3"));
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        ht->answer(QStringLiteral("bosch_camera_set_patrol"), 200, "{}");
+        ht->answer(QStringLiteral("bosch_camera_start_patrol"), 200,
+                   svc(R"({"status":"starting"})"));
+        c->gotoPreset(QStringLiteral("2"));
+        const QJsonObject stop = ht->peekBody(QStringLiteral("bosch_camera_stop_patrol"));
+        QCOMPARE(stop.value("reason").toString(), QStringLiteral("manual"));
     }
 
     void positionTapForTsTourEndsTThenMoves()

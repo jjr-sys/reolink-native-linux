@@ -20,6 +20,14 @@ namespace {
 
 const QString kCredentialKey = QStringLiteral("homeassistant/bosch-tour");
 const QString kCredentialLabel = QStringLiteral("Reolink Client Home Assistant token");
+// The patrol's stop_reason for a manual move (ticket 10), sent with a stop and read back.
+const QString kStopReasonManual = QStringLiteral("manual");
+
+QJsonObject manualStopReason()
+{
+    return {{QStringLiteral("reason"), kStopReasonManual}};
+}
+
 const int kPollIntervalMs = 1500;
 const int kPresetPollIntervalMs = 10000;
 const int kIrisHeartbeatIntervalMs = 700;
@@ -716,10 +724,11 @@ void BoschTourController::applyPatrolResponse(const QJsonObject &response)
     m_tourState = state;
     if (clearManualWhileTouring())
         patrolWasChanged = true;
-    // Home Assistant says why the tour stopped (lascelles-bosch-tour ticket 10), which covers a move from its own
-    // dashboard too; one from before that says nothing, and the fork's own flag stands.
+    // Home Assistant says why the tour stopped (lascelles-bosch-tour ticket 10), which covers a
+    // move from its own dashboard too; one from before that says nothing, and our own flag stands.
     if (response.contains(QStringLiteral("stop_reason")) && !touring()) {
-        const bool manual = response.value(QStringLiteral("stop_reason")).toString() == QLatin1String("manual");
+        const bool manual =
+            response.value(QStringLiteral("stop_reason")).toString() == kStopReasonManual;
         if (std::exchange(m_manualStopped, manual) != manual)
             patrolWasChanged = true;
     }
@@ -1233,7 +1242,9 @@ void BoschTourController::reconcileSelectionTour()
         m_selectionTourOperationPending = true;
         // stop_patrol does not return response data. Asking Home Assistant for
         // return_response produces HTTP 400 and leaves the running patrol alone.
-        callService(QStringLiteral("bosch_camera_stop_patrol"), {}, false, true,
+        // A move that ends T says so, so Home Assistant keeps "manual" (ticket 10).
+        const QJsonObject why = m_manualTakeover ? manualStopReason() : QJsonObject{};
+        callService(QStringLiteral("bosch_camera_stop_patrol"), why, false, true,
                     [this](int status, const QByteArray &body, const QString &networkError) {
             m_selectionTourOperationPending = false;
             if (status < 200 || status >= 300) {
@@ -1332,7 +1343,7 @@ void BoschTourController::stopTourForManualMove(std::function<void()> afterStop)
     m_manualStopPending = true;
     setMessage(QStringLiteral("Stopping the tour for a manual move…"));
     // The reason is kept by Home Assistant, so its own dashboard shows "Manual" too (ticket 10).
-    callService(QStringLiteral("bosch_camera_stop_patrol"), {{QStringLiteral("reason"), QStringLiteral("manual")}}, false, true,
+    callService(QStringLiteral("bosch_camera_stop_patrol"), manualStopReason(), false, true,
                 [this](int status, const QByteArray &body, const QString &networkError) {
         m_manualStopPending = false;
         const std::function<void()> afterStop = std::exchange(m_afterManualStop, {});
