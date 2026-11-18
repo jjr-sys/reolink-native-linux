@@ -1,5 +1,6 @@
 import QtQuick
 import ReolinkApp
+import ReolinkApp.Core
 
 // Steering the Bosch by dragging its picture with the mouse (bosch-ptz-port ticket 04), as the
 // Outpost app does by finger. Press anywhere: a ring marks the spot, and the further the cursor

@@ -133,6 +133,38 @@ private slots:
         QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
     }
 
+    // bosch-ptz-port ticket 04: the Bosch drag surface reaches BoschTour (ReolinkApp.Core);
+    // without it every press was ignored and an empty status chip showed as a black dot.
+    void boschSteerSurfaceLoadsWithoutWarnings()
+    {
+        QStringList warnings;
+        const auto connection = connect(m_engine.get(), &QQmlEngine::warnings, this,
+                                        [&](const QList<QQmlError> &errors) {
+            for (const auto &error : errors)
+                warnings.append(error.toString());
+        });
+        QQmlComponent component(m_engine.get(), QUrl::fromLocalFile(
+            QStringLiteral(RL_QML_SOURCE_DIR "/components/BoschSteerSurface.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        std::unique_ptr<QObject> surface(component.createWithInitialProperties(
+            QVariantMap{{"width", 640}, {"height", 360}}));
+        QVERIFY2(surface, qPrintable(component.errorString()));
+        QCOMPARE(surface->property("steerable").metaType().id(), QMetaType::Bool);
+        QCOMPARE(surface->property("steerable").toBool(), false);   // HA not connected here
+        bool chipShown = false;
+        for (auto *item : surface->findChildren<QQuickItem *>())
+            if (item->property("color").isValid() && item->property("radius").isValid()
+                && item->childItems().size() == 1 && item->isVisible()
+                && qobject_cast<QQuickItem *>(item->childItems().first())
+                && item->y() == 8)
+                chipShown = true;
+        QVERIFY(!chipShown);   // no tour status: no chip
+        surface.reset();
+        QCoreApplication::processEvents();
+        disconnect(connection);
+        QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+    }
+
     void cleanupTestCase()
     {
         m_engine.reset();

@@ -24,7 +24,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
   hold without ending the gesture or stopping a tour; a release stops the camera only if a
   move was held since the last one (a click on a touring picture doesn't pause it); the
   surface covers the picture, not its black bars; new `Theme.steer*` colours; `PtzPad` is
-  Reolink-only again.
+  Reolink-only again. The surface imports `ReolinkApp.Core` (without it `BoschTour` was
+  undefined: no press steered, and an empty status chip showed as a dot); `test_livestreamqml`
+  loads it and fails on any QML warning.
 
 - **Bosch wiper toggle.** The Bosch camera's pane bar has a "Wiper" button next to "Marked
   range". It's lit while Home Assistant says the wiper runs, including Home Assistant's own
