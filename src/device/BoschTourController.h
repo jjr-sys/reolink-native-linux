@@ -117,6 +117,11 @@ public:
     Q_INVOKABLE void gotoPreset(const QString &token);
     Q_INVOKABLE void moveCamera(const QString &pan, const QString &tilt, const QString &zoom);
     Q_INVOKABLE void stopCamera();
+    // Dragging the picture (bosch-ptz-port ticket 04, as the Outpost app): the cursor is
+    // (dx, dy) px from where it was pressed; `reach` px is full speed. Within 3 px it stops.
+    Q_INVOKABLE void steerDrag(qreal dx, qreal dy, qreal reach);
+    // The zoom strip's thumb, dy px from its middle (up = in); `halfTravel` px is the end.
+    Q_INVOKABLE void zoomDrag(qreal dy, qreal halfTravel);
     Q_INVOKABLE bool startIris(const QString &direction);
     Q_INVOKABLE void stopIris();
     Q_INVOKABLE void setIrisAuto();
@@ -152,6 +157,12 @@ signals:
     void wiperChanged();
 
 private:
+    // A manual move as steer numbers, -1..1 on each axis.
+    struct Steer {
+        double pan = 0, tilt = 0, zoom = 0;
+        bool operator==(const Steer &) const = default;
+    };
+
     using ReplyHandler = std::function<void(int, const QByteArray &, const QString &)>;
 
     static QString normalizeEndpoint(const QString &url, QString *error);
@@ -161,6 +172,9 @@ private:
                      bool mutation, ReplyHandler handler);
     // Manual moves (bosch-ptz-port ticket 02): pyscript.bosch_camera_steer, which also
     // cancels tracking and stops a tour on the server.
+    // A press or drag: steer now, or wait for T / a tour's stop. All-zero (a drag back in its
+    // dead zone) stops a hold without ending the gesture, and never stops a tour.
+    void holdSteer(const Steer &steer);
     void sendSteer();
     // Release: stop now, and once more after a move still unanswered. `announce` false keeps
     // the current message (turning T off says it is restoring the route).
@@ -246,12 +260,7 @@ private:
     bool m_irisStopAfterStart = false;
     bool m_irisStopPending = false;
     bool m_irisHeartbeatPending = false;
-    // The direction held now, as steer numbers (-1..1); empty once released.
-    struct Steer {
-        double pan = 0, tilt = 0, zoom = 0;
-        bool operator==(const Steer &) const = default;
-    };
-    std::optional<Steer> m_steer;
+    std::optional<Steer> m_steer;   // the move held now; empty once released
     bool m_steerPending = false;              // a steer that moves is unanswered
     bool m_steerPressedWhilePending = false;  // a press since: send it on the answer
     bool m_stopAfterSteer = false;            // released while unanswered: stop once more after
@@ -274,10 +283,7 @@ private:
     // A manual move during a tour stops it first (lascelles-bosch-tour ticket 03): the
     // direction still held, or (m_pendingSelectionTourPreset / the stop's afterStop) the
     // position tapped. The latest press wins.
-    struct HeldMove {
-        QString pan, tilt, zoom;
-    };
-    std::optional<HeldMove> m_heldMove;
+    std::optional<Steer> m_heldMove;
     std::function<void()> m_afterManualStop;   // the move once the stop lands
     bool m_manualStopPending = false;   // the stop for a manual move is in flight
     bool m_manualTakeover = false;      // T is being left for a manual move: Manual after

@@ -10,6 +10,19 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **Steer the Bosch by dragging its picture.** With ⇅ on, press anywhere on the Bosch
+  picture: a ring marks the spot, and the further you drag from it the faster the camera
+  turns (full speed 192 px away; drag right to pan right, up to tilt up). A strip on the right
+  edge zooms: drag its thumb up to zoom in, down to zoom out, and it springs back when let go.
+  Releasing the button stops the camera; a drag during a tour stops the tour first. This
+  works as the Outpost app does by finger, and replaces the Bosch arrow pad. ⇅ now shows on
+  any Bosch pane wider than 320 px (bosch-ptz-port ticket 04).
+  **Internal:** `BoschSteerSurface.qml`; `BoschTourController::steerDrag(dx, dy, reach)` and
+  `zoomDrag(dy, halfTravel)` (the phone's `StreamGesture` / `Trackpad` numbers: 3 px dead zone,
+  linear to 1.0 with direction kept; strip still 16 %, 0.04 rising squared, 0.02 steps) feed
+  one `holdSteer`; a held move waiting on a tour's stop is a `Steer`; an all-zero drag stops a
+  hold without ending the gesture or stopping a tour; `PtzPad` is Reolink-only again.
+
 - **Bosch wiper toggle.** The Bosch camera's pane bar has a "Wiper" button next to "Marked
   range". It's lit while Home Assistant says the wiper runs, including Home Assistant's own
   60 s auto-off and a press from the dashboard or a phone (read every 1.5 s). A press shows

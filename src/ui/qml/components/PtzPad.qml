@@ -2,57 +2,26 @@ import QtQuick
 import ReolinkApp
 import ReolinkApp.Core
 
-// PTZ joystick: 8-way directional pad (press-and-hold to move, release to Stop)
-// plus optional zoom rocker. Reolink cameras use Devices; Bosch uses HA ONVIF PTZ.
+// PTZ joystick for Reolink cameras: 8-way directional pad (press-and-hold to move, release to
+// Stop) plus optional zoom rocker. The Bosch steers by dragging its picture (BoschSteerSurface).
 Rectangle {
     id: pad
-    signal openBoschTourRequested()
     property int deviceRow: -1
     property bool showZoom: true
-    property bool boschCamera: false
-    property bool boschMoveRequested: false
-    // A press during a tour (HA's or T's) stops it first, then moves (lascelles-bosch-tour ticket 03).
-    readonly property bool movementEnabled: !boschCamera
-        || (BoschTour.connected && !BoschTour.busy
-            && (BoschTour.tourState === "stopped" || BoschTour.touring || BoschTour.selectionTourMode))
-    readonly property bool statusShown: boschCamera && BoschTour.tourStatus !== ""
 
     width: 120
-    height: (showZoom ? 168 : 120) + (statusShown ? 18 : 0)
+    height: showZoom ? 168 : 120
     radius: Theme.radius
     color: "#e60d141b"
     border.color: Theme.border
 
     function move(op) {
-        if (boschCamera) {
-            if (!movementEnabled)
-                return;
-            boschMoveRequested = true;
-            switch (op) {
-            case "Up": BoschTour.moveCamera("", "UP", ""); break;
-            case "Down": BoschTour.moveCamera("", "DOWN", ""); break;
-            case "Left": BoschTour.moveCamera("LEFT", "", ""); break;
-            case "Right": BoschTour.moveCamera("RIGHT", "", ""); break;
-            case "LeftUp": BoschTour.moveCamera("LEFT", "UP", ""); break;
-            case "RightUp": BoschTour.moveCamera("RIGHT", "UP", ""); break;
-            case "LeftDown": BoschTour.moveCamera("LEFT", "DOWN", ""); break;
-            case "RightDown": BoschTour.moveCamera("RIGHT", "DOWN", ""); break;
-            case "ZoomDec": BoschTour.moveCamera("", "", "ZOOM_OUT"); break;
-            case "ZoomInc": BoschTour.moveCamera("", "", "ZOOM_IN"); break;
-            }
-        } else if (deviceRow >= 0) {
+        if (deviceRow >= 0)
             Devices.ptzMove(deviceRow, op, 32);
-        }
     }
     function stop() {
-        if (boschCamera) {
-            if (boschMoveRequested) {
-                BoschTour.stopCamera();
-                boschMoveRequested = false;
-            }
-        } else if (deviceRow >= 0) {
+        if (deviceRow >= 0)
             Devices.ptzStop(deviceRow);
-        }
     }
     Component.onDestruction: {
         stop();
@@ -81,7 +50,6 @@ Rectangle {
                 property string glyph: ""
                 width: 30; height: 30; radius: 6
                 color: press.pressed ? Theme.accentDim : Theme.surface
-                opacity: pad.movementEnabled ? 1 : 0.5
                 border.color: Theme.border
                 Text { anchors.centerIn: parent; text: parent.glyph; color: Theme.text; font.pixelSize: 13 }
                 TapHandler {
@@ -90,7 +58,6 @@ Rectangle {
                 }
                 MouseArea {
                     anchors.fill: parent
-                    enabled: pad.movementEnabled || pressed   // held through the tour's stop
                     onPressed: pad.move(parent.op)
                     onReleased: pad.stop()
                     onCanceled: pad.stop()
@@ -117,13 +84,11 @@ Rectangle {
                 property string glyph: ""
                 width: 46; height: 30; radius: 6
                 color: zpress.pressed ? Theme.accentDim : Theme.surface
-                opacity: pad.movementEnabled ? 1 : 0.5
                 border.color: Theme.border
                 Text { anchors.centerIn: parent; text: parent.glyph; color: Theme.text; font.pixelSize: 15 }
                 MouseArea {
                     id: zpress
                     anchors.fill: parent
-                    enabled: pad.movementEnabled || pressed   // held through the tour's stop
                     onPressed: pad.move(parent.op)
                     onReleased: pad.stop()
                     onCanceled: pad.stop()
@@ -132,18 +97,5 @@ Rectangle {
             Zoom { op: "ZoomDec"; glyph: "−" }
             Zoom { op: "ZoomInc"; glyph: "+" }
         }
-
-        // "Touring · <step>" or "Manual · tour stopped" (lascelles-bosch-tour ticket 03).
-        Text {
-            visible: pad.statusShown
-            width: pad.width - 12
-            anchors.horizontalCenter: parent.horizontalCenter
-            horizontalAlignment: Text.AlignHCenter
-            text: BoschTour.tourStatus
-            color: BoschTour.manualStopped ? Theme.accent : Theme.textMuted
-            font.pixelSize: 10
-            elide: Text.ElideRight
-        }
-
     }
 }

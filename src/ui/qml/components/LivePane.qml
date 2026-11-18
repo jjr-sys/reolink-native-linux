@@ -716,18 +716,16 @@ Rectangle {
         }
     }
 
+    // The Bosch steers by dragging its picture while ⇅ is on (bosch-ptz-port ticket 04);
+    // under the pane bar, which keeps its own clicks.
     Loader {
         active: root.boschPtzOpen && root.isBoschFeed
-        anchors.right: videoArea.right
-        anchors.rightMargin: 8
-        y: paneBar.y + paneBar.pillTop - height - 8
-        z: 32
-        sourceComponent: PtzPad {
-            deviceRow: -1
-            showZoom: true
-            boschCamera: true
-            onOpenBoschTourRequested: root.openBoschTourRequested()
-        }
+        x: videoArea.x
+        y: videoArea.y
+        width: videoArea.width
+        height: Math.max(0, paneBar.y + paneBar.pillTop - 4 - videoArea.y)
+        z: 30
+        sourceComponent: BoschSteerSurface {}
     }
 
     HoverHandler { id: paneHover }
@@ -814,7 +812,7 @@ Rectangle {
                                               : qsTr("Rotate view 90°") });
         t.push({ id: "zoom", glyph: "⊕", active: root.zoom > 1.01,
                  tip: root.zoom > 1.01 ? qsTr("Reset zoom") : qsTr("Digital zoom (scroll to adjust)") });
-        if (root.capPtz || (bosch && root.roomyForBosch))
+        if (root.capPtz || (bosch && root.width >= 320))
             t.push({ id: "ptz", glyph: "⇅", active: bosch ? root.boschPtzOpen : root.ptzOpen,
                      tip: qsTr("PTZ controls") });
         if (bosch && root.roomyForBosch)

@@ -875,6 +875,73 @@ private slots:
         QVERIFY(c->message().startsWith(QStringLiteral("Stopping the tour and restoring")));
     }
 
+    // bosch-ptz-port ticket 04: steering by dragging the picture, as the Outpost app.
+    void aDragSteersInProportionUpToFullSpeed()
+    {
+        connectAndSettle();
+        c->steerDrag(96, 0, 192);   // half the full-speed distance, to the right
+        QJsonObject move = ht->answer(kSteer, 200, kSteerOk);
+        QCOMPARE(move.value("pan").toDouble(), 0.5);
+        QCOMPARE(move.value("tilt").toDouble(), 0.0);
+        c->steerDrag(0, -96, 192);   // up the screen tilts up
+        move = ht->answer(kSteer, 200, kSteerOk);
+        QCOMPARE(move.value("pan").toDouble(), 0.0);
+        QCOMPARE(move.value("tilt").toDouble(), 0.5);
+        c->steerDrag(-400, 400, 192);   // past full speed: capped, direction kept
+        move = ht->answer(kSteer, 200, kSteerOk);
+        QCOMPARE(move.value("pan").toDouble(), -0.71);
+        QCOMPARE(move.value("tilt").toDouble(), -0.71);
+        QCOMPARE(move.value("zoom").toDouble(), 0.0);
+    }
+
+    void aDragWithinThreePixelsDoesNotMove()
+    {
+        connectAndSettle();
+        c->steerDrag(2, -2, 192);
+        QVERIFY(ht->pending.empty());
+    }
+
+    void backIntoTheDeadZoneStopsAndOutAgainMoves()
+    {
+        connectAndSettle();
+        c->steerDrag(96, 0, 192);
+        ht->answer(kSteer, 200, kSteerOk);
+        c->steerDrag(1, 0, 192);
+        QVERIFY(isStop(ht->answer(kSteer, 200, kSteerOk)));
+        holdTick();
+        QVERIFY(ht->pending.empty());
+        c->steerDrag(0, 48, 192);
+        QCOMPARE(ht->answer(kSteer, 200, kSteerOk).value("tilt").toDouble(), -0.25);
+    }
+
+    void theZoomStripFollowsThePhonesCurve()
+    {
+        connectAndSettle();
+        c->zoomDrag(-10, 100);   // inside the still middle (16 %)
+        QVERIFY(ht->pending.empty());
+        c->zoomDrag(-50, 100);   // halfway up: 0.04 + 0.96 * ((0.5 - 0.16) / 0.84)^2 = 0.197
+        QJsonObject move = ht->answer(kSteer, 200, kSteerOk);
+        QCOMPARE(move.value("zoom").toDouble(), 0.2);
+        QCOMPARE(move.value("pan").toDouble(), 0.0);
+        c->zoomDrag(150, 100);   // past the bottom: full zoom out
+        QCOMPARE(ht->answer(kSteer, 200, kSteerOk).value("zoom").toDouble(), -1.0);
+    }
+
+    void aDragDuringATourStopsItOnceThenSteersTheLatest()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        c->steerDrag(1, 0, 192);   // dead zone: the tour keeps going
+        QCOMPARE(ht->count(QStringLiteral("bosch_camera_stop_patrol")), 0);
+        c->steerDrag(40, 0, 192);
+        c->steerDrag(80, 0, 192);
+        c->steerDrag(96, 0, 192);
+        QCOMPARE(ht->count(QStringLiteral("bosch_camera_stop_patrol")), 1);
+        QCOMPARE(ht->count(kSteer), 0);
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        QCOMPARE(ht->answer(kSteer, 200, kSteerOk).value("pan").toDouble(), 0.5);
+        QVERIFY(c->manualStopped());
+    }
+
     void irisPressHeartbeatAndRelease()
     {
         connectAndSettle();

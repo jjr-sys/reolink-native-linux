@@ -14,6 +14,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <cmath>
 
 namespace rl {
 namespace {
@@ -35,11 +36,34 @@ const int kIrisHeartbeatIntervalMs = 700;
 const int kSteerResendIntervalMs = 1000;
 // The pad's fixed speed, as it was with onvif.ptz.
 const double kSteerSpeed = 0.35;
+// Dragging the picture (ticket 04, the Outpost app's numbers): no move within 3 px of the press.
+const double kDragDeadZonePx = 3;
+// The zoom strip (the Outpost app's Trackpad): still in the middle 16 % of the way to an end,
+// then 0.04 rising with the square of the distance to 1 at the end, in steps of 0.02.
+const double kStripStill = 0.16;
+const double kStripSlowest = 0.04;
+const double kStripStep = 0.02;
 
 const QString kWiperEntity = QStringLiteral("pyscript.bosch_camera_wiper");
 const QString kSteerService = QStringLiteral("bosch_camera_steer");
 const QString kWiperUnknown = QStringLiteral("unknown");
 const QString kWiperNoResponse = QStringLiteral("Wiper didn't respond");
+
+double hundredths(double value)
+{
+    return std::round(value * 100) / 100;
+}
+
+// The zoom speed for the strip's thumb `far` of the way from its middle to an end (-1..1).
+double stripZoom(double far)
+{
+    const double distance = std::min(1.0, std::abs(far));
+    if (distance < kStripStill)
+        return 0;
+    const double out = (distance - kStripStill) / (1 - kStripStill);
+    const double speed = kStripSlowest + (1 - kStripSlowest) * out * out;
+    return hundredths(std::round(speed / kStripStep) * kStripStep) * (far < 0 ? -1 : 1);
+}
 
 // A pad word for one axis as a steer number: `positive`, `negative`, or none.
 double steerAxis(const QString &word, QLatin1String positive, QLatin1String negative)
@@ -1067,13 +1091,47 @@ void BoschTourController::moveCamera(const QString &pan, const QString &tilt,
 {
     if (pan.isEmpty() && tilt.isEmpty() && zoom.isEmpty())
         return;
+    holdSteer(Steer{steerAxis(pan, QLatin1String("RIGHT"), QLatin1String("LEFT")),
+                    steerAxis(tilt, QLatin1String("UP"), QLatin1String("DOWN")),
+                    steerAxis(zoom, QLatin1String("ZOOM_IN"), QLatin1String("ZOOM_OUT"))});
+}
+
+void BoschTourController::steerDrag(qreal dx, qreal dy, qreal reach)
+{
+    if (reach <= 0)
+        return;
+    if (std::hypot(dx, dy) <= kDragDeadZonePx) {
+        holdSteer({});
+        return;
+    }
+    const double pan = dx / reach;
+    const double tilt = -dy / reach;   // up the screen tilts up
+    const double scale = std::max(1.0, std::hypot(pan, tilt));
+    holdSteer(Steer{hundredths(pan / scale), hundredths(tilt / scale), 0});
+}
+
+void BoschTourController::zoomDrag(qreal dy, qreal halfTravel)
+{
+    if (halfTravel <= 0)
+        return;
+    holdSteer(Steer{0, 0, stripZoom(-dy / halfTravel)});
+}
+
+void BoschTourController::holdSteer(const Steer &steer)
+{
+    if (steer == Steer{}) {
+        m_heldMove.reset();   // back in the dead zone before a tour's stop landed
+        if (m_steer)
+            releaseSteer(false);
+        return;
+    }
     // A press that has to wait (T, a tour's stop, an unknown tour state) ends any older hold.
     m_steer.reset();
     m_steerTimer->stop();
     // A press during T (or while its saved route is restored) leaves T; the move follows
     // once the route is back (finishSelectionTourSession).
     if (m_selectionTourSession) {
-        m_heldMove = HeldMove{pan, tilt, zoom};
+        m_heldMove = steer;
         m_pendingSelectionTourPreset.clear();
         // leaveSelectionTour always asks HA to stop first, so the session can't finish (and
         // play this move) inside the call.
@@ -1084,7 +1142,7 @@ void BoschTourController::moveCamera(const QString &pan, const QString &tilt,
         return;
     }
     if (touring()) {   // a manual move stops the tour first
-        m_heldMove = HeldMove{pan, tilt, zoom};
+        m_heldMove = steer;
         stopTourForManualMove([this] { playHeldMove(); });
         return;
     }
@@ -1092,9 +1150,7 @@ void BoschTourController::moveCamera(const QString &pan, const QString &tilt,
         setMessage(QStringLiteral("Wait for Home Assistant to report the tour state before moving the camera."));
         return;
     }
-    m_steer = Steer{steerAxis(pan, QLatin1String("RIGHT"), QLatin1String("LEFT")),
-                    steerAxis(tilt, QLatin1String("UP"), QLatin1String("DOWN")),
-                    steerAxis(zoom, QLatin1String("ZOOM_IN"), QLatin1String("ZOOM_OUT"))};
+    m_steer = steer;
     m_stopAfterSteer = false;
     m_steerTimer->start();
     if (m_steerPending)
@@ -1535,9 +1591,9 @@ void BoschTourController::playHeldMove()
 {
     if (!m_heldMove)
         return;
-    const HeldMove move = *m_heldMove;
+    const Steer move = *m_heldMove;
     m_heldMove.reset();
-    moveCamera(move.pan, move.tilt, move.zoom);
+    holdSteer(move);
 }
 
 bool BoschTourController::clearManualWhileTouring()

@@ -167,6 +167,7 @@ set(APP_QML_FILES
     src/ui/qml/components/HighlightText.js
     src/ui/qml/components/EventClipPlayer.qml
     src/ui/qml/components/PtzPad.qml
+    src/ui/qml/components/BoschSteerSurface.qml
     src/ui/qml/components/Timeline.qml
     src/ui/qml/components/MonthCalendar.qml
     src/ui/qml/components/SettingRow.qml
