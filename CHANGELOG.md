@@ -228,6 +228,18 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Changed
 
+- **Bosch pad moves go through Home Assistant's Bosch steer service.** Pressing the pad or
+  an arrow key now uses the same move as the Outpost phone app, so a manual move also cancels
+  Bosch tracking (as it already stopped a tour). A held direction is sent again every second
+  (one move lasts 3 s), and letting go always stops the camera, even if the move hasn't been
+  answered yet. If the camera refuses a move, the Bosch message says why and the move ends
+  until the next press (bosch-ptz-port ticket 02).
+  **Internal:** `BoschTourController::moveCamera` / `stopCamera` call
+  `pyscript.bosch_camera_steer` (pan/tilt/zoom ±0.35, the old pad speed) instead of
+  `onvif.ptz`; `resendSteer` (1 s timer) never stacks behind an unanswered steer, and a
+  newer press goes once it is answered; a release while a move is unanswered sends one more
+  stop after it; `callOnvif` and `m_ptzRequestPending` are gone.
+
 - **Bosch tour: "Manual" now comes from Home Assistant.** When the app stops the tour to move the
   camera, it tells Home Assistant the reason ("manual"), and it shows "Manual · tour stopped"
   whenever Home Assistant says the tour stopped for a manual move, including a move from Home
@@ -340,6 +352,12 @@ While the project is pre-1.0, minor versions may still change behaviour.
   each camera supports, and when it was running.
 
 ### Fixed
+
+- **A lost Home Assistant request no longer freezes the Bosch controls.** Every request to
+  Home Assistant now gives up after 40 s with "No answer from Home Assistant in 40 s".
+  Before, a request that never got an answer could leave the pad unresponsive until restart.
+  **Internal:** `NetworkHomeAssistantTransport` sets `setTransferTimeout` (constructor
+  argument, default `kDefaultTimeoutMs` = 40000); `test_hatransport`.
 
 - **A Frigate camera's Playback day was empty when Playback opened at start.** Its first
   search went out before the Frigate login was loaded, was refused, and was often never

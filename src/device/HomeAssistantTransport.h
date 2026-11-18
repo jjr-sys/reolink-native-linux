@@ -28,17 +28,24 @@ public:
                       Reply reply) = 0;
 };
 
-// Production adapter: QNetworkAccessManager.
+// Production adapter: QNetworkAccessManager. A request with no answer within the limit
+// ends with status 0 and "No answer from Home Assistant in N s", so a lost request can't
+// leave a control waiting forever. The limit covers the slowest service: the first manual
+// move while tracking is on waits up to ~24 s for tracking to confirm Off.
 class NetworkHomeAssistantTransport : public HomeAssistantTransport
 {
     Q_OBJECT
 public:
-    explicit NetworkHomeAssistantTransport(QObject *parent = nullptr);
+    static constexpr int kDefaultTimeoutMs = 40000;
+
+    explicit NetworkHomeAssistantTransport(QObject *parent = nullptr,
+                                           int timeoutMs = kDefaultTimeoutMs);
     void send(const QUrl &url, const QString &token, const QByteArray &body,
               Reply reply) override;
 
 private:
     QNetworkAccessManager *m_network = nullptr;
+    int m_timeoutMs = kDefaultTimeoutMs;
 };
 
 } // namespace rl

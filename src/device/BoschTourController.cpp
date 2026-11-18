@@ -31,6 +31,20 @@ QJsonObject manualStopReason()
 const int kPollIntervalMs = 1500;
 const int kPresetPollIntervalMs = 10000;
 const int kIrisHeartbeatIntervalMs = 700;
+// One bosch_camera_steer moves for 3 s on the server; resend well inside that while held.
+const int kSteerResendIntervalMs = 1000;
+// The pad's fixed speed, as it was with onvif.ptz.
+const double kSteerSpeed = 0.35;
+
+// A pad word for one axis as a steer number: `positive`, `negative`, or none.
+double steerAxis(const QString &word, QLatin1StringView positive, QLatin1StringView negative)
+{
+    if (word.compare(positive, Qt::CaseInsensitive) == 0)
+        return kSteerSpeed;
+    if (word.compare(negative, Qt::CaseInsensitive) == 0)
+        return -kSteerSpeed;
+    return 0;
+}
 const QString kWiperEntity = QStringLiteral("pyscript.bosch_camera_wiper");
 const QString kWiperUnknown = QStringLiteral("unknown");
 const QString kWiperNoResponse = QStringLiteral("Wiper didn't respond");
@@ -73,8 +87,11 @@ BoschTourController::BoschTourController(CredentialStore *credentials,
     : QObject(parent), m_credentials(credentials),
       m_transport(transport ? transport : new NetworkHomeAssistantTransport(this)),
       m_pollTimer(new QTimer(this)),
-      m_presetTimer(new QTimer(this)), m_irisHeartbeatTimer(new QTimer(this))
+      m_presetTimer(new QTimer(this)), m_irisHeartbeatTimer(new QTimer(this)),
+      m_steerTimer(new QTimer(this))
 {
+    m_steerTimer->setInterval(kSteerResendIntervalMs);
+    connect(m_steerTimer, &QTimer::timeout, this, &BoschTourController::resendSteer);
     m_pollTimer->setInterval(kPollIntervalMs);
     connect(m_pollTimer, &QTimer::timeout, this, [this] {
         refreshPatrol();
@@ -195,7 +212,7 @@ void BoschTourController::connectHomeAssistant(const QString &url, const QString
     m_presetTimer->stop();
     m_patrolRequestPending = false;
     m_presetsRequestPending = false;
-    m_ptzRequestPending = false;
+    resetSteer();
     resetManualMoves();   // a stop in flight is from the old connection: its answer is dropped
     resetWiper();
     setBusy(false);
@@ -260,7 +277,7 @@ void BoschTourController::disconnectHomeAssistant()
     m_presetTimer->stop();
     m_patrolRequestPending = false;
     m_presetsRequestPending = false;
-    m_ptzRequestPending = false;
+    resetSteer();
     resetManualMoves();
     setBusy(false);
     if (m_credentials)
@@ -1070,56 +1087,102 @@ void BoschTourController::moveCamera(const QString &pan, const QString &tilt,
         setMessage(QStringLiteral("Wait for Home Assistant to report the tour state before moving the camera."));
         return;
     }
-    if (m_ptzRequestPending)
-        return;
+    m_steer = Steer{steerAxis(pan, QLatin1StringView("RIGHT"), QLatin1StringView("LEFT")),
+                    steerAxis(tilt, QLatin1StringView("UP"), QLatin1StringView("DOWN")),
+                    steerAxis(zoom, QLatin1StringView("ZOOM_IN"), QLatin1StringView("ZOOM_OUT"))};
+    m_stopAfterSteer = false;
+    m_steerTimer->start();
+    if (!m_steerPending)   // else the latest press goes once the last steer is answered
+        sendSteer();
+}
 
-    QJsonObject data{
-        {QStringLiteral("entity_id"), m_cameraEntity},
-        {QStringLiteral("move_mode"), QStringLiteral("ContinuousMove")},
-        {QStringLiteral("speed"), 0.35},
-        // Home Assistant treats duration 0 as a held move; the stream's PTZ
-        // pad sends Stop as soon as the pointer is released.
-        {QStringLiteral("continuous_duration"), 0.0},
-    };
-    if (!pan.isEmpty())
-        data.insert(QStringLiteral("pan"), pan);
-    if (!tilt.isEmpty())
-        data.insert(QStringLiteral("tilt"), tilt);
-    if (!zoom.isEmpty())
-        data.insert(QStringLiteral("zoom"), zoom);
-    m_ptzRequestPending = true;
-    callOnvif(data, QStringLiteral("Move Bosch camera"), true);
+void BoschTourController::resendSteer()
+{
+    if (m_steer && !m_steerPending)
+        sendSteer();
+}
+
+void BoschTourController::sendSteer()
+{
+    if (!m_steer)
+        return;
+    const Steer steer = *m_steer;
+    m_steerPending = true;
+    m_steerSent = steer;
+    callService(QStringLiteral("bosch_camera_steer"),
+                QJsonObject{{QStringLiteral("pan"), steer.pan},
+                            {QStringLiteral("tilt"), steer.tilt},
+                            {QStringLiteral("zoom"), steer.zoom}},
+                true, false,
+                [this](int status, const QByteArray &body, const QString &networkError) {
+        m_steerPending = false;
+        const std::optional<Steer> sent = std::exchange(m_steerSent, std::nullopt);
+        const QJsonObject response = serviceResponse(body);
+        const bool answered = status >= 200 && status < 300;
+        if (!answered || !response.value(QStringLiteral("ok")).toBool(true)) {
+            // No retry storm while the button is still down; release still sends a stop.
+            m_steer.reset();
+            m_steerTimer->stop();
+            m_stopAfterSteer = false;
+            if (answered)
+                setMessage(QStringLiteral("Move Bosch camera: ")
+                           + failureDetail(response, body, networkError,
+                                           QStringLiteral("the camera did not confirm the move")));
+            else
+                operationFailed(QStringLiteral("Move Bosch camera"), status, body, networkError);
+            return;
+        }
+        if (std::exchange(m_stopAfterSteer, false)) {
+            // Released while this move was unanswered: it may have landed after the stop.
+            sendSteerStop();
+            return;
+        }
+        if (m_steer && m_steer != sent)   // a newer press waited for this answer
+            sendSteer();
+    });
 }
 
 void BoschTourController::stopCamera()
 {
     m_heldMove.reset();   // released: a move waiting on the tour's stop is dropped
-    callOnvif(QJsonObject{{QStringLiteral("entity_id"), m_cameraEntity},
-                          {QStringLiteral("move_mode"), QStringLiteral("Stop")}},
-             QStringLiteral("Stop Bosch camera movement"), false);
+    m_steer.reset();
+    m_steerTimer->stop();
+    if (m_steerPending)
+        m_stopAfterSteer = true;
+    sendSteerStop();
 }
 
-void BoschTourController::callOnvif(const QJsonObject &data, const QString &action,
-                                    bool movement)
+void BoschTourController::sendSteerStop()
 {
-    if (!configured() || m_cameraEntity.isEmpty()) {
-        m_ptzRequestPending = false;
-        setMessage(QStringLiteral("Configure the Home Assistant camera entity first."));
-        return;
-    }
-    const QUrl url(m_endpoint + QStringLiteral("/api/services/onvif/ptz"));
-    const QByteArray body = QJsonDocument(data).toJson(QJsonDocument::Compact);
-    request(url, m_token, body, [this, action, movement](int status, const QByteArray &response,
-                                                         const QString &networkError) {
-        if (movement)
-            m_ptzRequestPending = false;
+    // An all-zero steer only stops the camera; it never cancels tracking.
+    callService(QStringLiteral("bosch_camera_steer"),
+                QJsonObject{{QStringLiteral("pan"), 0}, {QStringLiteral("tilt"), 0},
+                            {QStringLiteral("zoom"), 0}},
+                true, false,
+                [this](int status, const QByteArray &body, const QString &networkError) {
         if (status < 200 || status >= 300) {
-            operationFailed(action, status, response, networkError);
+            operationFailed(QStringLiteral("Stop Bosch camera movement"), status, body,
+                            networkError);
             return;
         }
-        if (!movement)
-            setMessage(QStringLiteral("Camera movement stopped."));
+        const QJsonObject response = serviceResponse(body);
+        if (!response.value(QStringLiteral("ok")).toBool(true)) {
+            setMessage(QStringLiteral("Stop Bosch camera movement: ")
+                       + failureDetail(response, body, networkError,
+                                       QStringLiteral("the camera did not confirm the stop")));
+            return;
+        }
+        setMessage(QStringLiteral("Camera movement stopped."));
     });
+}
+
+void BoschTourController::resetSteer()
+{
+    m_steer.reset();
+    m_steerSent.reset();
+    m_steerTimer->stop();
+    m_steerPending = false;
+    m_stopAfterSteer = false;
 }
 
 void BoschTourController::saveTour(const QVariantList &route, int speed, int dwell)
@@ -1553,6 +1616,7 @@ void BoschTourController::operationFailed(const QString &action, int status,
         m_presetTimer->stop();
         m_irisHeartbeatTimer->stop();
         m_irisHeartbeatPending = false;
+        resetSteer();
         detail = QStringLiteral("Home Assistant rejected the saved token (HTTP %1). Update the token in Bosch tour settings.")
                      .arg(status);
     }

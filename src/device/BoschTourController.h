@@ -130,6 +130,11 @@ public:
     // an order is still out).
     Q_INVOKABLE bool toggleWiper();
 
+private slots:
+    // Each second while a direction is held: the held steer again (one lasts 3 s on the
+    // server), unless the last one is still unanswered (bosch-ptz-port ticket 02).
+    void resendSteer();
+
 signals:
     void connectionChanged();
     void busyChanged();
@@ -153,7 +158,11 @@ private:
                  ReplyHandler handler);
     void callService(const QString &service, const QJsonObject &data, bool returnResponse,
                      bool mutation, ReplyHandler handler);
-    void callOnvif(const QJsonObject &data, const QString &action, bool movement);
+    // Manual moves (bosch-ptz-port ticket 02): pyscript.bosch_camera_steer, which also
+    // cancels tracking and stops a tour on the server.
+    void sendSteer();
+    void sendSteerStop();
+    void resetSteer();
     void refreshPatrol();
     void refreshWiper();
     void setWiper(const QString &state, bool pending, const QString &error);
@@ -194,6 +203,7 @@ private:
     QTimer *m_pollTimer = nullptr;
     QTimer *m_presetTimer = nullptr;
     QTimer *m_irisHeartbeatTimer = nullptr;
+    QTimer *m_steerTimer = nullptr;
     QString m_endpoint;
     QString m_cameraEntity;
     QString m_token;
@@ -229,7 +239,15 @@ private:
     bool m_irisStopAfterStart = false;
     bool m_irisStopPending = false;
     bool m_irisHeartbeatPending = false;
-    bool m_ptzRequestPending = false;
+    // The direction held now, as steer numbers (-1..1); empty once released.
+    struct Steer {
+        double pan = 0, tilt = 0, zoom = 0;
+        bool operator==(const Steer &) const = default;
+    };
+    std::optional<Steer> m_steer;
+    bool m_steerPending = false;        // a steer that moves is unanswered
+    std::optional<Steer> m_steerSent;   // what that unanswered steer asked for
+    bool m_stopAfterSteer = false;      // released while it was unanswered: stop once more after
     bool m_selectionTourMode = false;
     bool m_selectionTourSession = false;
     bool m_selectionTourStarted = false;

@@ -105,6 +105,13 @@ const QByteArray kScene = svc(
 const QByteArray kIrisAuto = svc(R"({"supported":true,"mode":"AUTO","iris":5.0})");
 const QString kWiperState = QStringLiteral("pyscript.bosch_camera_wiper");
 const QString kWiper = QStringLiteral("bosch_camera_wiper");
+const QString kSteer = QStringLiteral("bosch_camera_steer");
+const QByteArray kSteerOk = svc(R"({"ok":true})");
+bool isStop(const QJsonObject &steer)
+{
+    return steer.value("pan").toDouble() == 0 && steer.value("tilt").toDouble() == 0
+           && steer.value("zoom").toDouble() == 0;
+}
 QByteArray wiperState(const char *state)
 {
     return QByteArray(R"({"entity_id":"pyscript.bosch_camera_wiper","state":")") + state + "\"}";
@@ -144,6 +151,18 @@ class TestBoschTour : public QObject
             }
         }
     }
+
+    // A steer that would move the camera is waiting.
+    bool anyMoveSent() const
+    {
+        for (const auto &p : ht->pending)
+            if (ScriptedTransport::nameOf(p.url) == kSteer
+                && !isStop(QJsonDocument::fromJson(p.body).object()))
+                return true;
+        return false;
+    }
+
+    void holdTick() { QVERIFY(QMetaObject::invokeMethod(c, "resendSteer")); }
 
     void connectAndSettle(const QByteArray &patrol = kPatrolStopped)
     {
@@ -354,11 +373,12 @@ private slots:
     {
         connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
         c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
-        QCOMPARE(ht->count(QStringLiteral("ptz")), 0);
+        QCOMPARE(ht->count(kSteer), 0);
         ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
-        const QJsonObject move = ht->peekBody(QStringLiteral("ptz"));
-        QCOMPARE(move.value("move_mode").toString(), QStringLiteral("ContinuousMove"));
-        QCOMPARE(move.value("pan").toString(), QStringLiteral("LEFT"));
+        const QJsonObject move = ht->peekBody(kSteer);
+        QCOMPARE(move.value("pan").toDouble(), -0.35);
+        QCOMPARE(move.value("tilt").toDouble(), 0.0);
+        QCOMPARE(move.value("zoom").toDouble(), 0.0);
         QVERIFY(c->manualStopped());
     }
 
@@ -368,9 +388,7 @@ private slots:
         c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
         c->stopCamera();   // released
         ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
-        for (const auto &p : ht->pending)
-            QVERIFY(QJsonDocument::fromJson(p.body).object().value("move_mode").toString()
-                    != QStringLiteral("ContinuousMove"));
+        QVERIFY(!anyMoveSent());
         QVERIFY(c->manualStopped());
     }
 
@@ -454,7 +472,7 @@ private slots:
         c->gotoPreset(QStringLiteral("2"));   // the tap replaces the held direction
         ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
         QCOMPARE(ht->count(QStringLiteral("bosch_camera_goto_preset")), 1);
-        QCOMPARE(ht->count(QStringLiteral("ptz")), 0);
+        QVERIFY(!anyMoveSent());
     }
 
     void aMoveThatEndsTsTourTellsHomeAssistantItWasManual()
@@ -503,9 +521,7 @@ private slots:
         c->toggleSelectionTourPosition(QStringLiteral("2"));   // no effect; T is off
         c->endSelectionTour();                                // retry the restore
         ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
-        for (const auto &p : ht->pending)   // only the retry's own traffic: no stale move
-            QVERIFY(QJsonDocument::fromJson(p.body).object().value("move_mode").toString()
-                    != QStringLiteral("ContinuousMove"));
+        QVERIFY(!anyMoveSent());   // only the retry's own traffic: no stale move
     }
 
     void padPressInSelectionModeEndsItThenMoves()
@@ -515,11 +531,11 @@ private slots:
         c->toggleSelectionTourPosition(QStringLiteral("1"));   // one stop: nothing runs
         c->moveCamera(QStringLiteral("RIGHT"), QString(), QString());
         QVERIFY(!c->selectionTourMode());
-        QCOMPARE(ht->count(QStringLiteral("ptz")), 0);   // after T's usual stop lands
+        QCOMPARE(ht->count(kSteer), 0);   // after T's usual stop lands
         ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
         QVERIFY(!c->selectionTourRestoring());
-        QCOMPARE(ht->count(QStringLiteral("ptz")), 1);   // the move, no Stop racing it
-        QCOMPARE(ht->peekBody(QStringLiteral("ptz")).value("pan").toString(), QStringLiteral("RIGHT"));
+        QCOMPARE(ht->count(kSteer), 1);   // the move, no Stop racing it
+        QCOMPARE(ht->peekBody(kSteer).value("pan").toDouble(), 0.35);
         QVERIFY(!c->manualStopped());   // no tour was running
     }
 
@@ -536,11 +552,11 @@ private slots:
 
         c->moveCamera(QStringLiteral("RIGHT"), QString(), QString());
         QVERIFY(!c->selectionTourMode());
-        QCOMPARE(ht->count(QStringLiteral("ptz")), 0);   // not before the route is restored
+        QCOMPARE(ht->count(kSteer), 0);   // not before the route is restored
         ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
         ht->answer(QStringLiteral("bosch_camera_set_patrol"), 200, "{}");
         QVERIFY(!c->selectionTourRestoring());
-        QCOMPARE(ht->peekBody(QStringLiteral("ptz")).value("pan").toString(), QStringLiteral("RIGHT"));
+        QCOMPARE(ht->peekBody(kSteer).value("pan").toDouble(), 0.35);
         QVERIFY(c->manualStopped());
     }
 
@@ -572,8 +588,9 @@ private slots:
         c->endSelectionTour();
         QVERIFY(!c->selectionTourMode());
         QVERIFY(c->selectionTourRestoring());
-        QCOMPARE(ht->count(QStringLiteral("ptz")), 1); // camera movement stopped too
-        ht->answer(QStringLiteral("ptz"), 200, "{}");
+        QCOMPARE(ht->count(kSteer), 1); // camera movement stopped too
+        QVERIFY(isStop(ht->peekBody(kSteer)));
+        ht->answer(kSteer, 200, svc(R"({"ok":true})"));
         ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
         const QJsonObject restored = ht->answer(QStringLiteral("bosch_camera_set_patrol"), 200, "{}");
         QCOMPARE(restored.value("route").toArray().size(), 2);
@@ -693,6 +710,112 @@ private slots:
         QCOMPARE(c->irisStatus(), QStringLiteral("no iris"));
         QVERIFY(!c->startIris(QStringLiteral("open")));
         QVERIFY(c->message().contains(QStringLiteral("unavailable")));
+    }
+
+    // bosch-ptz-port ticket 02: manual moves go through bosch_camera_steer.
+    void padDirectionsBecomeSteerNumbers()
+    {
+        connectAndSettle();
+        c->moveCamera(QStringLiteral("RIGHT"), QStringLiteral("UP"), QString());
+        QJsonObject move = ht->answer(kSteer, 200, kSteerOk);
+        QCOMPARE(move.value("pan").toDouble(), 0.35);
+        QCOMPARE(move.value("tilt").toDouble(), 0.35);
+        QCOMPARE(move.value("zoom").toDouble(), 0.0);
+        c->stopCamera();
+        ht->answer(kSteer, 200, kSteerOk);
+        c->moveCamera(QStringLiteral("LEFT"), QStringLiteral("DOWN"), QString());
+        move = ht->answer(kSteer, 200, kSteerOk);
+        QCOMPARE(move.value("pan").toDouble(), -0.35);
+        QCOMPARE(move.value("tilt").toDouble(), -0.35);
+        c->stopCamera();
+        ht->answer(kSteer, 200, kSteerOk);
+        c->moveCamera(QString(), QString(), QStringLiteral("ZOOM_OUT"));
+        QCOMPARE(ht->answer(kSteer, 200, kSteerOk).value("zoom").toDouble(), -0.35);
+        c->stopCamera();
+        ht->answer(kSteer, 200, kSteerOk);
+        c->moveCamera(QString(), QString(), QStringLiteral("ZOOM_IN"));
+        QCOMPARE(ht->answer(kSteer, 200, kSteerOk).value("zoom").toDouble(), 0.35);
+        QCOMPARE(ht->count(QStringLiteral("ptz")), 0);   // never onvif.ptz
+    }
+
+    void aHeldMoveIsResentEachTickWithoutStacking()
+    {
+        connectAndSettle();
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        QCOMPARE(ht->count(kSteer), 1);
+        holdTick();   // the first is unanswered (up to ~24 s while tracking turns off)
+        QCOMPARE(ht->count(kSteer), 1);
+        ht->answer(kSteer, 200, kSteerOk);
+        QCOMPARE(ht->count(kSteer), 0);   // an answer alone sends nothing new
+        holdTick();
+        QCOMPARE(ht->count(kSteer), 1);
+        QCOMPARE(ht->answer(kSteer, 200, kSteerOk).value("pan").toDouble(), -0.35);
+        c->stopCamera();
+        QVERIFY(isStop(ht->answer(kSteer, 200, kSteerOk)));
+        holdTick();   // released: nothing more
+        QVERIFY(ht->pending.empty());
+    }
+
+    void theLatestPressWinsOnceTheMoveIsAnswered()
+    {
+        connectAndSettle();
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        c->moveCamera(QString(), QStringLiteral("UP"), QString());   // e.g. a second key
+        QCOMPARE(ht->count(kSteer), 1);
+        ht->answer(kSteer, 200, kSteerOk);
+        const QJsonObject next = ht->peekBody(kSteer);
+        QCOMPARE(next.value("pan").toDouble(), 0.0);
+        QCOMPARE(next.value("tilt").toDouble(), 0.35);
+    }
+
+    void releaseStopsAtOnceAndAgainAfterAnUnansweredMove()
+    {
+        connectAndSettle();
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        c->stopCamera();   // the move is still unanswered: the stop doesn't wait
+        QCOMPARE(ht->count(kSteer), 2);
+        QVERIFY(isStop(QJsonDocument::fromJson(ht->pending.back().body).object()));
+        ht->answer(kSteer, 200, kSteerOk);   // the move lands after the stop was sent...
+        QCOMPARE(ht->count(kSteer), 2);       // ...so one more stop follows it
+        for (const auto &p : ht->pending)
+            QVERIFY(isStop(QJsonDocument::fromJson(p.body).object()));
+        ht->answer(kSteer, 200, kSteerOk);
+        ht->answer(kSteer, 200, kSteerOk);
+        QVERIFY(ht->pending.empty());
+        QCOMPARE(c->message(), QStringLiteral("Camera movement stopped."));
+    }
+
+    void aRefusedSteerSaysWhyAndEndsTheHold()
+    {
+        connectAndSettle();
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        ht->answer(kSteer, 200,
+                   svc(R"({"ok":false,"error":"The camera could not confirm this move"})"));
+        QVERIFY(c->message().contains(QStringLiteral("The camera could not confirm this move")));
+        holdTick();
+        QVERIFY(ht->pending.empty());   // no retry storm while the button is still down
+        c->stopCamera();                // release still stops
+        QVERIFY(isStop(ht->peekBody(kSteer)));
+    }
+
+    void aSteerThatFailsOnTheWireSaysSoAndEndsTheHold()
+    {
+        connectAndSettle();
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        ht->answer(kSteer, 0, "", QStringLiteral("No answer from Home Assistant in 40 s"));
+        QVERIFY(c->message().contains(QStringLiteral("No answer from Home Assistant")));
+        holdTick();
+        QVERIFY(ht->pending.empty());
+    }
+
+    void reconnectDropsAHoldInFlight()
+    {
+        connectAndSettle();
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        c->disconnectHomeAssistant();
+        ht->pending.clear();
+        holdTick();
+        QVERIFY(ht->pending.empty());
     }
 
     void irisPressHeartbeatAndRelease()
