@@ -21,7 +21,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
   `zoomDrag(dy, halfTravel)` (the phone's `StreamGesture` / `Trackpad` numbers: 3 px dead zone,
   linear to 1.0 with direction kept; strip still 16 %, 0.04 rising squared, 0.02 steps) feed
   one `holdSteer`; a held move waiting on a tour's stop is a `Steer`; an all-zero drag stops a
-  hold without ending the gesture or stopping a tour; `PtzPad` is Reolink-only again.
+  hold without ending the gesture or stopping a tour; a release stops the camera only if a
+  move was held since the last one (a click on a touring picture doesn't pause it); the
+  surface covers the picture, not its black bars; new `Theme.steer*` colours; `PtzPad` is
+  Reolink-only again.
 
 - **Bosch wiper toggle.** The Bosch camera's pane bar has a "Wiper" button next to "Marked
   range". It's lit while Home Assistant says the wiper runs, including Home Assistant's own

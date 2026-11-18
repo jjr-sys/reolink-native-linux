@@ -1125,6 +1125,7 @@ void BoschTourController::holdSteer(const Steer &steer)
             releaseSteer(false);
         return;
     }
+    m_movedSinceRelease = true;
     // A press that has to wait (T, a tour's stop, an unknown tour state) ends any older hold.
     m_steer.reset();
     m_steerTimer->stop();
@@ -1199,12 +1200,14 @@ void BoschTourController::sendSteer()
 
 void BoschTourController::stopCamera()
 {
-    releaseSteer(true);
+    if (m_movedSinceRelease)
+        releaseSteer(true);
 }
 
 void BoschTourController::releaseSteer(bool announce)
 {
     m_heldMove.reset();   // released: a move waiting on the tour's stop is dropped
+    m_movedSinceRelease = false;
     m_steer.reset();
     m_steerTimer->stop();
     m_steerPressedWhilePending = false;
@@ -1254,6 +1257,7 @@ void BoschTourController::resetSteer()
     m_steerPending = false;
     m_steerPressedWhilePending = false;
     m_stopAfterSteer = false;
+    m_movedSinceRelease = false;
 }
 
 void BoschTourController::saveTour(const QVariantList &route, int speed, int dwell)

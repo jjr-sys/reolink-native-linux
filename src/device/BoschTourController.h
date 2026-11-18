@@ -115,7 +115,10 @@ public:
     Q_INVOKABLE void savePreset(const QString &name, const QString &token = QString());
     Q_INVOKABLE void removePreset(const QString &token);
     Q_INVOKABLE void gotoPreset(const QString &token);
-    Q_INVOKABLE void moveCamera(const QString &pan, const QString &tilt, const QString &zoom);
+    // Pad words ("LEFT", "UP", "ZOOM_IN"…) at the pad's speed; no QML caller since ticket 04.
+    void moveCamera(const QString &pan, const QString &tilt, const QString &zoom);
+    // Release: stops the camera if anything was moved (or is waiting to) since the last one,
+    // so a click on a touring picture never pauses the tour's travel.
     Q_INVOKABLE void stopCamera();
     // Dragging the picture (bosch-ptz-port ticket 04, as the Outpost app): the cursor is
     // (dx, dy) px from where it was pressed; `reach` px is full speed. Within 3 px it stops.
@@ -170,11 +173,11 @@ private:
                  ReplyHandler handler);
     void callService(const QString &service, const QJsonObject &data, bool returnResponse,
                      bool mutation, ReplyHandler handler);
-    // Manual moves (bosch-ptz-port ticket 02): pyscript.bosch_camera_steer, which also
-    // cancels tracking and stops a tour on the server.
     // A press or drag: steer now, or wait for T / a tour's stop. All-zero (a drag back in its
     // dead zone) stops a hold without ending the gesture, and never stops a tour.
     void holdSteer(const Steer &steer);
+    // Manual moves (bosch-ptz-port ticket 02): pyscript.bosch_camera_steer, which also
+    // cancels tracking and stops a tour on the server.
     void sendSteer();
     // Release: stop now, and once more after a move still unanswered. `announce` false keeps
     // the current message (turning T off says it is restoring the route).
@@ -264,7 +267,8 @@ private:
     bool m_steerPending = false;              // a steer that moves is unanswered
     bool m_steerPressedWhilePending = false;  // a press since: send it on the answer
     bool m_stopAfterSteer = false;            // released while unanswered: stop once more after
-    bool m_announceSteerStop = true;          // the stop's answer says "Camera movement stopped."
+    bool m_announceSteerStop = true;
+    bool m_movedSinceRelease = false;         // a move was held since the last release          // the stop's answer says "Camera movement stopped."
     bool m_selectionTourMode = false;
     bool m_selectionTourSession = false;
     bool m_selectionTourStarted = false;

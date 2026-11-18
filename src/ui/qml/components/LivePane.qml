@@ -716,14 +716,16 @@ Rectangle {
         }
     }
 
-    // The Bosch steers by dragging its picture while ⇅ is on (bosch-ptz-port ticket 04);
-    // under the pane bar, which keeps its own clicks.
+    // The Bosch steers by dragging its picture while ⇅ is on (bosch-ptz-port ticket 04):
+    // the picture itself, not its black bars, and under the pane bar, which keeps its clicks.
     Loader {
+        readonly property rect picture: video.contentRect.width > 0
+            ? video.contentRect : Qt.rect(0, 0, video.width, video.height)
         active: root.boschPtzOpen && root.isBoschFeed
-        x: videoArea.x
-        y: videoArea.y
-        width: videoArea.width
-        height: Math.max(0, paneBar.y + paneBar.pillTop - 4 - videoArea.y)
+        x: videoArea.x + video.x + picture.x
+        y: videoArea.y + video.y + picture.y
+        width: picture.width
+        height: Math.max(0, Math.min(picture.height, paneBar.y + paneBar.pillTop - 4 - y))
         z: 30
         sourceComponent: BoschSteerSurface {}
     }
@@ -758,6 +760,8 @@ Rectangle {
     // Live: ↺ and ◀ start Live replay, HD, sound and the camera's tools. Replaying: the whole
     // transport, the "time behind live" line and the replayed picture's tools.
     readonly property bool roomyForBosch: root.width >= 760 && root.height >= 460
+    // Drag steering needs less room than the tour tools.
+    readonly property bool roomyForBoschSteering: root.width >= 320
     readonly property var liveTools: {
         var t = [], bosch = root.isBoschFeed;
         if (root.replaying) {
@@ -812,7 +816,7 @@ Rectangle {
                                               : qsTr("Rotate view 90°") });
         t.push({ id: "zoom", glyph: "⊕", active: root.zoom > 1.01,
                  tip: root.zoom > 1.01 ? qsTr("Reset zoom") : qsTr("Digital zoom (scroll to adjust)") });
-        if (root.capPtz || (bosch && root.width >= 320))
+        if (root.capPtz || (bosch && root.roomyForBoschSteering))
             t.push({ id: "ptz", glyph: "⇅", active: bosch ? root.boschPtzOpen : root.ptzOpen,
                      tip: qsTr("PTZ controls") });
         if (bosch && root.roomyForBosch)

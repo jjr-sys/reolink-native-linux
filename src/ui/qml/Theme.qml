@@ -16,6 +16,13 @@ QtObject {
     readonly property color paneBar: "#cc0d141b"   // the pane bar and its buttons over a picture
     readonly property color paneBarError: "#cc7a1f1f"
     readonly property color paneBackground: "#05080b"
+    // Drag steering over a picture (BoschSteerSurface): marks, their fills, the zoom rail.
+    readonly property color steerMark: "#ffffff"
+    readonly property color steerMarkSoft: "#b3ffffff"
+    readonly property color steerMarkFaint: "#40ffffff"
+    readonly property color steerFill: "#4dffffff"
+    readonly property color steerRingFill: "#14ffffff"
+    readonly property color steerRail: "#2610212c"
     readonly property color danger: "#e5484d"
     readonly property color warning: "#e3ad45"
     readonly property color online: "#46a758"

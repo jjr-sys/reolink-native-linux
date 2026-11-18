@@ -107,6 +107,7 @@ const QString kWiperState = QStringLiteral("pyscript.bosch_camera_wiper");
 const QString kWiper = QStringLiteral("bosch_camera_wiper");
 const QString kSteer = QStringLiteral("bosch_camera_steer");
 const QByteArray kSteerOk = svc(R"({"ok":true})");
+const qreal kReach = 192;   // the drag's full-speed distance, px
 bool isStop(const QJsonObject &steer)
 {
     return steer.value("pan").toDouble() == 0 && steer.value("tilt").toDouble() == 0
@@ -879,15 +880,15 @@ private slots:
     void aDragSteersInProportionUpToFullSpeed()
     {
         connectAndSettle();
-        c->steerDrag(96, 0, 192);   // half the full-speed distance, to the right
+        c->steerDrag(96, 0, kReach);   // half the full-speed distance, to the right
         QJsonObject move = ht->answer(kSteer, 200, kSteerOk);
         QCOMPARE(move.value("pan").toDouble(), 0.5);
         QCOMPARE(move.value("tilt").toDouble(), 0.0);
-        c->steerDrag(0, -96, 192);   // up the screen tilts up
+        c->steerDrag(0, -96, kReach);   // up the screen tilts up
         move = ht->answer(kSteer, 200, kSteerOk);
         QCOMPARE(move.value("pan").toDouble(), 0.0);
         QCOMPARE(move.value("tilt").toDouble(), 0.5);
-        c->steerDrag(-400, 400, 192);   // past full speed: capped, direction kept
+        c->steerDrag(-400, 400, kReach);   // past full speed: capped, direction kept
         move = ht->answer(kSteer, 200, kSteerOk);
         QCOMPARE(move.value("pan").toDouble(), -0.71);
         QCOMPARE(move.value("tilt").toDouble(), -0.71);
@@ -897,20 +898,20 @@ private slots:
     void aDragWithinThreePixelsDoesNotMove()
     {
         connectAndSettle();
-        c->steerDrag(2, -2, 192);
+        c->steerDrag(2, -2, kReach);
         QVERIFY(ht->pending.empty());
     }
 
     void backIntoTheDeadZoneStopsAndOutAgainMoves()
     {
         connectAndSettle();
-        c->steerDrag(96, 0, 192);
+        c->steerDrag(96, 0, kReach);
         ht->answer(kSteer, 200, kSteerOk);
-        c->steerDrag(1, 0, 192);
+        c->steerDrag(1, 0, kReach);
         QVERIFY(isStop(ht->answer(kSteer, 200, kSteerOk)));
         holdTick();
         QVERIFY(ht->pending.empty());
-        c->steerDrag(0, 48, 192);
+        c->steerDrag(0, 48, kReach);
         QCOMPARE(ht->answer(kSteer, 200, kSteerOk).value("tilt").toDouble(), -0.25);
     }
 
@@ -930,16 +931,32 @@ private slots:
     void aDragDuringATourStopsItOnceThenSteersTheLatest()
     {
         connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
-        c->steerDrag(1, 0, 192);   // dead zone: the tour keeps going
+        c->steerDrag(1, 0, kReach);   // dead zone: the tour keeps going
         QCOMPARE(ht->count(QStringLiteral("bosch_camera_stop_patrol")), 0);
-        c->steerDrag(40, 0, 192);
-        c->steerDrag(80, 0, 192);
-        c->steerDrag(96, 0, 192);
+        c->steerDrag(40, 0, kReach);
+        c->steerDrag(80, 0, kReach);
+        c->steerDrag(96, 0, kReach);
         QCOMPARE(ht->count(QStringLiteral("bosch_camera_stop_patrol")), 1);
         QCOMPARE(ht->count(kSteer), 0);
         ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
         QCOMPARE(ht->answer(kSteer, 200, kSteerOk).value("pan").toDouble(), 0.5);
         QVERIFY(c->manualStopped());
+    }
+
+    void aClickOnATouringPictureNeitherStopsTheTourNorTheCamera()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        c->steerDrag(2, 1, kReach);   // jitter inside the dead zone
+        c->stopCamera();             // released
+        QVERIFY(ht->pending.empty());
+    }
+
+    void aReleaseAfterAZoomInsideTheStillMiddleSendsNothing()
+    {
+        connectAndSettle();
+        c->zoomDrag(-10, 100);
+        c->stopCamera();
+        QVERIFY(ht->pending.empty());
     }
 
     void irisPressHeartbeatAndRelease()

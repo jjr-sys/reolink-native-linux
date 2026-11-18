@@ -12,6 +12,8 @@ Item {
     property real reach: 192
     readonly property real railWidth: 42
     readonly property real thumbRadius: 16
+    readonly property real thumbGrab: 24   // the thumb can be taken this far from its middle
+    readonly property real ringRadius: 56
     // Moves are allowed now: connected and the tour state known (a tour is stopped first).
     readonly property bool steerable: BoschTour.connected && !BoschTour.busy
         && (BoschTour.tourState === "stopped" || BoschTour.touring || BoschTour.selectionTourMode)
@@ -20,18 +22,17 @@ Item {
     property string gesture: ""
     property point origin: Qt.point(0, 0)
     property point cursor: Qt.point(0, 0)
-    property bool moved: false   // a move was asked for: release sends a stop
     property real ringOpacity: 0
 
-    readonly property real stripHalfTravel: Math.max(1, height / 2 - thumbRadius)
-    readonly property real stripCentreX: width - railWidth / 2
+    readonly property real stripHalfTravel: Math.max(1, height / 2 - thumbGrab)
 
     function release() {
-        if (moved)
-            BoschTour.stopCamera();
-        moved = false;
+        const steered = gesture === "steer";
+        if (gesture !== "")
+            BoschTour.stopCamera();   // stops only if the drag moved the camera
         gesture = "";
-        fade.restart();
+        if (steered)   // the ring fades after steering only
+            fade.restart();
     }
 
     Component.onDestruction: release()
@@ -41,7 +42,7 @@ Item {
         x: surface.width - surface.railWidth
         width: surface.railWidth
         height: surface.height
-        color: "#2610212c"
+        color: Theme.steerRail
         opacity: surface.steerable ? 1 : 0.4
 
         Rectangle {
@@ -49,7 +50,7 @@ Item {
             y: 24
             width: 1
             height: parent.height - 48
-            color: "#80ffffff"
+            color: Theme.steerMarkSoft
         }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
@@ -77,8 +78,8 @@ Item {
                   ? Math.max(-surface.stripHalfTravel,
                              Math.min(surface.stripHalfTravel, surface.cursor.y - surface.origin.y))
                   : 0)
-            color: "#4dffffff"
-            border.color: "white"
+            color: Theme.steerFill
+            border.color: Theme.steerMark
             Behavior on y {
                 enabled: surface.gesture !== "zoom"
                 NumberAnimation { duration: 150; easing.type: Easing.OutBack }
@@ -91,24 +92,32 @@ Item {
         opacity: surface.gesture === "steer" ? 1 : surface.ringOpacity
         visible: opacity > 0
 
-        Rectangle {
-            x: surface.origin.x - 56; y: surface.origin.y - 56
-            width: 112; height: 112; radius: 56
-            color: "#14ffffff"
-            border.color: "#b3ffffff"
+        component Mark: Rectangle {
+            property point centre
+            property real size
+            x: centre.x - size / 2
+            y: centre.y - size / 2
+            width: size
+            height: size
+            radius: size / 2
         }
-        Rectangle {
-            x: surface.origin.x - 32; y: surface.origin.y - 32
-            width: 64; height: 64; radius: 32
+        Mark {   // full speed is further out than this; the ring only marks the spot
+            centre: surface.origin
+            size: surface.ringRadius * 2
+            color: Theme.steerRingFill
+            border.color: Theme.steerMarkSoft
+        }
+        Mark {
+            centre: surface.origin
+            size: surface.ringRadius * 8 / 7
             color: "transparent"
-            border.color: "#40ffffff"
+            border.color: Theme.steerMarkFaint
         }
-        Rectangle {
-            readonly property point at: surface.gesture === "steer" ? surface.cursor : surface.origin
-            x: at.x - 16; y: at.y - 16
-            width: 32; height: 32; radius: 16
-            color: "#4dffffff"
-            border.color: "white"
+        Mark {
+            centre: surface.gesture === "steer" ? surface.cursor : surface.origin
+            size: surface.thumbRadius * 2
+            color: Theme.steerFill
+            border.color: Theme.steerMark
         }
     }
 
@@ -124,17 +133,17 @@ Item {
     MouseArea {
         anchors.fill: parent
         acceptedButtons: Qt.LeftButton
-        enabled: surface.steerable || pressed   // held through a tour's stop
+        // Always takes the press while ⇅ is on, so a drag never picks the pane up instead;
+        // it only steers once Home Assistant is ready.
         cursorShape: surface.gesture !== "" ? Qt.ClosedHandCursor : Qt.OpenHandCursor
         preventStealing: true
         propagateComposedEvents: true   // a click selects the pane; a double-click maximises
 
         onPressed: (m) => {
             const onStrip = m.x >= surface.width - surface.railWidth;
-            if (onStrip && Math.abs(m.y - surface.height / 2) > surface.thumbRadius) {
-                m.accepted = true;   // the rail away from its thumb does nothing
-                return;
-            }
+            if (!surface.steerable
+                || (onStrip && Math.abs(m.y - surface.height / 2) > surface.thumbGrab))
+                return;   // taken, but nothing to do: not ready, or the rail away from its thumb
             fade.stop();
             surface.ringOpacity = 0;
             surface.gesture = onStrip ? "zoom" : "steer";
@@ -145,7 +154,6 @@ Item {
             if (surface.gesture === "")
                 return;
             surface.cursor = Qt.point(m.x, m.y);
-            surface.moved = true;
             if (surface.gesture === "zoom")
                 BoschTour.zoomDrag(m.y - surface.origin.y, surface.stripHalfTravel);
             else
@@ -164,7 +172,7 @@ Item {
         width: statusText.implicitWidth + 16
         height: statusText.implicitHeight + 6
         radius: Theme.radius
-        color: "#e60d141b"
+        color: Theme.paneBar
         border.color: Theme.border
         Text {
             id: statusText
