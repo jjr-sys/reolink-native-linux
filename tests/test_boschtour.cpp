@@ -1488,6 +1488,7 @@ private slots:
         ht->answer(kSteer, 200, kSteerOk);   // the server cancels tracking before moving
         ht->answer(kStartTracking, 200, tracking("true", "waiting"));
         QVERIFY(!c->trackingOn());
+        QVERIFY(c->message() != QStringLiteral("Tracking on."));
         QCOMPARE(ht->count(kGetTracking), 1);   // and asks again
         c->stopCamera();
     }

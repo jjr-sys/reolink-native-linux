@@ -1056,7 +1056,7 @@ bool BoschTourController::switchTracking(bool on)
                 setTourStoppedForTracking(wasTouring && trackingOn());
             }
         }
-        if (ok)
+        if (ok && trackingOn() == on)   // an overtaken start is already Off: say nothing
             setMessage(on ? QStringLiteral("Tracking on.") : QStringLiteral("Tracking off."));
     });
     return true;
