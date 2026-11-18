@@ -18,7 +18,8 @@ While the project is pre-1.0, minor versions may still change behaviour.
   steps), the position to return to, and Save. Settings change only while tracking is off,
   and a change must be saved before tracking can start. With ⇅ on, the chip at the top of
   the picture shows "Tracking · Following · 23 s", and "Tour stopped · tracking on" when
-  starting tracking stopped a tour. Dragging the picture or starting a tour turns tracking
+  starting tracking (here or from the phone) stopped a tour. When Tracking is under ⋯ on a
+  narrow pane, ⋯ also has **Tracking settings…**. Dragging the picture or starting a tour turns tracking
   off. If Home Assistant can't say what tracking is doing, the button is greyed with "Tracking
   service unavailable" (Stop stays usable while it is on) (bosch-ptz-port ticket 03).
   **Internal:** `BoschTracking.{h,cpp}` (`Tracking::parse` is the phone's strict
@@ -28,7 +29,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
   else the service's error; one out at a time; a read sent before an order's answer, a
   confirmed steer or a tour start is dropped by `m_trackingRevision`); a successful
   non-zero steer and a tour start mark tracking Off at once; a preset recall re-reads it;
-  reset on connect, disconnect and a 401/403. Starting is refused during tour selection (T).
+  reset on connect, disconnect and a 401/403; an order overtaken by a steer or tour start is
+  marked Off and read again; `trackingWhyNot` is the one refusal reason (tip and message);
+  while unreachable the status reads "Status unavailable", not a frozen countdown. Starting is
+  refused during tour selection (T).
   `BoschTrackingPanel.qml` (imports `ReolinkApp.Core`; `test_livestreamqml` loads it); the
   pane bar's wide tools take `caret: "<id>"` to make ⌃ its own button; `tracking` joins the
   Live common tools in `PaneBarRules`. Seconds read "23 s" (the phone writes "23s").

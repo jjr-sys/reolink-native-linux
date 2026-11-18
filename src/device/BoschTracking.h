@@ -17,6 +17,11 @@ struct TrackingSettings {
     int seconds = 0;
     QString returnToken;
 
+    static constexpr int kShortest = 5, kLongest = 300, kStep = 5;
+    static bool knownBehaviour(const QString &behaviour);
+    // The nearest allowed seconds: a 5 s step within 5..300.
+    static int steppedSeconds(int seconds);
+
     bool operator==(const TrackingSettings &) const = default;
     // seconds as a number, return_token as a string (ticket 01).
     QJsonObject body() const;

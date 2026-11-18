@@ -840,12 +840,14 @@ void BoschTourController::orderTracking(const QString &service, const QJsonObjec
                                         const QString &action, std::function<void(bool)> done)
 {
     m_trackingPending = true;
-    ++m_trackingRevision;
+    const quint64 sent = ++m_trackingRevision;
     emit trackingChanged();
     callService(service, data, true, false,
-                [this, action, done = std::move(done)](int status, const QByteArray &body,
-                                                       const QString &networkError) {
+                [this, action, sent, done = std::move(done)](int status, const QByteArray &body,
+                                                             const QString &networkError) {
         m_trackingPending = false;
+        // A confirmed steer or tour start since this was sent cancelled tracking after it.
+        const bool overtaken = m_trackingRevision != sent;
         ++m_trackingRevision;   // a read sent while the order was out is older than this answer
         if (status == 401 || status == 403) {
             emit trackingChanged();
@@ -858,6 +860,10 @@ void BoschTourController::orderTracking(const QString &service, const QJsonObjec
                               : std::nullopt;
         if (read) {
             acceptTracking(*read);
+            if (overtaken && read->enabled) {
+                markTrackingOff();
+                refreshTracking();
+            }
         } else {
             emit trackingChanged();
             setMessage(action + QStringLiteral(": ")
@@ -875,6 +881,12 @@ void BoschTourController::orderTracking(const QString &service, const QJsonObjec
 void BoschTourController::acceptTracking(const Tracking &read)
 {
     const QString tourBefore = tourStatus();
+    // Tracking seen turning on while a tour ran, or just after one stopped: it stopped the tour.
+    const int kJustStoppedMs = 5000;
+    if (read.enabled && !trackingOn()
+        && (touring()
+            || (m_tourStoppedClock.isValid() && m_tourStoppedClock.elapsed() < kJustStoppedMs)))
+        m_tourStoppedForTracking = true;
     // The draft follows the saved settings until it is edited.
     if (!m_trackingDraft || (m_tracking && *m_trackingDraft == m_tracking->config))
         m_trackingDraft = read.config;
@@ -908,6 +920,15 @@ void BoschTourController::setTourStoppedForTracking(bool on)
         emit patrolChanged();
 }
 
+void BoschTourController::noteTourStopped(bool wasTouring)
+{
+    if (!wasTouring || touring())
+        return;
+    m_tourStoppedClock.start();
+    if (trackingOn())
+        setTourStoppedForTracking(true);
+}
+
 void BoschTourController::resetTracking()
 {
     const QString tourBefore = tourStatus();
@@ -925,12 +946,14 @@ void BoschTourController::resetTracking()
 
 QString BoschTourController::trackingSaid() const
 {
-    return m_tracking ? m_tracking->said() : QStringLiteral("Status unavailable");
+    // Unreachable: the last status (a countdown, say) is no longer true.
+    return m_tracking && m_trackingReachable ? m_tracking->said()
+                                             : QStringLiteral("Status unavailable");
 }
 
 QString BoschTourController::trackingLine() const
 {
-    return trackingOn() ? QStringLiteral("Tracking · ") + m_tracking->said() : QString();
+    return trackingOn() ? QStringLiteral("Tracking · ") + trackingSaid() : QString();
 }
 
 bool BoschTourController::trackingDirty() const
@@ -948,9 +971,25 @@ bool BoschTourController::trackingCanSwitch() const
 {
     if (!m_connected || m_trackingPending || !m_tracking)
         return false;
+    return trackingOn() || trackingWhyNot().isEmpty();
+}
+
+QString BoschTourController::trackingWhyNot() const
+{
+    if (!m_connected)
+        return QStringLiteral("Home Assistant is disconnected");
+    if (m_trackingPending)
+        return QStringLiteral("Waiting for the camera…");
     if (trackingOn())
-        return true;
-    return m_trackingReachable && !trackingDirty() && !m_selectionTourSession;
+        return {};
+    if (!m_tracking || !m_trackingReachable)
+        return QStringLiteral("Tracking service unavailable");
+    if (trackingDirty())
+        return QStringLiteral("Save changes before enabling.");
+    // A tour selection's saved route waits to be restored; tracking would stop that tour.
+    if (m_selectionTourSession)
+        return QStringLiteral("Turn off tour selection before tracking.");
+    return {};
 }
 
 QString BoschTourController::trackingNote() const
@@ -971,13 +1010,10 @@ QString BoschTourController::trackingNote() const
 bool BoschTourController::editTracking(const QString &behaviour, int seconds,
                                        const QString &returnToken)
 {
-    static const QStringList behaviours{QStringLiteral("always"), QStringLiteral("fixed"),
-                                        QStringLiteral("still")};
     const QString token = returnToken.trimmed();
-    if (!trackingEditable() || !behaviours.contains(behaviour) || token.isEmpty())
+    if (!trackingEditable() || !TrackingSettings::knownBehaviour(behaviour) || token.isEmpty())
         return false;
-    const int stepped = std::clamp(int(std::lround(seconds / 5.0)) * 5, 5, 300);
-    const TrackingSettings draft{behaviour, stepped, token};
+    const TrackingSettings draft{behaviour, TrackingSettings::steppedSeconds(seconds), token};
     if (draft != *m_trackingDraft) {
         m_trackingDraft = draft;
         emit trackingChanged();
@@ -1002,11 +1038,7 @@ bool BoschTourController::switchTracking(bool on)
     if (!configured() || !m_connected || m_trackingPending || on == trackingOn())
         return false;
     if (on && !trackingCanSwitch()) {
-        setMessage(!m_tracking || !m_trackingReachable
-                       ? QStringLiteral("Tracking service unavailable")
-                   : trackingDirty()
-                       ? QStringLiteral("Save changes before enabling.")
-                       : QStringLiteral("Turn off tour selection before tracking."));
+        setMessage(trackingWhyNot());
         return false;
     }
     const bool wasTouring = touring();
@@ -1040,9 +1072,11 @@ void BoschTourController::setLocalTourState(const QString &state)
     notePatrolMutation();
     if (m_tourState == state)
         return;
+    const bool wasTouring = touring();
     m_tourState = state;
     clearManualWhileTouring();
     emit patrolChanged();
+    noteTourStopped(wasTouring);
 }
 
 void BoschTourController::applyPatrolResponse(const QJsonObject &response)
@@ -1081,7 +1115,9 @@ void BoschTourController::applyPatrolResponse(const QJsonObject &response)
     m_route = newRoute;
     m_travelSpeed = std::clamp(speed, 10, 100);
     m_dwellSeconds = std::clamp(dwell, 0, 3600);
+    const bool wasTouring = touring();
     m_tourState = state;
+    noteTourStopped(wasTouring);
     if (clearManualWhileTouring())
         patrolWasChanged = true;
     // Home Assistant says why the tour stopped (lascelles-bosch-tour ticket 10), which covers a

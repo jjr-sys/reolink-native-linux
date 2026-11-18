@@ -2,6 +2,7 @@
 
 #include <QJsonValue>
 
+#include <algorithm>
 #include <cmath>
 
 namespace rl {
@@ -28,6 +29,17 @@ std::optional<QString> text(const QJsonObject &object, const QString &key)
 }
 
 } // namespace
+
+bool TrackingSettings::knownBehaviour(const QString &behaviour)
+{
+    return behaviour == QLatin1String("always") || behaviour == QLatin1String("fixed")
+           || behaviour == QLatin1String("still");
+}
+
+int TrackingSettings::steppedSeconds(int seconds)
+{
+    return std::clamp(int(std::lround(seconds / double(kStep))) * kStep, kShortest, kLongest);
+}
 
 QJsonObject TrackingSettings::body() const
 {
@@ -64,9 +76,6 @@ std::optional<Tracking> Tracking::parse(const QJsonObject &response)
         QStringLiteral("off"),   QStringLiteral("waiting"),   QStringLiteral("following"),
         QStringLiteral("still"), QStringLiteral("returning"), QStringLiteral("error"),
         QStringLiteral("unknown")};
-    static const QStringList behaviours{QStringLiteral("always"), QStringLiteral("fixed"),
-                                        QStringLiteral("still")};
-
     const QJsonValue enabled = response.value(QStringLiteral("enabled"));
     if (!enabled.isBool())
         return std::nullopt;
@@ -82,8 +91,9 @@ std::optional<Tracking> Tracking::parse(const QJsonObject &response)
     const auto behaviour = text(config, QStringLiteral("behaviour"));
     const auto seconds = wholeNumber(config.value(QStringLiteral("seconds")));
     const auto token = text(config, QStringLiteral("return_token"));
-    if (!behaviour || !behaviours.contains(*behaviour) || !seconds || *seconds < 5
-        || *seconds > 300 || *seconds % 5 != 0 || !token || token->trimmed().isEmpty())
+    if (!behaviour || !TrackingSettings::knownBehaviour(*behaviour) || !seconds
+        || TrackingSettings::steppedSeconds(*seconds) != *seconds || !token
+        || token->trimmed().isEmpty())
         return std::nullopt;
 
     Tracking tracking;

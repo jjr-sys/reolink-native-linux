@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QJsonObject>
 #include <QObject>
 #include <QUrl>
@@ -85,6 +86,8 @@ class BoschTourController : public QObject
     Q_PROPERTY(bool trackingCanSwitch READ trackingCanSwitch NOTIFY trackingChanged)
     // The panel's one-line hint ("Save changes before enabling." …).
     Q_PROPERTY(QString trackingNote READ trackingNote NOTIFY trackingChanged)
+    // Why tracking can't start now ("" when it can): the tip and the refusal both say it.
+    Q_PROPERTY(QString trackingWhyNot READ trackingWhyNot NOTIFY trackingChanged)
 
 public:
     // transport is the Home Assistant seam; null selects the real network adapter.
@@ -142,6 +145,7 @@ public:
     // On: Stop is always offered. Off: needs a reachable service and the settings saved.
     bool trackingCanSwitch() const;
     QString trackingNote() const;
+    QString trackingWhyNot() const;
 
     Q_INVOKABLE void connectHomeAssistant(const QString &url, const QString &token,
                                           const QString &cameraEntity);
@@ -247,6 +251,9 @@ private:
     // A confirmed manual steer or tour start ends tracking on the server: show Off now.
     void markTrackingOff();
     void setTourStoppedForTracking(bool on);
+    // After the tour state changes: a tour that just stopped while tracking is on was stopped
+    // by tracking (whoever started it), and when it stopped is kept for a tracking read to come.
+    void noteTourStopped(bool wasTouring);
     void resetTracking();
     void notePatrolMutation();
     void setLocalTourState(const QString &state);
@@ -361,6 +368,7 @@ private:
     bool m_trackingPending = false;       // a save, start or stop is out
     bool m_trackingReadPending = false;
     bool m_tourStoppedForTracking = false;   // "Tour stopped · tracking on"
+    QElapsedTimer m_tourStoppedClock;          // since a tour last stopped
     quint64 m_trackingRevision = 0;   // each order or local change; older reads are dropped
 };
 

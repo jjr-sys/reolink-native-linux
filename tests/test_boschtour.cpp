@@ -1447,6 +1447,60 @@ private slots:
         QVERIFY(!c->trackingReachable());
         QVERIFY(!c->switchTracking(false));
     }
+
+    void trackingStartedElsewhereStoppingTheTourIsShown()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        // A phone starts tracking: the patrol read lands first, then tracking.
+        c->refresh();
+        trackingRead = tracking("true", "waiting");
+        settle();
+        QCOMPARE(c->tourStatus(), QStringLiteral("Tour stopped · tracking on"));
+    }
+
+    void trackingStartedElsewhereSeenBeforeThePatrolIsShown()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        c->refresh();
+        ht->answer(kGetTracking, 200, tracking("true", "waiting"));
+        QCOMPARE(c->tourStatus(), QStringLiteral("Touring"));
+        settle();
+        QCOMPARE(c->tourStatus(), QStringLiteral("Tour stopped · tracking on"));
+    }
+
+    void trackingUnavailableWhileOnSaysSoNotTheOldStatus()
+    {
+        trackingRead = tracking("true", "following", R"(,"remaining_seconds":23)");
+        connectAndSettle();
+        c->refresh();
+        ht->answer(kGetTracking, 500, "{}");
+        settle();
+        QVERIFY(c->trackingOn());
+        QCOMPARE(c->trackingSaid(), QStringLiteral("Status unavailable"));
+        QCOMPARE(c->trackingLine(), QStringLiteral("Tracking · Status unavailable"));
+    }
+
+    void trackingSteerWhileStartingWins()
+    {
+        connectAndSettle();
+        QVERIFY(c->switchTracking(true));
+        c->steerDrag(96, 0, kReach);
+        ht->answer(kSteer, 200, kSteerOk);   // the server cancels tracking before moving
+        ht->answer(kStartTracking, 200, tracking("true", "waiting"));
+        QVERIFY(!c->trackingOn());
+        QCOMPARE(ht->count(kGetTracking), 1);   // and asks again
+        c->stopCamera();
+    }
+
+    void trackingWhyNotIsOneReason()
+    {
+        connectAndSettle();
+        QCOMPARE(c->trackingWhyNot(), QString());
+        QVERIFY(c->editTracking(QStringLiteral("always"), 30, QStringLiteral("1")));
+        QCOMPARE(c->trackingWhyNot(), QStringLiteral("Save changes before enabling."));
+        QVERIFY(!c->switchTracking(true));
+        QCOMPARE(c->message(), c->trackingWhyNot());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestBoschTour)

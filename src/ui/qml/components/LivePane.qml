@@ -820,6 +820,7 @@ Rectangle {
             // Tracking (bosch-ptz-port ticket 03): the label starts or stops it, lit while on;
             // its ⌃ opens the settings. The tip says what the camera is doing, as the phone.
             t.push({ id: "tracking", wide: true, wideWidth: 88, caret: "trackingPanel",
+                     caretText: qsTr("Tracking settings…"),
                      label: BoschTour.trackingPending ? qsTr("Tracking …") : qsTr("Tracking"),
                      active: BoschTour.trackingOn || trackingPopup.visible,
                      usable: BoschTour.trackingCanSwitch,
@@ -827,9 +828,7 @@ Rectangle {
                      tip: !BoschTour.connected ? qsTr("Home Assistant is disconnected")
                         : BoschTour.trackingPending ? qsTr("Tracking: waiting for the camera…")
                         : BoschTour.trackingOn ? qsTr("Tracking · %1 · click to stop").arg(BoschTour.trackingSaid)
-                        : !BoschTour.trackingKnown || !BoschTour.trackingReachable ? qsTr("Tracking service unavailable")
-                        : BoschTour.trackingDirty ? qsTr("Tracking off · save changes before enabling (⌃)")
-                        : BoschTour.selectionTourMode || BoschTour.selectionTourRestoring ? qsTr("Tracking off · turn off tour selection first")
+                        : BoschTour.trackingWhyNot !== "" ? BoschTour.trackingWhyNot
                         : qsTr("Tracking off · click to start (stops a tour) · ⌃ settings") });
             if (!BoschTour.connected)
                 t.push({ id: "haOffline", glyph: "!", active: true,

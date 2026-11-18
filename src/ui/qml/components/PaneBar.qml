@@ -21,7 +21,8 @@ Item {
     // Tools: [{ id, glyph | label, tip, active, wide, picker }] in the pill's order; only those
     // the camera has. `label` makes a wide text button (Bosch), a picker (⌃) unless
     // picker: false. `caret: "<id>"` makes the ⌃ its own button (Bosch tracking: the label
-    // toggles, ⌃ opens the settings). The menu reads `text`, else tip.
+    // toggles, ⌃ opens the settings), listed under ⋯ too as `caretText`. The menu reads
+    // `text`, else tip.
     property var toolList: []
     property bool hdShown: true
     property bool hdOn: false
@@ -432,7 +433,17 @@ Item {
     ThemedMenu {
         id: moreMenu
         Instantiator {
-            model: bar.toolList.filter(t => bar.split.menu.indexOf(t.id) >= 0)
+            model: {
+                var out = [];
+                for (const t of bar.toolList) {
+                    if (bar.split.menu.indexOf(t.id) < 0)
+                        continue;
+                    out.push(t);
+                    if (t.caret)
+                        out.push({ id: t.caret, text: t.caretText || t.caret });
+                }
+                return out;
+            }
             delegate: ThemedMenuItem {
                 required property var modelData
                 text: (modelData.glyph ? modelData.glyph + "  " : "") + (modelData.text || modelData.tip || modelData.label || "")

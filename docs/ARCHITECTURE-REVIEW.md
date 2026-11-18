@@ -552,6 +552,28 @@ ever built.
 
 Revert: `26e930b` and the commit after it, then `27c3fbf`.
 
+### Feature: Bosch tracking (`c65a4c1`, review fixes)
+
+`BoschTourController` (bosch-ptz-port ticket 03) gains a sixth state machine: tracking. The
+value type, the phone's strict parse and its status words live in `BoschTracking.{h,cpp}`
+(`Tracking`, `TrackingSettings`: the allowed behaviours and the 5..300 s step rule are written
+once there). The controller keeps the orchestration: `bosch_camera_get_tracking` on the 1.5 s
+poll, a draft edited only while Off, `saveTracking` / `switchTracking` through one
+`orderTracking`, and `m_trackingRevision` to drop a read older than an order, a confirmed steer
+or a tour start (an order overtaken by one is marked Off and read again). `trackingWhyNot` is
+the one "why it can't start" that the tip and the refusal both show. "Tour stopped · tracking
+on" shows whoever started tracking, while it is seen turning on during a tour or within 5 s
+after one stopped. `PaneBar` wide tools take `caret: "<id>"` (⌃ as its own button, and under ⋯
+as `caretText`).
+
+Decisions / left as found: the class now changes for six reasons. Tracking repeats the wiper's
+pending / read-pending / revision shape. A shared "HA-backed control" helper would serve both
+and is the next step if a seventh arrives, not now. Status and behaviour stay strings, as the
+service and QML speak them. Starting is refused during tour selection (T), unlike the phone,
+because T's saved route waits to be restored.
+
+Revert: the review-fix commit after `c65a4c1`, then `c65a4c1`.
+
 ### Not built
 
 - **3c recorder media module:** day search built (above); DON'T for stream opening (one
