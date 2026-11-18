@@ -550,7 +550,7 @@ the "Why I stopped there" reasoning above still holds. It's the smallest of the 
 its own `wiper*` members, so it would be the first to move out if a shared-context object is
 ever built.
 
-Revert: the review-fix commit, then `27c3fbf`.
+Revert: `26e930b` and the commit after it, then `27c3fbf`.
 
 ### Not built
 

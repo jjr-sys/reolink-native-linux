@@ -59,7 +59,8 @@ class BoschTourController : public QObject
     Q_PROPERTY(QString wiperState READ wiperState NOTIFY wiperChanged)
     Q_PROPERTY(bool wiperOn READ wiperOn NOTIFY wiperChanged)
     Q_PROPERTY(bool wiperPending READ wiperPending NOTIFY wiperChanged)
-    // "Wiper didn't respond" after an order the camera didn't take, until the next press.
+    // "Wiper didn't respond" after an order the camera didn't take, until the next press or
+    // the state changes.
     Q_PROPERTY(QString wiperError READ wiperError NOTIFY wiperChanged)
 
 public:
@@ -156,6 +157,7 @@ private:
     void refreshPatrol();
     void refreshWiper();
     void setWiper(const QString &state, bool pending, const QString &error);
+    void showWiperRead(const QString &state);
     void resetWiper();
     void notePatrolMutation();
     void setLocalTourState(const QString &state);

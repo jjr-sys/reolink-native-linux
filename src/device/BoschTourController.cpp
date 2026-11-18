@@ -696,16 +696,16 @@ void BoschTourController::refreshWiper()
             return;
         }
         if (status == 404) {   // Home Assistant hasn't set it yet
-            setWiper(kWiperUnknown, false, m_wiperError);
+            showWiperRead(kWiperUnknown);
             return;
         }
         const QJsonDocument doc = QJsonDocument::fromJson(body);
         if (status != 200 || !doc.isObject())
             return;   // the patrol read reports the connection
         const QString state = doc.object().value(QStringLiteral("state")).toString();
-        setWiper(state == QLatin1String("on") || state == QLatin1String("off") ? state
-                                                                                : kWiperUnknown,
-                 false, m_wiperError);
+        showWiperRead(state == QLatin1String("on") || state == QLatin1String("off")
+                          ? state
+                          : kWiperUnknown);
     });
 }
 
@@ -747,6 +747,13 @@ void BoschTourController::setWiper(const QString &state, bool pending, const QSt
     m_wiperPending = pending;
     m_wiperError = error;
     emit wiperChanged();
+}
+
+void BoschTourController::showWiperRead(const QString &state)
+{
+    // "Didn't respond" is about the state shown then: a change since (a phone, the auto-off)
+    // retires it.
+    setWiper(state, false, state == m_wiperState ? m_wiperError : QString());
 }
 
 void BoschTourController::resetWiper()

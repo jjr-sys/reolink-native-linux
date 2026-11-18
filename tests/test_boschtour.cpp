@@ -861,6 +861,20 @@ private slots:
         QVERIFY(c->wiperError().isEmpty());
     }
 
+    void wiperErrorClearsWhenTheStateChanges()
+    {
+        connectAndSettle();
+        QVERIFY(c->toggleWiper());
+        ht->answer(kWiper, 200, svc(R"({"ok":false,"state":"off","error":"timed out"})"));
+        c->refresh();
+        settle();   // still off: the error stands
+        QCOMPARE(c->wiperError(), QStringLiteral("Wiper didn't respond"));
+        c->refresh();
+        settle(kPatrolStopped, kIrisAuto, wiperState("on"));   // a phone turned it on
+        QVERIFY(c->wiperOn());
+        QVERIFY(c->wiperError().isEmpty());
+    }
+
     void wiperServiceErrorFlipsBackAndSaysSo()
     {
         connectAndSettle();
