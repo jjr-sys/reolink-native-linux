@@ -54,6 +54,13 @@ class BoschTourController : public QObject
     Q_PROPERTY(QString tourStatus READ tourStatus NOTIFY patrolChanged)
     Q_PROPERTY(bool selectionTourMode READ selectionTourMode NOTIFY selectionTourModeChanged)
     Q_PROPERTY(bool selectionTourRestoring READ selectionTourRestoring NOTIFY selectionTourRestoringChanged)
+    // The wiper (bosch-wiper-controls ticket 03): Home Assistant's pyscript.bosch_camera_wiper,
+    // the last order the camera took ("on", "off", "unknown"), so its 60 s auto-off shows too.
+    Q_PROPERTY(QString wiperState READ wiperState NOTIFY wiperChanged)
+    Q_PROPERTY(bool wiperOn READ wiperOn NOTIFY wiperChanged)
+    Q_PROPERTY(bool wiperPending READ wiperPending NOTIFY wiperChanged)
+    // "Wiper didn't respond" after an order the camera didn't take, until the next press.
+    Q_PROPERTY(QString wiperError READ wiperError NOTIFY wiperChanged)
 
 public:
     // transport is the Home Assistant seam; null selects the real network adapter.
@@ -91,6 +98,10 @@ public:
     QString tourStatus() const;
     bool selectionTourMode() const { return m_selectionTourMode; }
     bool selectionTourRestoring() const { return m_selectionTourSession && !m_selectionTourMode; }
+    QString wiperState() const { return m_wiperState; }
+    bool wiperOn() const { return m_wiperState == QLatin1String("on"); }
+    bool wiperPending() const { return m_wiperPending; }
+    QString wiperError() const { return m_wiperError; }
 
     Q_INVOKABLE void connectHomeAssistant(const QString &url, const QString &token,
                                           const QString &cameraEntity);
@@ -114,6 +125,9 @@ public:
     Q_INVOKABLE bool beginSelectionTour();
     Q_INVOKABLE void toggleSelectionTourPosition(const QString &token);
     Q_INVOKABLE void endSelectionTour();
+    // On when off (or unknown), else off. False when nothing was sent (no Home Assistant, or
+    // an order is still out).
+    Q_INVOKABLE bool toggleWiper();
 
 signals:
     void connectionChanged();
@@ -128,6 +142,7 @@ signals:
     void selectionTourModeChanged();
     void selectionTourRouteChanged();
     void selectionTourRestoringChanged();
+    void wiperChanged();
 
 private:
     using ReplyHandler = std::function<void(int, const QByteArray &, const QString &)>;
@@ -139,6 +154,9 @@ private:
                      bool mutation, ReplyHandler handler);
     void callOnvif(const QJsonObject &data, const QString &action, bool movement);
     void refreshPatrol();
+    void refreshWiper();
+    void setWiper(const QString &state, bool pending, const QString &error);
+    void resetWiper();
     void notePatrolMutation();
     void setLocalTourState(const QString &state);
     // Manual moves during a tour (lascelles-bosch-tour ticket 03). Stop HA's patrol, then run
@@ -236,6 +254,12 @@ private:
     bool m_manualStopPending = false;   // the stop for a manual move is in flight
     bool m_manualTakeover = false;      // T is being left for a manual move: Manual after
     bool m_manualStopped = false;       // shown "Manual · tour stopped"
+
+    QString m_wiperState = QStringLiteral("unknown");
+    QString m_wiperError;
+    bool m_wiperPending = false;
+    bool m_wiperReadPending = false;
+    quint64 m_wiperRevision = 0;   // each press; a read sent before one is dropped
 };
 
 } // namespace rl

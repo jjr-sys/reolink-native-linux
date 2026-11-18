@@ -10,6 +10,17 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **Bosch wiper toggle.** The Bosch camera's pane bar has a "Wiper" button next to "Marked
+  range". It's lit while Home Assistant says the wiper runs, including Home Assistant's own
+  60 s auto-off and a press from the dashboard or a phone (read every 1.5 s). A press shows
+  "Wiper …" until the camera takes the order. If it doesn't, the button stays as it was and
+  the pane says "Wiper didn't respond", with the reason in the app's Bosch message. The
+  dashboard card does the same (bosch-wiper-controls ticket 03).
+  **Internal:** `BoschTourController::toggleWiper` / `wiperState` / `wiperPending` /
+  `wiperError` (reads `/api/states/pyscript.bosch_camera_wiper`; a read sent before a press
+  is dropped); `PaneBarRules` lists `wiper` as a Live tool; `PaneBar` wide tools take
+  `picker: false` (no ⌃).
+
 - **Offline alerts on the desktop.** When a camera has been offline 30 s, or a whole recorder
   can't be reached (the app's own check already takes about 35 s), a critical desktop pop-up
   says so ("Kitchen offline", "Woorabinda offline · 8 cameras"), plays the alarm sound once

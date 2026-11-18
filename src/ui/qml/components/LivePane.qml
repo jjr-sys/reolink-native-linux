@@ -59,6 +59,17 @@ Rectangle {
         target: video
         function onContentRectChanged() { root.measureRatio(); }
     }
+    // This pane pressed the wiper: says so here when the camera didn't take it.
+    property bool wiperAsked: false
+    Connections {
+        target: BoschTour
+        enabled: root.wiperAsked
+        function onWiperChanged() {
+            if (BoschTour.wiperPending) return;
+            root.wiperAsked = false;
+            if (BoschTour.wiperError !== "") replayControls.showNotice(BoschTour.wiperError);
+        }
+    }
     // The mosaic shows a camera that stopped answering greyed out, in its place.
     property bool offline: false
     property bool pageActive: true // false when the Live View page isn't on screen
@@ -776,6 +787,18 @@ Rectangle {
                           : qsTr("Marked range: %1%2%3").arg(BoschTour.sceneModeName)
                               .arg(BoschTour.sceneModeStale ? qsTr(" · stale") : "")
                               .arg(BoschTour.sceneModeError === "" ? "" : " · " + BoschTour.sceneModeError) });
+            // One wiper toggle (bosch-wiper-controls ticket 03): lit while Home Assistant says
+            // it's on (its 60 s auto-off included); "…" until the camera takes the order.
+            t.push({ id: "wiper", wide: true, wideWidth: 64, picker: false,
+                     label: BoschTour.wiperPending ? qsTr("Wiper …") : qsTr("Wiper"),
+                     active: BoschTour.wiperOn,
+                     usable: BoschTour.connected && !BoschTour.wiperPending,
+                     tip: !BoschTour.connected ? qsTr("Home Assistant is disconnected")
+                        : BoschTour.wiperPending ? qsTr("Wiper: waiting for the camera…")
+                        : BoschTour.wiperError !== "" ? BoschTour.wiperError
+                        : BoschTour.wiperOn ? qsTr("Wiper on (turns itself off after 60 s) · click to stop")
+                        : BoschTour.wiperState === "off" ? qsTr("Wiper off · click to start")
+                        : qsTr("Wiper state unknown · click to start") });
             if (!BoschTour.connected)
                 t.push({ id: "haOffline", glyph: "!", active: true,
                          tip: qsTr("Home Assistant is disconnected. Reconnect to restore Bosch PTZ, positions, scene modes, and tours.") });
@@ -816,6 +839,7 @@ Rectangle {
         switch (id) {
         case "positions": root.openBoschPicker(anchor, "positions"); break;
         case "scene": root.openBoschPicker(anchor, "scene"); break;
+        case "wiper": root.wiperAsked = BoschTour.toggleWiper(); break;
         case "haOffline": root.openBoschTourRequested(); break;
         case "large": root.largeToggled(); break;
         case "snapshot":

@@ -31,6 +31,8 @@ QJsonObject manualStopReason()
 const int kPollIntervalMs = 1500;
 const int kPresetPollIntervalMs = 10000;
 const int kIrisHeartbeatIntervalMs = 700;
+const QString kWiperEntity = QStringLiteral("pyscript.bosch_camera_wiper");
+const QString kWiperUnknown = QStringLiteral("unknown");
 
 QJsonObject serviceResponse(const QByteArray &body)
 {
@@ -60,7 +62,10 @@ BoschTourController::BoschTourController(CredentialStore *credentials,
       m_presetTimer(new QTimer(this)), m_irisHeartbeatTimer(new QTimer(this))
 {
     m_pollTimer->setInterval(kPollIntervalMs);
-    connect(m_pollTimer, &QTimer::timeout, this, &BoschTourController::refreshPatrol);
+    connect(m_pollTimer, &QTimer::timeout, this, [this] {
+        refreshPatrol();
+        refreshWiper();
+    });
     m_presetTimer->setInterval(kPresetPollIntervalMs);
     connect(m_presetTimer, &QTimer::timeout, this, &BoschTourController::refreshPresets);
     m_irisHeartbeatTimer->setInterval(kIrisHeartbeatIntervalMs);
@@ -178,6 +183,7 @@ void BoschTourController::connectHomeAssistant(const QString &url, const QString
     m_presetsRequestPending = false;
     m_ptzRequestPending = false;
     resetManualMoves();   // a stop in flight is from the old connection: its answer is dropped
+    resetWiper();
     setBusy(false);
     setMessage({});
     setConnectionStatus(QStringLiteral("Checking Home Assistant access…"), false);
@@ -273,6 +279,7 @@ void BoschTourController::disconnectHomeAssistant()
     m_irisStopAfterStart = false;
     m_irisStopPending = false;
     m_irisHeartbeatPending = false;
+    resetWiper();
     m_message.clear();
     emit connectionChanged();
     emit patrolChanged();
@@ -323,6 +330,7 @@ void BoschTourController::callService(const QString &service, const QJsonObject 
 void BoschTourController::refresh()
 {
     refreshPatrol();
+    refreshWiper();
     refreshPresets();
     refreshSceneMode();
 }
@@ -668,6 +676,88 @@ void BoschTourController::refreshPatrol()
         setConnectionStatus(QStringLiteral("Connected"), true);
         applyPatrolResponse(response);
     });
+}
+
+void BoschTourController::refreshWiper()
+{
+    if (!configured() || m_wiperReadPending || m_wiperPending)
+        return;
+    m_wiperReadPending = true;
+    const quint64 revision = m_wiperRevision;
+    request(QUrl(m_endpoint + QStringLiteral("/api/states/") + kWiperEntity), m_token, {},
+            [this, revision](int status, const QByteArray &body, const QString &networkError) {
+        m_wiperReadPending = false;
+        if (revision != m_wiperRevision)
+            return;   // a press since: its answer decides
+        if (status == 401 || status == 403) {
+            operationFailed(QStringLiteral("Read the Bosch wiper"), status, body, networkError);
+            return;
+        }
+        if (status == 404) {   // Home Assistant hasn't set it yet
+            setWiper(kWiperUnknown, false, m_wiperError);
+            return;
+        }
+        const QJsonDocument doc = QJsonDocument::fromJson(body);
+        if (status != 200 || !doc.isObject())
+            return;   // the patrol read reports the connection
+        const QString state = doc.object().value(QStringLiteral("state")).toString();
+        setWiper(state == QLatin1String("on") || state == QLatin1String("off") ? state
+                                                                                : kWiperUnknown,
+                 false, m_wiperError);
+    });
+}
+
+bool BoschTourController::toggleWiper()
+{
+    if (!configured() || !m_connected || m_wiperPending)
+        return false;
+    const QString want = wiperOn() ? QStringLiteral("off") : QStringLiteral("on");
+    ++m_wiperRevision;
+    setWiper(m_wiperState, true, {});
+    callService(QStringLiteral("bosch_camera_wiper"), {{QStringLiteral("state"), want}}, true,
+                false,
+                [this](int status, const QByteArray &body, const QString &networkError) {
+        ++m_wiperRevision;   // a read sent while the order was out is older than this answer
+        const QJsonObject response = serviceResponse(body);
+        if (status == 200 && response.value(QStringLiteral("ok")).toBool(false)) {
+            const QString state = response.value(QStringLiteral("state")).toString();
+            setWiper(state == QLatin1String("on") ? state : QStringLiteral("off"), false, {});
+            return;
+        }
+        if (status == 401 || status == 403) {
+            setWiper(m_wiperState, false, QStringLiteral("Wiper didn't respond"));
+            operationFailed(QStringLiteral("Bosch wiper"), status, body, networkError);
+            return;
+        }
+        QString detail = response.value(QStringLiteral("error")).toString();
+        if (detail.isEmpty())
+            detail = responseMessage(body);
+        if (detail.isEmpty())
+            detail = networkError;
+        if (detail.isEmpty())
+            detail = status > 0 ? QStringLiteral("HTTP %1").arg(status)
+                                : QStringLiteral("request failed");
+        setWiper(m_wiperState, false, QStringLiteral("Wiper didn't respond"));
+        setMessage(QStringLiteral("Wiper didn't respond: ") + detail);
+    });
+    return true;
+}
+
+void BoschTourController::setWiper(const QString &state, bool pending, const QString &error)
+{
+    if (m_wiperState == state && m_wiperPending == pending && m_wiperError == error)
+        return;
+    m_wiperState = state;
+    m_wiperPending = pending;
+    m_wiperError = error;
+    emit wiperChanged();
+}
+
+void BoschTourController::resetWiper()
+{
+    ++m_wiperRevision;
+    m_wiperReadPending = false;
+    setWiper(kWiperUnknown, false, {});
 }
 
 void BoschTourController::notePatrolMutation()

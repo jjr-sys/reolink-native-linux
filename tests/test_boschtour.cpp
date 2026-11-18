@@ -103,6 +103,12 @@ const QByteArray kSlots = svc(
 const QByteArray kScene = svc(
     R"({"ok":true,"mode_id":1,"modes":[{"id":1,"name":"Standard"},{"id":2,"name":"Fast Movement"}]})");
 const QByteArray kIrisAuto = svc(R"({"supported":true,"mode":"AUTO","iris":5.0})");
+const QString kWiperState = QStringLiteral("pyscript.bosch_camera_wiper");
+const QString kWiper = QStringLiteral("bosch_camera_wiper");
+QByteArray wiperState(const char *state)
+{
+    return QByteArray(R"({"entity_id":"pyscript.bosch_camera_wiper","state":")") + state + "\"}";
+}
 
 } // namespace
 
@@ -117,7 +123,8 @@ class TestBoschTour : public QObject
 
     // Answer every pending read (get_*) with the canned Home Assistant state,
     // including reads that those answers trigger. Mutations are left pending.
-    void settle(const QByteArray &patrol = kPatrolStopped, const QByteArray &iris = kIrisAuto)
+    void settle(const QByteArray &patrol = kPatrolStopped, const QByteArray &iris = kIrisAuto,
+                const QByteArray &wiper = wiperState("off"))
     {
         const std::map<QString, QByteArray> reads = {
             {QStringLiteral("bosch_camera_get_patrol"), patrol},
@@ -125,6 +132,7 @@ class TestBoschTour : public QObject
             {QStringLiteral("bosch_camera_get_slots"), kSlots},
             {QStringLiteral("bosch_camera_get_scene_mode"), kScene},
             {QStringLiteral("bosch_camera_get_iris"), iris},
+            {kWiperState, wiper},
         };
         for (bool again = true; again;) {
             again = false;
@@ -746,6 +754,137 @@ private slots:
         c->setIrisAuto();
         QCOMPARE(ht->count(QStringLiteral("bosch_camera_set_iris_mode")), 0);
         QVERIFY(c->message().contains(QStringLiteral("Release")));
+    }
+    // ---- wiper (bosch-wiper-controls ticket 03) ---------------------------
+
+    void wiperFollowsHomeAssistantsState()
+    {
+        QCOMPARE(c->wiperState(), QStringLiteral("unknown"));
+        connectAndSettle();
+        QCOMPARE(c->wiperState(), QStringLiteral("off"));
+        QVERIFY(!c->wiperOn());
+        // Home Assistant's own 60 s auto-off (or another app) shows on the next read.
+        c->refresh();
+        settle(kPatrolStopped, kIrisAuto, wiperState("on"));
+        QVERIFY(c->wiperOn());
+        QCOMPARE(c->wiperState(), QStringLiteral("on"));
+    }
+
+    void wiperReadIsAGetOfTheState()
+    {
+        connectAndSettle();
+        c->refresh();
+        QCOMPARE(ht->count(kWiperState), 1);
+        for (const auto &p : ht->pending) {
+            if (ScriptedTransport::nameOf(p.url) == kWiperState) {
+                QCOMPARE(p.url.toString(),
+                         QStringLiteral("https://ha.test/api/states/pyscript.bosch_camera_wiper"));
+                QVERIFY(p.body.isNull());
+            }
+        }
+        settle();
+    }
+
+    void wiperMissingInHomeAssistantIsUnknown()
+    {
+        connectAndSettle();
+        c->refresh();
+        ht->answer(kWiperState, 404, R"({"message":"Entity not found."})");
+        QCOMPARE(c->wiperState(), QStringLiteral("unknown"));
+        QVERIFY(c->connected());
+        settle();
+    }
+
+    void wiperToggleWaitsForTheCameraThenShowsIt()
+    {
+        connectAndSettle();
+        QSignalSpy changed(c, &BoschTourController::wiperChanged);
+        QVERIFY(c->toggleWiper());
+        QVERIFY(c->wiperPending());
+        QVERIFY(!c->wiperOn());   // not until Home Assistant says the camera took it
+        QVERIFY(changed.count() >= 1);
+        QCOMPARE(ht->count(kWiper), 1);
+        QVERIFY(ht->pending.front().url.query().contains(QStringLiteral("return_response")));
+        const QJsonObject sent = ht->answer(kWiper, 200, svc(R"({"ok":true,"state":"on"})"));
+        QCOMPARE(sent.value(QStringLiteral("state")).toString(), QStringLiteral("on"));
+        QVERIFY(!c->wiperPending());
+        QVERIFY(c->wiperOn());
+        QVERIFY(c->wiperError().isEmpty());
+    }
+
+    void wiperToggleOffWhenOn()
+    {
+        connectAndSettle();
+        c->refresh();
+        settle(kPatrolStopped, kIrisAuto, wiperState("on"));
+        QVERIFY(c->toggleWiper());
+        const QJsonObject sent = ht->answer(kWiper, 200, svc(R"({"ok":true,"state":"off"})"));
+        QCOMPARE(sent.value(QStringLiteral("state")).toString(), QStringLiteral("off"));
+        QVERIFY(!c->wiperOn());
+    }
+
+    void wiperSecondPressWhilePendingSendsNothing()
+    {
+        connectAndSettle();
+        QVERIFY(c->toggleWiper());
+        QVERIFY(!c->toggleWiper());
+        QCOMPARE(ht->count(kWiper), 1);
+    }
+
+    void wiperReadDuringAPressDoesNotFlipIt()
+    {
+        connectAndSettle();
+        c->refresh();
+        QVERIFY(c->toggleWiper());
+        // A read sent before the press answers "off" while the order is out: the toggle waits.
+        ht->answer(kWiperState, 200, wiperState("off"));
+        QVERIFY(c->wiperPending());
+        ht->answer(kWiper, 200, svc(R"({"ok":true,"state":"on"})"));
+        QVERIFY(c->wiperOn());
+        // An older read landing after the answer is dropped too.
+        settle();
+        QVERIFY(c->wiperOn());
+    }
+
+    void wiperCameraDidNotTakeItFlipsBackAndSaysSo()
+    {
+        connectAndSettle();
+        QVERIFY(c->toggleWiper());
+        ht->answer(kWiper, 200, svc(R"({"ok":false,"state":"off","error":"timed out"})"));
+        QVERIFY(!c->wiperPending());
+        QVERIFY(!c->wiperOn());
+        QCOMPARE(c->wiperError(), QStringLiteral("Wiper didn't respond"));
+        QVERIFY(c->message().contains(QStringLiteral("timed out")));
+        QVERIFY(c->connected());
+        // The next press starts clean.
+        QVERIFY(c->toggleWiper());
+        QVERIFY(c->wiperError().isEmpty());
+    }
+
+    void wiperServiceErrorFlipsBackAndSaysSo()
+    {
+        connectAndSettle();
+        QVERIFY(c->toggleWiper());
+        ht->answer(kWiper, 500, R"({"message":"Service call failed"})");
+        QVERIFY(!c->wiperOn());
+        QCOMPARE(c->wiperError(), QStringLiteral("Wiper didn't respond"));
+    }
+
+    void wiperRefusedWithoutHomeAssistant()
+    {
+        QVERIFY(!c->toggleWiper());
+        QVERIFY(ht->pending.empty());
+    }
+
+    void wiperUnknownAfterDisconnect()
+    {
+        connectAndSettle();
+        c->refresh();
+        settle(kPatrolStopped, kIrisAuto, wiperState("on"));
+        c->disconnectHomeAssistant();
+        QCOMPARE(c->wiperState(), QStringLiteral("unknown"));
+        QVERIFY(!c->wiperOn());
+        QVERIFY(!c->wiperPending());
     }
 };
 

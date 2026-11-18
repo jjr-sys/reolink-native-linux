@@ -18,8 +18,9 @@ Item {
     property PlaybackGroup speedGroup: null    // speed and direction (null: 1× forward)
     property bool paused: false
     property bool shown: false            // the host's hover (the bar adds its own menus)
-    // Tools: [{ id, glyph | label, tip, active, wide }] in the pill's order; only those the
-    // camera has. `label` makes a wide text picker (Bosch). The menu reads `text`, else tip.
+    // Tools: [{ id, glyph | label, tip, active, wide, picker }] in the pill's order; only those
+    // the camera has. `label` makes a wide text button (Bosch), a picker (⌃) unless
+    // picker: false. The menu reads `text`, else tip.
     property var toolList: []
     property bool hdShown: true
     property bool hdOn: false
@@ -377,7 +378,8 @@ Item {
                             color: toolSlot.modelData.active ? Theme.accentDim : (wideHover.hovered ? Theme.surfaceAlt : "transparent")
                             Text {
                                 anchors.left: parent.left; anchors.leftMargin: 8
-                                anchors.right: parent.right; anchors.rightMargin: 18
+                                anchors.right: parent.right
+                                anchors.rightMargin: toolSlot.modelData.picker === false ? 8 : 18
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: toolSlot.modelData.label || ""
                                 color: Theme.textMuted
@@ -385,6 +387,7 @@ Item {
                                 elide: Text.ElideRight
                             }
                             Text {
+                                visible: toolSlot.modelData.picker !== false
                                 anchors.right: parent.right; anchors.rightMargin: 7
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: "⌃"; color: Theme.textMuted; font.pixelSize: 13
