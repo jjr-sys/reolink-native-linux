@@ -49,6 +49,7 @@ add_library(reolink_core STATIC
     src/device/FrigateLive.h src/device/FrigateLive.cpp
     src/protocol/WebSocketFrames.h
     src/device/BoschTourController.h src/device/BoschTourController.cpp
+    src/device/BoschTracking.h src/device/BoschTracking.cpp
     src/device/HomeAssistantTransport.h src/device/HomeAssistantTransport.cpp
     src/device/Highlights.h src/device/Highlights.cpp
     src/ui/MosaicPacker.h src/ui/MosaicPacker.cpp
@@ -168,6 +169,7 @@ set(APP_QML_FILES
     src/ui/qml/components/EventClipPlayer.qml
     src/ui/qml/components/PtzPad.qml
     src/ui/qml/components/BoschSteerSurface.qml
+    src/ui/qml/components/BoschTrackingPanel.qml
     src/ui/qml/components/Timeline.qml
     src/ui/qml/components/MonthCalendar.qml
     src/ui/qml/components/SettingRow.qml

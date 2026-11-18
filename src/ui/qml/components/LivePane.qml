@@ -703,6 +703,22 @@ Rectangle {
         boschPicker.open();
     }
 
+    function openTrackingPanel(anchor) {
+        if (trackingPopup.visible) {
+            trackingPopup.close();
+            return;
+        }
+        const overlay = Overlay.overlay;
+        if (!BoschTour.connected || !overlay)
+            return;
+        boschPicker.close();
+        BoschTour.refreshPresets();   // the return positions
+        const point = anchor.mapToItem(overlay, 0, 0);
+        trackingPopup.x = Math.max(8, Math.min(point.x, overlay.width - trackingPopup.width - 8));
+        trackingPopup.y = Math.max(8, point.y - trackingPopup.implicitHeight - 7);
+        trackingPopup.open();
+    }
+
     Loader {
         active: root.ptzOpen && root.capPtz
         anchors.right: parent.right
@@ -801,6 +817,20 @@ Rectangle {
                         : BoschTour.wiperOn ? qsTr("Wiper on (turns itself off after 60 s) · click to stop")
                         : BoschTour.wiperState === "off" ? qsTr("Wiper off · click to start")
                         : qsTr("Wiper state unknown · click to start") });
+            // Tracking (bosch-ptz-port ticket 03): the label starts or stops it, lit while on;
+            // its ⌃ opens the settings. The tip says what the camera is doing, as the phone.
+            t.push({ id: "tracking", wide: true, wideWidth: 88, caret: "trackingPanel",
+                     label: BoschTour.trackingPending ? qsTr("Tracking …") : qsTr("Tracking"),
+                     active: BoschTour.trackingOn || trackingPopup.visible,
+                     usable: BoschTour.trackingCanSwitch,
+                     text: BoschTour.trackingOn ? qsTr("Stop tracking") : qsTr("Start tracking"),
+                     tip: !BoschTour.connected ? qsTr("Home Assistant is disconnected")
+                        : BoschTour.trackingPending ? qsTr("Tracking: waiting for the camera…")
+                        : BoschTour.trackingOn ? qsTr("Tracking · %1 · click to stop").arg(BoschTour.trackingSaid)
+                        : !BoschTour.trackingKnown || !BoschTour.trackingReachable ? qsTr("Tracking service unavailable")
+                        : BoschTour.trackingDirty ? qsTr("Tracking off · save changes before enabling (⌃)")
+                        : BoschTour.selectionTourMode || BoschTour.selectionTourRestoring ? qsTr("Tracking off · turn off tour selection first")
+                        : qsTr("Tracking off · click to start (stops a tour) · ⌃ settings") });
             if (!BoschTour.connected)
                 t.push({ id: "haOffline", glyph: "!", active: true,
                          tip: qsTr("Home Assistant is disconnected. Reconnect to restore Bosch PTZ, positions, scene modes, and tours.") });
@@ -842,6 +872,8 @@ Rectangle {
         case "positions": root.openBoschPicker(anchor, "positions"); break;
         case "scene": root.openBoschPicker(anchor, "scene"); break;
         case "wiper": root.wiperAsked = BoschTour.toggleWiper(); break;
+        case "tracking": BoschTour.toggleTracking(); break;
+        case "trackingPanel": root.openTrackingPanel(anchor); break;
         case "haOffline": root.openBoschTourRequested(); break;
         case "large": root.largeToggled(); break;
         case "snapshot":
@@ -910,6 +942,7 @@ Rectangle {
         speedGroup: replayControls.group
         paused: root.replaying && root.replay.paused
         shown: paneHover.hovered || root.ptzOpen || root.boschPtzOpen || boschPicker.visible
+               || trackingPopup.visible
         toolList: root.liveTools
         hdOn: root.replaying ? replayControls.hd : root.qualityMain
         hdTip: (root.replaying ? replayControls.hd : root.qualityMain) ? qsTr("Switch to Fluent (SD)")
@@ -1038,6 +1071,21 @@ Rectangle {
                 }
             }
         }
+    }
+
+    Popup {
+        id: trackingPopup
+        parent: Overlay.overlay
+        z: 1000
+        width: Math.min(300, Overlay.overlay ? Overlay.overlay.width - 16 : 300)
+        padding: 10
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle {
+            color: Theme.surface
+            border.color: Theme.border
+            radius: Theme.radius
+        }
+        contentItem: BoschTrackingPanel {}
     }
 
     // ---- Fisheye views: hover icons at the right edge, right-click View menu ----------

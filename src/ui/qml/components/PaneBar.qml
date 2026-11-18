@@ -20,7 +20,8 @@ Item {
     property bool shown: false            // the host's hover (the bar adds its own menus)
     // Tools: [{ id, glyph | label, tip, active, wide, picker }] in the pill's order; only those
     // the camera has. `label` makes a wide text button (Bosch), a picker (⌃) unless
-    // picker: false. The menu reads `text`, else tip.
+    // picker: false. `caret: "<id>"` makes the ⌃ its own button (Bosch tracking: the label
+    // toggles, ⌃ opens the settings). The menu reads `text`, else tip.
     property var toolList: []
     property bool hdShown: true
     property bool hdOn: false
@@ -394,10 +395,24 @@ Item {
                             }
                             HoverHandler { id: wideHover }
                             Tip { visible: wideHover.hovered && (toolSlot.modelData.tip || "") !== ""; tipText: toolSlot.modelData.tip || "" }
-                            TapHandler {
-                                enabled: wideTool.usable
-                                gesturePolicy: TapHandler.ReleaseWithinBounds
-                                onTapped: bar.tool(toolSlot.modelData.id, toolSlot)
+                            Item {   // the label; all of it unless ⌃ is a button of its own
+                                anchors.fill: parent
+                                anchors.rightMargin: toolSlot.modelData.caret ? 18 : 0
+                                TapHandler {
+                                    enabled: wideTool.usable
+                                    gesturePolicy: TapHandler.ReleaseWithinBounds
+                                    onTapped: bar.tool(toolSlot.modelData.id, toolSlot)
+                                }
+                            }
+                            Item {   // ⌃ as a button: usable while the label isn't
+                                visible: !!toolSlot.modelData.caret
+                                anchors.right: parent.right
+                                width: 18
+                                height: parent.height
+                                TapHandler {
+                                    gesturePolicy: TapHandler.ReleaseWithinBounds
+                                    onTapped: bar.tool(toolSlot.modelData.caret, toolSlot)
+                                }
                             }
                         }
                     }

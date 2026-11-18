@@ -10,6 +10,29 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Added
 
+- **Bosch tracking from the pane bar.** A **Tracking** button sits beside Wiper on the Bosch
+  pane: click it to start tracking (which stops a running tour) or to stop it; it is lit while
+  on, and its tip says what the camera is doing ("Waiting for a target", "Following · 23 s",
+  "Still · 12 s", "Returning", or the camera's error). Its ⌃ opens the settings, as in the
+  Outpost app: behaviour (Always on / Fixed time / Until still), how long (5–300 s in 5 s
+  steps), the position to return to, and Save. Settings change only while tracking is off,
+  and a change must be saved before tracking can start. With ⇅ on, the chip at the top of
+  the picture shows "Tracking · Following · 23 s", and "Tour stopped · tracking on" when
+  starting tracking stopped a tour. Dragging the picture or starting a tour turns tracking
+  off. If Home Assistant can't say what tracking is doing, the button is greyed with "Tracking
+  service unavailable" (Stop stays usable while it is on) (bosch-ptz-port ticket 03).
+  **Internal:** `BoschTracking.{h,cpp}` (`Tracking::parse` is the phone's strict
+  `Tracking.kt` parse: anything missing or odd is unknown, never Off; `said()`), and
+  `BoschTourController`'s tracking state: `bosch_camera_get_tracking` on the 1.5 s poll,
+  `editTracking` / `saveTracking` / `switchTracking` (orders need `ok` and a parsed state,
+  else the service's error; one out at a time; a read sent before an order's answer, a
+  confirmed steer or a tour start is dropped by `m_trackingRevision`); a successful
+  non-zero steer and a tour start mark tracking Off at once; a preset recall re-reads it;
+  reset on connect, disconnect and a 401/403. Starting is refused during tour selection (T).
+  `BoschTrackingPanel.qml` (imports `ReolinkApp.Core`; `test_livestreamqml` loads it); the
+  pane bar's wide tools take `caret: "<id>"` to make ⌃ its own button; `tracking` joins the
+  Live common tools in `PaneBarRules`. Seconds read "23 s" (the phone writes "23s").
+
 - **Steer the Bosch by dragging its picture.** With ⇅ on, press anywhere on the Bosch
   picture: a ring marks the spot, and the further you drag from it the faster the camera
   turns (full speed 192 px away; drag right to pan right, up to tilt up). A strip on the right

@@ -25,6 +25,7 @@ QStringList commonTools(Page page)
     switch (page) {
     case Page::Live:
         return {QStringLiteral("positions"), QStringLiteral("scene"), QStringLiteral("wiper"),
+                QStringLiteral("tracking"),
                 QStringLiteral("tour"),
                 QStringLiteral("haOffline"), QStringLiteral("snapshot"), QStringLiteral("record"),
                 QStringLiteral("ptz"), QStringLiteral("talk")};

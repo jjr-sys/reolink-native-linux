@@ -376,14 +376,15 @@ private slots:
 
     void boschToolsShowWhenRoomyElseUnderTheMenu()
     {
-        const QStringList have{"positions", "scene", "wiper", "tour", "snapshot", "record", "ptz",
-                               "maximise"};
+        const QStringList have{"positions", "scene", "wiper", "tracking", "tour", "snapshot",
+                               "record", "ptz", "maximise"};
         QCOMPARE(tools(Page::Live, have, Full).shown,
-                 (QStringList{"positions", "scene", "wiper", "tour", "snapshot", "record", "ptz"}));
+                 (QStringList{"positions", "scene", "wiper", "tracking", "tour", "snapshot",
+                              "record", "ptz"}));
         const ToolSplit few = tools(Page::Live, have, FewTools);
         QCOMPARE(few.shown, QStringList{"positions"});
-        QCOMPARE(few.menu, (QStringList{"scene", "wiper", "tour", "snapshot", "record", "ptz",
-                                        "maximise"}));
+        QCOMPARE(few.menu, (QStringList{"scene", "wiper", "tracking", "tour", "snapshot", "record",
+                                        "ptz", "maximise"}));
     }
 
     void aToolNotAvailableIsLeftOut()

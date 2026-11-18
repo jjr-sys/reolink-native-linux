@@ -164,23 +164,35 @@ Item {
         onCanceled: surface.release()
     }
 
-    // "Touring · <step>" or "Manual · tour stopped" (lascelles-bosch-tour ticket 03), as the
-    // pad showed it.
+    // "Touring · <step>", "Manual · tour stopped" (lascelles-bosch-tour ticket 03) or "Tour
+    // stopped · tracking on", as the pad showed it; under it "Tracking · <status>" while on
+    // (bosch-ptz-port ticket 03).
     Rectangle {
-        visible: BoschTour.tourStatus !== ""
+        visible: BoschTour.tourStatus !== "" || BoschTour.trackingLine !== ""
         anchors.horizontalCenter: parent.horizontalCenter
         y: 8
-        width: statusText.implicitWidth + 16
-        height: statusText.implicitHeight + 6
+        width: statusLines.implicitWidth + 16
+        height: statusLines.implicitHeight + 6
         radius: Theme.radius
         color: Theme.paneBar
         border.color: Theme.border
-        Text {
-            id: statusText
+        Column {
+            id: statusLines
             anchors.centerIn: parent
-            text: BoschTour.tourStatus
-            color: BoschTour.manualStopped ? Theme.accent : Theme.textMuted
-            font.pixelSize: 11
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: text !== ""
+                text: BoschTour.tourStatus
+                color: BoschTour.manualStopped ? Theme.accent : Theme.textMuted
+                font.pixelSize: 11
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: text !== ""
+                text: BoschTour.trackingLine
+                color: BoschTour.trackingStatus === "error" ? Theme.danger : Theme.accent
+                font.pixelSize: 11
+            }
         }
     }
 }

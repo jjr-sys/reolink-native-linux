@@ -165,6 +165,31 @@ private slots:
         QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
     }
 
+    // bosch-ptz-port ticket 03: the Tracking ⌃ panel reads BoschTour (ReolinkApp.Core); with
+    // Home Assistant not connected it says the service is unavailable.
+    void boschTrackingPanelLoadsWithoutWarnings()
+    {
+        QStringList warnings;
+        const auto connection = connect(m_engine.get(), &QQmlEngine::warnings, this,
+                                        [&](const QList<QQmlError> &errors) {
+            for (const auto &error : errors)
+                warnings.append(error.toString());
+        });
+        QQmlComponent component(m_engine.get(), QUrl::fromLocalFile(
+            QStringLiteral(RL_QML_SOURCE_DIR "/components/BoschTrackingPanel.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        std::unique_ptr<QObject> panel(component.createWithInitialProperties(
+            QVariantMap{{"width", 280}}));
+        QVERIFY2(panel, qPrintable(component.errorString()));
+        QCOMPARE(panel->property("known").metaType().id(), QMetaType::Bool);
+        QCOMPARE(panel->property("known").toBool(), false);
+        QCOMPARE(panel->property("statusText").toString(), QStringLiteral("Status unavailable"));
+        panel.reset();
+        QCoreApplication::processEvents();
+        disconnect(connection);
+        QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+    }
+
     void cleanupTestCase()
     {
         m_engine.reset();

@@ -122,6 +122,7 @@ BoschTourController::BoschTourController(CredentialStore *credentials,
     connect(m_pollTimer, &QTimer::timeout, this, [this] {
         refreshPatrol();
         refreshWiper();
+        refreshTracking();
     });
     m_presetTimer->setInterval(kPresetPollIntervalMs);
     connect(m_presetTimer, &QTimer::timeout, this, &BoschTourController::refreshPresets);
@@ -241,6 +242,7 @@ void BoschTourController::connectHomeAssistant(const QString &url, const QString
     resetSteer();
     resetManualMoves();   // a stop in flight is from the old connection: its answer is dropped
     resetWiper();
+    resetTracking();
     setBusy(false);
     setMessage({});
     setConnectionStatus(QStringLiteral("Checking Home Assistant access…"), false);
@@ -337,6 +339,7 @@ void BoschTourController::disconnectHomeAssistant()
     m_irisStopPending = false;
     m_irisHeartbeatPending = false;
     resetWiper();
+    resetTracking();
     m_message.clear();
     emit connectionChanged();
     emit patrolChanged();
@@ -388,6 +391,7 @@ void BoschTourController::refresh()
 {
     refreshPatrol();
     refreshWiper();
+    refreshTracking();
     refreshPresets();
     refreshSceneMode();
 }
@@ -806,6 +810,226 @@ void BoschTourController::resetWiper()
     setWiper(kWiperUnknown, false, {});
 }
 
+void BoschTourController::refreshTracking()
+{
+    if (!configured() || m_trackingReadPending || m_trackingPending)
+        return;
+    m_trackingReadPending = true;
+    const quint64 revision = m_trackingRevision;
+    callService(QStringLiteral("bosch_camera_get_tracking"), {}, true, false,
+                [this, revision](int status, const QByteArray &body, const QString &networkError) {
+        m_trackingReadPending = false;
+        if (revision != m_trackingRevision)
+            return;   // an order or a steer since: it decides
+        if (status == 401 || status == 403) {
+            operationFailed(QStringLiteral("Read Bosch tracking"), status, body, networkError);
+            return;
+        }
+        const auto read = status == 200 ? Tracking::parse(serviceResponse(body)) : std::nullopt;
+        if (read) {
+            acceptTracking(*read);
+        } else if (m_trackingReachable) {
+            // Unavailable, not Off: whatever was last known stays, so Stop stays offered.
+            m_trackingReachable = false;
+            emit trackingChanged();
+        }
+    });
+}
+
+void BoschTourController::orderTracking(const QString &service, const QJsonObject &data,
+                                        const QString &action, std::function<void(bool)> done)
+{
+    m_trackingPending = true;
+    ++m_trackingRevision;
+    emit trackingChanged();
+    callService(service, data, true, false,
+                [this, action, done = std::move(done)](int status, const QByteArray &body,
+                                                       const QString &networkError) {
+        m_trackingPending = false;
+        ++m_trackingRevision;   // a read sent while the order was out is older than this answer
+        if (status == 401 || status == 403) {
+            emit trackingChanged();
+            operationFailed(action, status, body, networkError);
+            return;
+        }
+        const QJsonObject response = serviceResponse(body);
+        const auto read = status == 200 && response.value(QStringLiteral("ok")).toBool(false)
+                              ? Tracking::parse(response)
+                              : std::nullopt;
+        if (read) {
+            acceptTracking(*read);
+        } else {
+            emit trackingChanged();
+            setMessage(action + QStringLiteral(": ")
+                       + failureDetail(response, body, networkError,
+                                       status == 200 ? QStringLiteral("The camera did not confirm tracking.")
+                                       : status > 0 ? QStringLiteral("HTTP %1").arg(status)
+                                                    : QStringLiteral("Home Assistant did not answer.")));
+            refreshTracking();
+        }
+        if (done)
+            done(read.has_value());
+    });
+}
+
+void BoschTourController::acceptTracking(const Tracking &read)
+{
+    const QString tourBefore = tourStatus();
+    // The draft follows the saved settings until it is edited.
+    if (!m_trackingDraft || (m_tracking && *m_trackingDraft == m_tracking->config))
+        m_trackingDraft = read.config;
+    m_tracking = read;
+    m_trackingReachable = read.status != QLatin1String("unknown");
+    if (!read.enabled)
+        m_tourStoppedForTracking = false;
+    emit trackingChanged();
+    if (tourStatus() != tourBefore)
+        emit patrolChanged();
+}
+
+void BoschTourController::markTrackingOff()
+{
+    ++m_trackingRevision;
+    if (!trackingOn())
+        return;
+    Tracking off = *m_tracking;
+    off.enabled = false;
+    off.status = QStringLiteral("off");
+    off.remaining.reset();
+    off.error.clear();
+    acceptTracking(off);
+}
+
+void BoschTourController::setTourStoppedForTracking(bool on)
+{
+    const QString before = tourStatus();
+    m_tourStoppedForTracking = on;
+    if (tourStatus() != before)
+        emit patrolChanged();
+}
+
+void BoschTourController::resetTracking()
+{
+    const QString tourBefore = tourStatus();
+    ++m_trackingRevision;
+    m_tracking.reset();
+    m_trackingDraft.reset();
+    m_trackingReachable = false;
+    m_trackingPending = false;
+    m_trackingReadPending = false;
+    m_tourStoppedForTracking = false;
+    emit trackingChanged();
+    if (tourStatus() != tourBefore)
+        emit patrolChanged();
+}
+
+QString BoschTourController::trackingSaid() const
+{
+    return m_tracking ? m_tracking->said() : QStringLiteral("Status unavailable");
+}
+
+QString BoschTourController::trackingLine() const
+{
+    return trackingOn() ? QStringLiteral("Tracking · ") + m_tracking->said() : QString();
+}
+
+bool BoschTourController::trackingDirty() const
+{
+    return m_trackingDraft && m_tracking && *m_trackingDraft != m_tracking->config;
+}
+
+bool BoschTourController::trackingEditable() const
+{
+    return m_connected && m_trackingReachable && m_trackingDraft && !m_trackingPending
+           && !trackingOn();
+}
+
+bool BoschTourController::trackingCanSwitch() const
+{
+    if (!m_connected || m_trackingPending || !m_tracking)
+        return false;
+    if (trackingOn())
+        return true;
+    return m_trackingReachable && !trackingDirty() && !m_selectionTourSession;
+}
+
+QString BoschTourController::trackingNote() const
+{
+    if (!m_tracking)
+        return QStringLiteral("Tracking service unavailable");
+    if (m_trackingPending)
+        return QStringLiteral("Waiting for the camera…");
+    if (!m_trackingReachable)
+        return QStringLiteral("Settings unavailable until the camera reconnects.");
+    if (trackingOn())
+        return QStringLiteral("Turn tracking off to change settings.");
+    if (trackingDirty())
+        return QStringLiteral("Save changes before enabling.");
+    return QStringLiteral("Settings saved.");
+}
+
+bool BoschTourController::editTracking(const QString &behaviour, int seconds,
+                                       const QString &returnToken)
+{
+    static const QStringList behaviours{QStringLiteral("always"), QStringLiteral("fixed"),
+                                        QStringLiteral("still")};
+    const QString token = returnToken.trimmed();
+    if (!trackingEditable() || !behaviours.contains(behaviour) || token.isEmpty())
+        return false;
+    const int stepped = std::clamp(int(std::lround(seconds / 5.0)) * 5, 5, 300);
+    const TrackingSettings draft{behaviour, stepped, token};
+    if (draft != *m_trackingDraft) {
+        m_trackingDraft = draft;
+        emit trackingChanged();
+    }
+    return true;
+}
+
+bool BoschTourController::saveTracking()
+{
+    if (!trackingEditable() || !trackingDirty())
+        return false;
+    orderTracking(QStringLiteral("bosch_camera_set_tracking"), m_trackingDraft->body(),
+                  QStringLiteral("Save tracking settings"), [this](bool ok) {
+        if (ok)
+            setMessage(QStringLiteral("Tracking settings saved."));
+    });
+    return true;
+}
+
+bool BoschTourController::switchTracking(bool on)
+{
+    if (!configured() || !m_connected || m_trackingPending || on == trackingOn())
+        return false;
+    if (on && !trackingCanSwitch()) {
+        setMessage(!m_tracking || !m_trackingReachable
+                       ? QStringLiteral("Tracking service unavailable")
+                   : trackingDirty()
+                       ? QStringLiteral("Save changes before enabling.")
+                       : QStringLiteral("Turn off tour selection before tracking."));
+        return false;
+    }
+    const bool wasTouring = touring();
+    orderTracking(on ? QStringLiteral("bosch_camera_start_tracking")
+                     : QStringLiteral("bosch_camera_stop_tracking"),
+                  {}, on ? QStringLiteral("Enable tracking") : QStringLiteral("Stop tracking"),
+                  [this, on, wasTouring](bool ok) {
+        if (on) {
+            // The service stops a tour before its checks: a failed start stops it too.
+            if (wasTouring)
+                setLocalTourState(QStringLiteral("stopped"));
+            refreshPatrol();
+            if (ok) {
+                setManualStopped(false);
+                setTourStoppedForTracking(wasTouring && trackingOn());
+            }
+        }
+        if (ok)
+            setMessage(on ? QStringLiteral("Tracking on.") : QStringLiteral("Tracking off."));
+    });
+    return true;
+}
+
 void BoschTourController::notePatrolMutation()
 {
     ++m_patrolMutationRevision;
@@ -1083,6 +1307,7 @@ void BoschTourController::gotoPreset(const QString &token)
         }
         setMessage(QStringLiteral("Camera moving to preset."));
         refreshPatrol();
+        refreshTracking();   // a preset recall cancels tracking on the server
     });
 }
 
@@ -1178,9 +1403,13 @@ void BoschTourController::sendSteer()
                             {QStringLiteral("tilt"), steer.tilt},
                             {QStringLiteral("zoom"), steer.zoom}},
                 true, false,
-                [this](int status, const QByteArray &body, const QString &networkError) {
+                [this, steer](int status, const QByteArray &body, const QString &networkError) {
         m_steerPending = false;
-        if (!steerSucceeded(QStringLiteral("Move Bosch camera"), status, body, networkError)) {
+        const bool moved = steerSucceeded(QStringLiteral("Move Bosch camera"), status, body,
+                                          networkError);
+        if (moved && steer != Steer{})
+            markTrackingOff();   // the server cancelled tracking before moving
+        if (!moved) {
             // No retry storm while the button is still down; release still sends a stop.
             m_steer.reset();
             m_steerTimer->stop();
@@ -1333,8 +1562,10 @@ void BoschTourController::startTour()
         }
         const QJsonObject result = serviceResponse(body);
         setLocalTourState(result.value(QStringLiteral("status")).toString(QStringLiteral("starting")));
+        markTrackingOff();   // a tour start stops tracking on the server
         setMessage(QStringLiteral("Tour started."));
         refreshPatrol();
+        refreshTracking();
     });
 }
 
@@ -1534,8 +1765,10 @@ void BoschTourController::reconcileSelectionTour()
             const QJsonObject result = serviceResponse(body);
             setLocalTourState(result.value(QStringLiteral("status")).toString(QStringLiteral("starting")));
             m_selectionTourStarted = true;
+            markTrackingOff();
             setMessage(QStringLiteral("Selected Bosch tour started."));
             refreshPatrol();
+            refreshTracking();
             reconcileSelectionTour();
         });
         return;
@@ -1643,6 +1876,8 @@ QString BoschTourController::tourStatus() const
         const QString step = currentStep();
         return step.isEmpty() ? QStringLiteral("Touring") : QStringLiteral("Touring · %1").arg(step);
     }
+    if (m_tourStoppedForTracking && trackingOn())
+        return QStringLiteral("Tour stopped · tracking on");
     return m_manualStopped ? QStringLiteral("Manual · tour stopped") : QString();
 }
 
@@ -1692,6 +1927,7 @@ void BoschTourController::operationFailed(const QString &action, int status,
         m_irisHeartbeatTimer->stop();
         m_irisHeartbeatPending = false;
         resetSteer();
+        resetTracking();
         detail = QStringLiteral("Home Assistant rejected the saved token (HTTP %1). Update the token in Bosch tour settings.")
                      .arg(status);
     }

@@ -6,6 +6,8 @@
 #include <QUrl>
 #include <QVariantList>
 
+#include "device/BoschTracking.h"
+
 #include <functional>
 #include <optional>
 
@@ -62,6 +64,27 @@ class BoschTourController : public QObject
     // "Wiper didn't respond" after an order the camera didn't take, until the next press or
     // the state changes.
     Q_PROPERTY(QString wiperError READ wiperError NOTIFY wiperChanged)
+    // Tracking (bosch-ptz-port ticket 03): pyscript.bosch_camera_*_tracking, read on the poll.
+    // Known once a read made sense; Reachable while the last one did and wasn't "unknown".
+    Q_PROPERTY(bool trackingKnown READ trackingKnown NOTIFY trackingChanged)
+    Q_PROPERTY(bool trackingReachable READ trackingReachable NOTIFY trackingChanged)
+    Q_PROPERTY(bool trackingOn READ trackingOn NOTIFY trackingChanged)
+    Q_PROPERTY(bool trackingPending READ trackingPending NOTIFY trackingChanged)
+    // The service's word ("off", "following", "error" …); "" before a read.
+    Q_PROPERTY(QString trackingStatus READ trackingStatus NOTIFY trackingChanged)
+    // The phone's words ("Following · 23 s"); "Status unavailable" before a read.
+    Q_PROPERTY(QString trackingSaid READ trackingSaid NOTIFY trackingChanged)
+    // "Tracking · <said>" while on, else "": the picture's status chip.
+    Q_PROPERTY(QString trackingLine READ trackingLine NOTIFY trackingChanged)
+    // The settings being edited: a draft until Save.
+    Q_PROPERTY(QString trackingBehaviour READ trackingBehaviour NOTIFY trackingChanged)
+    Q_PROPERTY(int trackingSeconds READ trackingSeconds NOTIFY trackingChanged)
+    Q_PROPERTY(QString trackingReturnToken READ trackingReturnToken NOTIFY trackingChanged)
+    Q_PROPERTY(bool trackingDirty READ trackingDirty NOTIFY trackingChanged)
+    Q_PROPERTY(bool trackingEditable READ trackingEditable NOTIFY trackingChanged)
+    Q_PROPERTY(bool trackingCanSwitch READ trackingCanSwitch NOTIFY trackingChanged)
+    // The panel's one-line hint ("Save changes before enabling." …).
+    Q_PROPERTY(QString trackingNote READ trackingNote NOTIFY trackingChanged)
 
 public:
     // transport is the Home Assistant seam; null selects the real network adapter.
@@ -103,6 +126,22 @@ public:
     bool wiperOn() const { return m_wiperState == QLatin1String("on"); }
     bool wiperPending() const { return m_wiperPending; }
     QString wiperError() const { return m_wiperError; }
+    bool trackingKnown() const { return m_tracking.has_value(); }
+    bool trackingReachable() const { return m_trackingReachable; }
+    bool trackingOn() const { return m_tracking && m_tracking->enabled; }
+    bool trackingPending() const { return m_trackingPending; }
+    QString trackingStatus() const { return m_tracking ? m_tracking->status : QString(); }
+    QString trackingSaid() const;
+    QString trackingLine() const;
+    QString trackingBehaviour() const { return m_trackingDraft ? m_trackingDraft->behaviour : QString(); }
+    int trackingSeconds() const { return m_trackingDraft ? m_trackingDraft->seconds : 0; }
+    QString trackingReturnToken() const { return m_trackingDraft ? m_trackingDraft->returnToken : QString(); }
+    bool trackingDirty() const;
+    // Settings change only while tracking is off and Home Assistant answers.
+    bool trackingEditable() const;
+    // On: Stop is always offered. Off: needs a reachable service and the settings saved.
+    bool trackingCanSwitch() const;
+    QString trackingNote() const;
 
     Q_INVOKABLE void connectHomeAssistant(const QString &url, const QString &token,
                                           const QString &cameraEntity);
@@ -137,6 +176,13 @@ public:
     // On when off (or unknown), else off. False when nothing was sent (no Home Assistant, or
     // an order is still out).
     Q_INVOKABLE bool toggleWiper();
+    // The draft: seconds rounded to 5 s steps within 5..300. False (unchanged) unless editable.
+    Q_INVOKABLE bool editTracking(const QString &behaviour, int seconds, const QString &returnToken);
+    Q_INVOKABLE bool saveTracking();
+    // Start (stops a tour on the server, even when it then refuses) or stop. False when
+    // nothing was sent, with the reason in message() when there is one.
+    Q_INVOKABLE bool switchTracking(bool on);
+    Q_INVOKABLE bool toggleTracking() { return switchTracking(!trackingOn()); }
 
 private slots:
     // Each second while a direction is held: the held steer again (one lasts 3 s on the
@@ -158,6 +204,7 @@ signals:
     void selectionTourRouteChanged();
     void selectionTourRestoringChanged();
     void wiperChanged();
+    void trackingChanged();
 
 private:
     // A manual move as steer numbers, -1..1 on each axis.
@@ -192,6 +239,15 @@ private:
     void setWiper(const QString &state, bool pending, const QString &error);
     void showWiperRead(const QString &state);
     void resetWiper();
+    void refreshTracking();
+    // A tracking service call answered with the state (ok and parsed), else says why.
+    void orderTracking(const QString &service, const QJsonObject &data, const QString &action,
+                       std::function<void(bool)> done);
+    void acceptTracking(const Tracking &read);
+    // A confirmed manual steer or tour start ends tracking on the server: show Off now.
+    void markTrackingOff();
+    void setTourStoppedForTracking(bool on);
+    void resetTracking();
     void notePatrolMutation();
     void setLocalTourState(const QString &state);
     // Manual moves during a tour (lascelles-bosch-tour ticket 03). Stop HA's patrol, then run
@@ -298,6 +354,14 @@ private:
     bool m_wiperPending = false;
     bool m_wiperReadPending = false;
     quint64 m_wiperRevision = 0;   // each press; a read sent before one is dropped
+
+    std::optional<Tracking> m_tracking;                 // the last read (or order answer)
+    std::optional<TrackingSettings> m_trackingDraft;    // the settings being edited
+    bool m_trackingReachable = false;
+    bool m_trackingPending = false;       // a save, start or stop is out
+    bool m_trackingReadPending = false;
+    bool m_tourStoppedForTracking = false;   // "Tour stopped · tracking on"
+    quint64 m_trackingRevision = 0;   // each order or local change; older reads are dropped
 };
 
 } // namespace rl

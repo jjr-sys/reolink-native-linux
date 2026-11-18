@@ -4,6 +4,7 @@
 // loop is never spun).
 #include "core/CredentialStore.h"
 #include "device/BoschTourController.h"
+#include "device/BoschTracking.h"
 #include "device/HomeAssistantTransport.h"
 
 #include <QJsonDocument>
@@ -113,6 +114,20 @@ bool isStop(const QJsonObject &steer)
     return steer.value("pan").toDouble() == 0 && steer.value("tilt").toDouble() == 0
            && steer.value("zoom").toDouble() == 0;
 }
+// bosch-ptz-port ticket 03: bosch_camera_get_tracking and its orders' answers.
+const QString kGetTracking = QStringLiteral("bosch_camera_get_tracking");
+const QString kSetTracking = QStringLiteral("bosch_camera_set_tracking");
+const QString kStartTracking = QStringLiteral("bosch_camera_start_tracking");
+const QString kStopTracking = QStringLiteral("bosch_camera_stop_tracking");
+QByteArray tracking(const char *enabled, const char *status, const char *extra = "",
+                    const char *config = R"({"behaviour":"fixed","seconds":30,"return_token":"1"})")
+{
+    return svc(QByteArray(R"({"ok":true,"enabled":)") + enabled + R"(,"status":")" + status
+               + R"(","config":)" + config + extra + "}");
+}
+const QByteArray kTrackingOff = tracking("false", "off");
+QJsonObject json(const char *text) { return QJsonDocument::fromJson(text).object(); }
+
 QByteArray wiperState(const char *state)
 {
     return QByteArray(R"({"entity_id":"pyscript.bosch_camera_wiper","state":")") + state + "\"}";
@@ -128,6 +143,7 @@ class TestBoschTour : public QObject
     FakeCredentials creds;
     BoschTourController *c = nullptr;
     QTemporaryDir settingsDir;
+    QByteArray trackingRead = kTrackingOff;   // what settle() answers bosch_camera_get_tracking
 
     // Answer every pending read (get_*) with the canned Home Assistant state,
     // including reads that those answers trigger. Mutations are left pending.
@@ -141,6 +157,7 @@ class TestBoschTour : public QObject
             {QStringLiteral("bosch_camera_get_scene_mode"), kScene},
             {QStringLiteral("bosch_camera_get_iris"), iris},
             {kWiperState, wiper},
+            {kGetTracking, trackingRead},
         };
         for (bool again = true; again;) {
             again = false;
@@ -191,6 +208,7 @@ private slots:
     {
         QSettings().clear();
         creds.secrets.clear();
+        trackingRead = kTrackingOff;
         ht = new ScriptedTransport;
         c = new BoschTourController(&creds, ht);
         ht->setParent(c);
@@ -1163,6 +1181,271 @@ private slots:
         QCOMPARE(c->wiperState(), QStringLiteral("unknown"));
         QVERIFY(!c->wiperOn());
         QVERIFY(!c->wiperPending());
+    }
+
+    // ---- tracking (bosch-ptz-port ticket 03) -------------------------------
+
+    void trackingParseIsStrictAsThePhone()
+    {
+        const auto ok = Tracking::parse(json(R"({"enabled":true,"status":"following","remaining_seconds":23,"config":{"behaviour":"fixed","seconds":30,"return_token":"1"}})"));
+        QVERIFY(ok);
+        QVERIFY(ok->enabled);
+        QCOMPARE(ok->config, (TrackingSettings{QStringLiteral("fixed"), 30, QStringLiteral("1")}));
+        QCOMPARE(ok->remaining, std::optional<int>(23));
+        QCOMPARE(ok->said(), QStringLiteral("Following · 23 s"));
+        // Missing or odd is never a confirmed Off.
+        const char *bad[] = {
+            R"({"status":"off","config":{"behaviour":"fixed","seconds":30,"return_token":"1"}})",
+            R"({"enabled":"false","status":"off","config":{"behaviour":"fixed","seconds":30,"return_token":"1"}})",
+            R"({"enabled":false,"status":"sleeping","config":{"behaviour":"fixed","seconds":30,"return_token":"1"}})",
+            R"({"enabled":true,"status":"off","config":{"behaviour":"fixed","seconds":30,"return_token":"1"}})",
+            R"({"enabled":false,"status":"off"})",
+            R"({"enabled":false,"status":"off","config":{"behaviour":"sometimes","seconds":30,"return_token":"1"}})",
+            R"({"enabled":false,"status":"off","config":{"behaviour":"fixed","seconds":32,"return_token":"1"}})",
+            R"({"enabled":false,"status":"off","config":{"behaviour":"fixed","seconds":305,"return_token":"1"}})",
+            R"({"enabled":false,"status":"off","config":{"behaviour":"fixed","seconds":"30","return_token":"1"}})",
+            R"({"enabled":false,"status":"off","config":{"behaviour":"fixed","seconds":30,"return_token":" "}})",
+            R"({"enabled":false,"status":"off","config":{"behaviour":"fixed","seconds":30,"return_token":1}})",
+        };
+        for (const char *text : bad)
+            QVERIFY2(!Tracking::parse(json(text)), text);
+        // Status words, as the phone says them.
+        const auto said = [](const char *text) { return Tracking::parse(json(text))->said(); };
+        QCOMPARE(said(R"({"enabled":false,"status":"off","config":{"behaviour":"always","seconds":5,"return_token":"1"}})"), QStringLiteral("Off"));
+        QCOMPARE(said(R"({"enabled":true,"status":"waiting","config":{"behaviour":"always","seconds":5,"return_token":"1"}})"), QStringLiteral("Waiting for a target"));
+        QCOMPARE(said(R"({"enabled":true,"status":"still","remaining_seconds":12,"config":{"behaviour":"still","seconds":5,"return_token":"1"}})"), QStringLiteral("Still · 12 s"));
+        QCOMPARE(said(R"({"enabled":true,"status":"returning","remaining_seconds":3,"config":{"behaviour":"still","seconds":5,"return_token":"1"}})"), QStringLiteral("Returning"));
+        QCOMPARE(said(R"({"enabled":true,"status":"error","error":"Global IVA is missing","config":{"behaviour":"always","seconds":5,"return_token":"1"}})"), QStringLiteral("Global IVA is missing"));
+        QCOMPARE(said(R"({"enabled":true,"status":"error","config":{"behaviour":"always","seconds":5,"return_token":"1"}})"), QStringLiteral("Tracking needs attention"));
+        QCOMPARE(said(R"({"enabled":false,"status":"unknown","config":{"behaviour":"always","seconds":5,"return_token":"1"}})"), QStringLiteral("Status unavailable"));
+        // What a save sends: seconds a number, the token a string.
+        QCOMPARE(QJsonDocument(TrackingSettings{QStringLiteral("still"), 45, QStringLiteral("7")}.body())
+                     .toJson(QJsonDocument::Compact),
+                 QByteArray(R"({"behaviour":"still","return_token":"7","seconds":45})"));
+    }
+
+    void trackingIsReadOnConnectAndEachPoll()
+    {
+        QVERIFY(!c->trackingKnown());
+        QCOMPARE(c->trackingSaid(), QStringLiteral("Status unavailable"));
+        connectAndSettle();   // settle() fails if a get_tracking is left unanswered
+        QVERIFY(c->trackingKnown());
+        QVERIFY(c->trackingReachable());
+        QVERIFY(!c->trackingOn());
+        QCOMPARE(c->trackingSaid(), QStringLiteral("Off"));
+        QCOMPARE(c->trackingBehaviour(), QStringLiteral("fixed"));
+        QCOMPARE(c->trackingSeconds(), 30);
+        QCOMPARE(c->trackingReturnToken(), QStringLiteral("1"));
+        QCOMPARE(c->trackingLine(), QString());
+        c->refresh();
+        QCOMPARE(ht->count(kGetTracking), 1);
+        trackingRead = tracking("true", "following", R"(,"remaining_seconds":23)");
+        settle();
+        QVERIFY(c->trackingOn());
+        QCOMPARE(c->trackingLine(), QStringLiteral("Tracking · Following · 23 s"));
+    }
+
+    void trackingReadThatFailsIsUnavailableNotOff()
+    {
+        trackingRead = tracking("true", "waiting");
+        connectAndSettle();
+        QVERIFY(c->trackingOn());
+        c->refresh();
+        ht->answer(kGetTracking, 400, R"({"message":"Service pyscript.bosch_camera_get_tracking not found."})");
+        settle();
+        QVERIFY(!c->trackingReachable());
+        QVERIFY(c->trackingOn());          // still on as far as anyone knows: Stop stays usable
+        QVERIFY(c->trackingCanSwitch());
+        QVERIFY(c->connected());           // the patrol read speaks for the connection
+        c->refresh();
+        ht->answer(kGetTracking, 200, svc(R"({"enabled":false})"));   // odd: not an Off
+        settle();
+        QVERIFY(!c->trackingReachable());
+        QVERIFY(c->trackingOn());
+    }
+
+    void trackingUnknownStatusIsUnavailable()
+    {
+        trackingRead = tracking("false", "unknown");
+        connectAndSettle();
+        QVERIFY(c->trackingKnown());
+        QVERIFY(!c->trackingReachable());
+        QVERIFY(!c->trackingCanSwitch());
+        QVERIFY(!c->switchTracking(true));
+        QCOMPARE(ht->count(kStartTracking), 0);
+        QCOMPARE(c->message(), QStringLiteral("Tracking service unavailable"));
+    }
+
+    void trackingErrorWhileOnShowsTheErrorAndCanStop()
+    {
+        trackingRead = tracking("true", "error", R"(,"error":"Camera Inactivity is on")");
+        connectAndSettle();
+        QVERIFY(c->trackingOn());
+        QCOMPARE(c->trackingSaid(), QStringLiteral("Camera Inactivity is on"));
+        QVERIFY(c->switchTracking(false));
+        QCOMPARE(ht->count(kStopTracking), 1);
+    }
+
+    void trackingSettingsAreADraftUntilSaved()
+    {
+        connectAndSettle();
+        QVERIFY(c->trackingEditable());
+        QVERIFY(!c->trackingDirty());
+        QVERIFY(c->editTracking(QStringLiteral("still"), 45, QStringLiteral("2")));
+        QVERIFY(c->trackingDirty());
+        QCOMPARE(c->trackingNote(), QStringLiteral("Save changes before enabling."));
+        // A poll doesn't overwrite the draft.
+        c->refresh();
+        settle();
+        QCOMPARE(c->trackingBehaviour(), QStringLiteral("still"));
+        QCOMPARE(c->trackingSeconds(), 45);
+        QVERIFY(c->trackingDirty());
+        // Seconds stay 5..300 in 5 s steps.
+        QVERIFY(c->editTracking(QStringLiteral("still"), 302, QStringLiteral("2")));
+        QCOMPARE(c->trackingSeconds(), 300);
+        QVERIFY(c->editTracking(QStringLiteral("still"), 0, QStringLiteral("2")));
+        QCOMPARE(c->trackingSeconds(), 5);
+        QVERIFY(c->editTracking(QStringLiteral("still"), 45, QStringLiteral("2")));
+        QVERIFY(c->saveTracking());
+        QVERIFY(c->trackingPending());
+        QVERIFY(!c->editTracking(QStringLiteral("always"), 45, QStringLiteral("2")));   // not while saving
+        const QJsonObject sent = ht->answer(kSetTracking, 200, tracking("false", "off", "",
+            R"({"behaviour":"still","seconds":45,"return_token":"2"})"));
+        QCOMPARE(sent.value("behaviour").toString(), QStringLiteral("still"));
+        QVERIFY(sent.value("seconds").isDouble());
+        QCOMPARE(sent.value("seconds").toInt(), 45);
+        QVERIFY(sent.value("return_token").isString());
+        QCOMPARE(sent.value("return_token").toString(), QStringLiteral("2"));
+        QVERIFY(!c->trackingPending());
+        QVERIFY(!c->trackingDirty());
+        QCOMPARE(c->trackingNote(), QStringLiteral("Settings saved."));
+        QCOMPARE(c->message(), QStringLiteral("Tracking settings saved."));
+    }
+
+    void trackingSaveRefusedSaysWhyAndKeepsTheDraft()
+    {
+        connectAndSettle();
+        QVERIFY(c->editTracking(QStringLiteral("always"), 30, QStringLiteral("1")));
+        QVERIFY(c->saveTracking());
+        ht->answer(kSetTracking, 200, svc(R"({"ok":false,"error":"Stop tracking first"})"));
+        QVERIFY(c->trackingDirty());
+        QCOMPARE(c->trackingBehaviour(), QStringLiteral("always"));
+        QCOMPARE(c->message(), QStringLiteral("Save tracking settings: Stop tracking first"));
+    }
+
+    void trackingSettingsLockedWhileOn()
+    {
+        trackingRead = tracking("true", "waiting");
+        connectAndSettle();
+        QVERIFY(!c->trackingEditable());
+        QVERIFY(!c->editTracking(QStringLiteral("always"), 30, QStringLiteral("1")));
+        QVERIFY(!c->saveTracking());
+        QCOMPARE(c->trackingNote(), QStringLiteral("Turn tracking off to change settings."));
+    }
+
+    void trackingSwitchOnBlockedWhileDirty()
+    {
+        connectAndSettle();
+        QVERIFY(c->editTracking(QStringLiteral("always"), 30, QStringLiteral("1")));
+        QVERIFY(!c->trackingCanSwitch());
+        QVERIFY(!c->switchTracking(true));
+        QCOMPARE(ht->count(kStartTracking), 0);
+        QCOMPARE(c->message(), QStringLiteral("Save changes before enabling."));
+    }
+
+    void trackingSwitchOnStopsTheTourAndSaysSo()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        QVERIFY(c->touring());
+        QVERIFY(c->switchTracking(true));
+        QVERIFY(c->trackingPending());
+        QVERIFY(!c->switchTracking(true));   // one order at a time
+        ht->answer(kStartTracking, 200, tracking("true", "waiting"));
+        QVERIFY(c->trackingOn());
+        QVERIFY(!c->touring());
+        QCOMPARE(c->tourStatus(), QStringLiteral("Tour stopped · tracking on"));
+        QCOMPARE(c->trackingLine(), QStringLiteral("Tracking · Waiting for a target"));
+        QCOMPARE(ht->count(QStringLiteral("bosch_camera_get_patrol")), 1);
+        settle();   // HA agrees the tour stopped
+        QCOMPARE(c->tourStatus(), QStringLiteral("Tour stopped · tracking on"));
+        // Tracking off again: the tour line goes.
+        QVERIFY(c->switchTracking(false));
+        ht->answer(kStopTracking, 200, kTrackingOff);
+        QVERIFY(!c->trackingOn());
+        QCOMPARE(c->tourStatus(), QString());
+        QCOMPARE(c->trackingLine(), QString());
+    }
+
+    void trackingFailedStartStillStopsTheTourAndShowsTheError()
+    {
+        connectAndSettle(svc(R"({"status":"travelling","config":{}})"));
+        QVERIFY(c->switchTracking(true));
+        ht->answer(kStartTracking, 200, svc(R"({"ok":false,"error":"Global IVA is missing"})"));
+        QVERIFY(!c->trackingOn());
+        QVERIFY(!c->trackingPending());
+        QCOMPARE(c->message(), QStringLiteral("Enable tracking: Global IVA is missing"));
+        // The service stops the tour before its checks: both are read again.
+        QCOMPARE(ht->count(QStringLiteral("bosch_camera_get_patrol")), 1);
+        QCOMPARE(ht->count(kGetTracking), 1);
+        settle();
+        QVERIFY(!c->touring());
+        QCOMPARE(c->tourStatus(), QString());
+    }
+
+    void trackingStartWithNoAnswerSaysSo()
+    {
+        connectAndSettle();
+        QVERIFY(c->switchTracking(true));
+        ht->answer(kStartTracking, 0, {}, QStringLiteral("No answer from Home Assistant in 40 s"));
+        QVERIFY(!c->trackingPending());
+        QCOMPARE(c->message(), QStringLiteral("Enable tracking: No answer from Home Assistant in 40 s"));
+    }
+
+    void trackingReadDuringAnOrderIsDropped()
+    {
+        connectAndSettle();
+        c->refresh();
+        QVERIFY(c->switchTracking(true));
+        ht->answer(kStartTracking, 200, tracking("true", "waiting"));
+        ht->answer(kGetTracking, 200, kTrackingOff);   // sent before the order's answer
+        QVERIFY(c->trackingOn());
+    }
+
+    void trackingSteerMarksTrackingOffAtOnce()
+    {
+        trackingRead = tracking("true", "following", R"(,"remaining_seconds":20)");
+        connectAndSettle();
+        QVERIFY(c->trackingOn());
+        c->refresh();   // a read goes out before the steer
+        c->steerDrag(96, 0, kReach);
+        ht->answer(kSteer, 200, kSteerOk);
+        QVERIFY(!c->trackingOn());
+        QCOMPARE(c->trackingSaid(), QStringLiteral("Off"));
+        ht->answer(kGetTracking, 200, tracking("true", "following"));   // older than the steer
+        QVERIFY(!c->trackingOn());
+        c->stopCamera();
+    }
+
+    void trackingTourStartMarksTrackingOff()
+    {
+        trackingRead = tracking("true", "waiting");
+        connectAndSettle();
+        QVERIFY(c->trackingOn());
+        c->startTour();
+        ht->answer(QStringLiteral("bosch_camera_start_patrol"), 200, svc(R"({"status":"starting"})"));
+        QVERIFY(!c->trackingOn());
+        QCOMPARE(ht->count(kGetTracking), 1);
+    }
+
+    void trackingOffAndUnknownAfterDisconnect()
+    {
+        trackingRead = tracking("true", "waiting");
+        connectAndSettle();
+        c->disconnectHomeAssistant();
+        QVERIFY(!c->trackingKnown());
+        QVERIFY(!c->trackingOn());
+        QVERIFY(!c->trackingReachable());
+        QVERIFY(!c->switchTracking(false));
     }
 };
 
