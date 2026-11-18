@@ -19,7 +19,7 @@ While the project is pre-1.0, minor versions may still change behaviour.
   **Internal:** `BoschTourController::toggleWiper` / `wiperState` / `wiperPending` /
   `wiperError` (reads `/api/states/pyscript.bosch_camera_wiper`; a read sent before a press
   is dropped); `PaneBarRules` lists `wiper` as a Live tool; `PaneBar` wide tools take
-  `picker: false` (no ⌃).
+  `picker: false` (no ⌃); one `failureDetail` for service errors (scene mode uses it too).
 
 - **Offline alerts on the desktop.** When a camera has been offline 30 s, or a whole recorder
   can't be reached (the app's own check already takes about 35 s), a critical desktop pop-up

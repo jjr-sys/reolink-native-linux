@@ -33,6 +33,7 @@ const int kPresetPollIntervalMs = 10000;
 const int kIrisHeartbeatIntervalMs = 700;
 const QString kWiperEntity = QStringLiteral("pyscript.bosch_camera_wiper");
 const QString kWiperUnknown = QStringLiteral("unknown");
+const QString kWiperNoResponse = QStringLiteral("Wiper didn't respond");
 
 QJsonObject serviceResponse(const QByteArray &body)
 {
@@ -50,6 +51,19 @@ QString responseMessage(const QByteArray &body)
     const QJsonObject object = doc.object();
     return object.value(QStringLiteral("message")).toString(
         object.value(QStringLiteral("error")).toString());
+}
+
+// Why a service call failed: its answer's error, else Home Assistant's message, else the
+// network's, else `fallback`.
+QString failureDetail(const QJsonObject &response, const QByteArray &body,
+                      const QString &networkError, const QString &fallback)
+{
+    QString detail = response.value(QStringLiteral("error")).toString();
+    if (detail.isEmpty())
+        detail = responseMessage(body);
+    if (detail.isEmpty())
+        detail = networkError;
+    return detail.isEmpty() ? fallback : detail;
 }
 
 } // namespace
@@ -346,14 +360,8 @@ void BoschTourController::refreshSceneMode()
         const QJsonObject response = serviceResponse(body);
         if (status != 200 || !response.value(QStringLiteral("ok")).toBool(false)
             || !applySceneModeResponse(response)) {
-            QString error = response.value(QStringLiteral("error")).toString();
-            if (error.isEmpty())
-                error = responseMessage(body);
-            if (error.isEmpty())
-                error = networkError;
-            if (error.isEmpty())
-                error = QStringLiteral("Home Assistant did not return the camera's Marked-range mode.");
-            failSceneModeRequest(error, true);
+            const QString fallback = QStringLiteral("Home Assistant did not return the camera's Marked-range mode.");
+            failSceneModeRequest(failureDetail(response, body, networkError, fallback), true);
             return;
         }
         setConnectionStatus(QStringLiteral("Connected"), true);
@@ -384,14 +392,8 @@ void BoschTourController::setSceneMode(int modeId)
         if (status != 200 || !response.value(QStringLiteral("ok")).toBool(false)
             || response.value(QStringLiteral("mode_id")).toInt(-1) != modeId
             || !applySceneModeResponse(response)) {
-            QString error = response.value(QStringLiteral("error")).toString();
-            if (error.isEmpty())
-                error = responseMessage(body);
-            if (error.isEmpty())
-                error = networkError;
-            if (error.isEmpty())
-                error = QStringLiteral("The camera did not confirm the selected Marked-range mode.");
-            failSceneModeRequest(error, true);
+            const QString fallback = QStringLiteral("The camera did not confirm the selected Marked-range mode.");
+            failSceneModeRequest(failureDetail(response, body, networkError, fallback), true);
             return;
         }
         setMessage({});
@@ -724,21 +726,15 @@ bool BoschTourController::toggleWiper()
             setWiper(state == QLatin1String("on") ? state : QStringLiteral("off"), false, {});
             return;
         }
+        setWiper(m_wiperState, false, kWiperNoResponse);
         if (status == 401 || status == 403) {
-            setWiper(m_wiperState, false, QStringLiteral("Wiper didn't respond"));
             operationFailed(QStringLiteral("Bosch wiper"), status, body, networkError);
             return;
         }
-        QString detail = response.value(QStringLiteral("error")).toString();
-        if (detail.isEmpty())
-            detail = responseMessage(body);
-        if (detail.isEmpty())
-            detail = networkError;
-        if (detail.isEmpty())
-            detail = status > 0 ? QStringLiteral("HTTP %1").arg(status)
-                                : QStringLiteral("request failed");
-        setWiper(m_wiperState, false, QStringLiteral("Wiper didn't respond"));
-        setMessage(QStringLiteral("Wiper didn't respond: ") + detail);
+        setMessage(kWiperNoResponse + QStringLiteral(": ")
+                   + failureDetail(response, body, networkError,
+                                   status > 0 ? QStringLiteral("HTTP %1").arg(status)
+                                              : QStringLiteral("Home Assistant did not answer.")));
     });
     return true;
 }

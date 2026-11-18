@@ -533,6 +533,25 @@ Manual and the held move sends a second stop.
 
 Revert: `f1a0e56`, then `5efe794`.
 
+### Feature: the Bosch wiper toggle (`27c3fbf`, review fixes)
+
+`BoschTourController` (bosch-wiper-controls ticket 03) gains a fifth, small state machine: the
+wiper. Its state is Home Assistant's `pyscript.bosch_camera_wiper`, read as a plain
+`/api/states` GET in the 1.5 s poll, since HA owns the 60 s auto-off and other apps press it
+too. `toggleWiper` calls `bosch_camera_wiper` with `return_response`. A revision counter drops
+a read sent before a press, and `failureDetail` is now the one "why it failed" chain (scene
+mode uses it too). `PaneBarRules` lists `wiper` as a Live tool, and `PaneBar` wide tools take
+`picker: false`. HA side (not in this repo): orders go to the camera one at a time, in order;
+the state changes only when the camera takes one; a failed auto-off is tried again 3 times.
+
+Decisions / left as found: the review's point that the class now changes for five reasons
+stands. Like the four before it, the wiper shares the connection, generation and message, so
+the "Why I stopped there" reasoning above still holds. It's the smallest of the five and has
+its own `wiper*` members, so it would be the first to move out if a shared-context object is
+ever built.
+
+Revert: the review-fix commit, then `27c3fbf`.
+
 ### Not built
 
 - **3c recorder media module:** day search built (above); DON'T for stream opening (one

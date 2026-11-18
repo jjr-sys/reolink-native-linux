@@ -374,7 +374,7 @@ private slots:
         QCOMPARE(tools(Page::Events, events, Full).menu, (QStringList{"open", "zoom"}));
     }
 
-    void boschPickersShowWhenRoomyElseUnderTheMenu()
+    void boschToolsShowWhenRoomyElseUnderTheMenu()
     {
         const QStringList have{"positions", "scene", "wiper", "tour", "snapshot", "record", "ptz",
                                "maximise"};
