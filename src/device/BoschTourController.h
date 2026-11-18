@@ -132,7 +132,8 @@ public:
 
 private slots:
     // Each second while a direction is held: the held steer again (one lasts 3 s on the
-    // server), unless the last one is still unanswered (bosch-ptz-port ticket 02).
+    // server), unless the last one is still unanswered (bosch-ptz-port ticket 02). A slot,
+    // not a lambda, so tests can tick it without spinning the event loop.
     void resendSteer();
 
 signals:
@@ -161,7 +162,13 @@ private:
     // Manual moves (bosch-ptz-port ticket 02): pyscript.bosch_camera_steer, which also
     // cancels tracking and stops a tour on the server.
     void sendSteer();
+    // Release: stop now, and once more after a move still unanswered. `announce` false keeps
+    // the current message (turning T off says it is restoring the route).
+    void releaseSteer(bool announce);
     void sendSteerStop();
+    // True if the steer was done; else says why (401/403 as any failed action).
+    bool steerSucceeded(const QString &action, int status, const QByteArray &body,
+                        const QString &networkError);
     void resetSteer();
     void refreshPatrol();
     void refreshWiper();
@@ -245,9 +252,10 @@ private:
         bool operator==(const Steer &) const = default;
     };
     std::optional<Steer> m_steer;
-    bool m_steerPending = false;        // a steer that moves is unanswered
-    std::optional<Steer> m_steerSent;   // what that unanswered steer asked for
-    bool m_stopAfterSteer = false;      // released while it was unanswered: stop once more after
+    bool m_steerPending = false;              // a steer that moves is unanswered
+    bool m_steerPressedWhilePending = false;  // a press since: send it on the answer
+    bool m_stopAfterSteer = false;            // released while unanswered: stop once more after
+    bool m_announceSteerStop = true;          // the stop's answer says "Camera movement stopped."
     bool m_selectionTourMode = false;
     bool m_selectionTourSession = false;
     bool m_selectionTourStarted = false;

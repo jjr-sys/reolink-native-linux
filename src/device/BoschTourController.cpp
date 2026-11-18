@@ -36,8 +36,13 @@ const int kSteerResendIntervalMs = 1000;
 // The pad's fixed speed, as it was with onvif.ptz.
 const double kSteerSpeed = 0.35;
 
+const QString kWiperEntity = QStringLiteral("pyscript.bosch_camera_wiper");
+const QString kSteerService = QStringLiteral("bosch_camera_steer");
+const QString kWiperUnknown = QStringLiteral("unknown");
+const QString kWiperNoResponse = QStringLiteral("Wiper didn't respond");
+
 // A pad word for one axis as a steer number: `positive`, `negative`, or none.
-double steerAxis(const QString &word, QLatin1StringView positive, QLatin1StringView negative)
+double steerAxis(const QString &word, QLatin1String positive, QLatin1String negative)
 {
     if (word.compare(positive, Qt::CaseInsensitive) == 0)
         return kSteerSpeed;
@@ -45,9 +50,6 @@ double steerAxis(const QString &word, QLatin1StringView positive, QLatin1StringV
         return -kSteerSpeed;
     return 0;
 }
-const QString kWiperEntity = QStringLiteral("pyscript.bosch_camera_wiper");
-const QString kWiperUnknown = QStringLiteral("unknown");
-const QString kWiperNoResponse = QStringLiteral("Wiper didn't respond");
 
 QJsonObject serviceResponse(const QByteArray &body)
 {
@@ -1065,6 +1067,9 @@ void BoschTourController::moveCamera(const QString &pan, const QString &tilt,
 {
     if (pan.isEmpty() && tilt.isEmpty() && zoom.isEmpty())
         return;
+    // A press that has to wait (T, a tour's stop, an unknown tour state) ends any older hold.
+    m_steer.reset();
+    m_steerTimer->stop();
     // A press during T (or while its saved route is restored) leaves T; the move follows
     // once the route is back (finishSelectionTourSession).
     if (m_selectionTourSession) {
@@ -1087,12 +1092,14 @@ void BoschTourController::moveCamera(const QString &pan, const QString &tilt,
         setMessage(QStringLiteral("Wait for Home Assistant to report the tour state before moving the camera."));
         return;
     }
-    m_steer = Steer{steerAxis(pan, QLatin1StringView("RIGHT"), QLatin1StringView("LEFT")),
-                    steerAxis(tilt, QLatin1StringView("UP"), QLatin1StringView("DOWN")),
-                    steerAxis(zoom, QLatin1StringView("ZOOM_IN"), QLatin1StringView("ZOOM_OUT"))};
+    m_steer = Steer{steerAxis(pan, QLatin1String("RIGHT"), QLatin1String("LEFT")),
+                    steerAxis(tilt, QLatin1String("UP"), QLatin1String("DOWN")),
+                    steerAxis(zoom, QLatin1String("ZOOM_IN"), QLatin1String("ZOOM_OUT"))};
     m_stopAfterSteer = false;
     m_steerTimer->start();
-    if (!m_steerPending)   // else the latest press goes once the last steer is answered
+    if (m_steerPending)
+        m_steerPressedWhilePending = true;   // goes once the last steer is answered
+    else
         sendSteer();
 }
 
@@ -1108,28 +1115,20 @@ void BoschTourController::sendSteer()
         return;
     const Steer steer = *m_steer;
     m_steerPending = true;
-    m_steerSent = steer;
-    callService(QStringLiteral("bosch_camera_steer"),
+    m_steerPressedWhilePending = false;
+    callService(kSteerService,
                 QJsonObject{{QStringLiteral("pan"), steer.pan},
                             {QStringLiteral("tilt"), steer.tilt},
                             {QStringLiteral("zoom"), steer.zoom}},
                 true, false,
                 [this](int status, const QByteArray &body, const QString &networkError) {
         m_steerPending = false;
-        const std::optional<Steer> sent = std::exchange(m_steerSent, std::nullopt);
-        const QJsonObject response = serviceResponse(body);
-        const bool answered = status >= 200 && status < 300;
-        if (!answered || !response.value(QStringLiteral("ok")).toBool(true)) {
+        if (!steerSucceeded(QStringLiteral("Move Bosch camera"), status, body, networkError)) {
             // No retry storm while the button is still down; release still sends a stop.
             m_steer.reset();
             m_steerTimer->stop();
             m_stopAfterSteer = false;
-            if (answered)
-                setMessage(QStringLiteral("Move Bosch camera: ")
-                           + failureDetail(response, body, networkError,
-                                           QStringLiteral("the camera did not confirm the move")));
-            else
-                operationFailed(QStringLiteral("Move Bosch camera"), status, body, networkError);
+            m_steerPressedWhilePending = false;
             return;
         }
         if (std::exchange(m_stopAfterSteer, false)) {
@@ -1137,51 +1136,67 @@ void BoschTourController::sendSteer()
             sendSteerStop();
             return;
         }
-        if (m_steer && m_steer != sent)   // a newer press waited for this answer
+        if (m_steer && m_steerPressedWhilePending)   // a newer press waited for this answer
             sendSteer();
     });
 }
 
 void BoschTourController::stopCamera()
 {
+    releaseSteer(true);
+}
+
+void BoschTourController::releaseSteer(bool announce)
+{
     m_heldMove.reset();   // released: a move waiting on the tour's stop is dropped
     m_steer.reset();
     m_steerTimer->stop();
+    m_steerPressedWhilePending = false;
     if (m_steerPending)
         m_stopAfterSteer = true;
+    m_announceSteerStop = announce;
     sendSteerStop();
 }
 
 void BoschTourController::sendSteerStop()
 {
     // An all-zero steer only stops the camera; it never cancels tracking.
-    callService(QStringLiteral("bosch_camera_steer"),
+    callService(kSteerService,
                 QJsonObject{{QStringLiteral("pan"), 0}, {QStringLiteral("tilt"), 0},
                             {QStringLiteral("zoom"), 0}},
                 true, false,
                 [this](int status, const QByteArray &body, const QString &networkError) {
-        if (status < 200 || status >= 300) {
-            operationFailed(QStringLiteral("Stop Bosch camera movement"), status, body,
-                            networkError);
-            return;
-        }
-        const QJsonObject response = serviceResponse(body);
-        if (!response.value(QStringLiteral("ok")).toBool(true)) {
-            setMessage(QStringLiteral("Stop Bosch camera movement: ")
-                       + failureDetail(response, body, networkError,
-                                       QStringLiteral("the camera did not confirm the stop")));
-            return;
-        }
-        setMessage(QStringLiteral("Camera movement stopped."));
+        if (steerSucceeded(QStringLiteral("Stop Bosch camera movement"), status, body,
+                           networkError)
+            && m_announceSteerStop)
+            setMessage(QStringLiteral("Camera movement stopped."));
     });
+}
+
+bool BoschTourController::steerSucceeded(const QString &action, int status,
+                                         const QByteArray &body, const QString &networkError)
+{
+    if (status == 401 || status == 403) {
+        operationFailed(action, status, body, networkError);
+        return false;
+    }
+    const QJsonObject response = serviceResponse(body);
+    if (status >= 200 && status < 300 && response.value(QStringLiteral("ok")).toBool(false))
+        return true;
+    // A slow or refused move says so; it doesn't mark Home Assistant as unreachable.
+    const QString fallback = status > 0 ? QStringLiteral("HTTP %1").arg(status)
+                                        : QStringLiteral("the camera did not confirm it");
+    setMessage(action + QStringLiteral(": ")
+               + failureDetail(response, body, networkError, fallback));
+    return false;
 }
 
 void BoschTourController::resetSteer()
 {
     m_steer.reset();
-    m_steerSent.reset();
     m_steerTimer->stop();
     m_steerPending = false;
+    m_steerPressedWhilePending = false;
     m_stopAfterSteer = false;
 }
 
@@ -1376,7 +1391,7 @@ void BoschTourController::leaveSelectionTour(bool stopMotion)
         // Stop a manual goto as well as an HA patrol so turning T off always
         // stops camera motion immediately from the user's point of view.
         if (stopMotion)
-            stopCamera();
+            releaseSteer(false);   // keep the restore message
     }
     reconcileSelectionTour();
 }

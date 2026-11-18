@@ -238,7 +238,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
   `pyscript.bosch_camera_steer` (pan/tilt/zoom ±0.35, the old pad speed) instead of
   `onvif.ptz`; `resendSteer` (1 s timer) never stacks behind an unanswered steer, and a
   newer press goes once it is answered; a release while a move is unanswered sends one more
-  stop after it; `callOnvif` and `m_ptzRequestPending` are gone.
+  stop after it; a slow or refused move says so in the Bosch message without marking Home
+  Assistant unreachable (401/403 still do); turning T off stops motion without replacing its
+  "restoring the route" message; `callOnvif` and `m_ptzRequestPending` are gone.
 
 - **Bosch tour: "Manual" now comes from Home Assistant.** When the app stops the tour to move the
   camera, it tells Home Assistant the reason ("manual"), and it shows "Manual · tour stopped"

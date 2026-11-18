@@ -590,7 +590,7 @@ private slots:
         QVERIFY(c->selectionTourRestoring());
         QCOMPARE(ht->count(kSteer), 1); // camera movement stopped too
         QVERIFY(isStop(ht->peekBody(kSteer)));
-        ht->answer(kSteer, 200, svc(R"({"ok":true})"));
+        ht->answer(kSteer, 200, kSteerOk);
         ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
         const QJsonObject restored = ht->answer(QStringLiteral("bosch_camera_set_patrol"), 200, "{}");
         QCOMPARE(restored.value("route").toArray().size(), 2);
@@ -816,6 +816,63 @@ private slots:
         ht->pending.clear();
         holdTick();
         QVERIFY(ht->pending.empty());
+    }
+
+    void aSlowMoveSaysSoWithoutMarkingHomeAssistantDown()
+    {
+        connectAndSettle();
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        ht->answer(kSteer, 0, "", QStringLiteral("No answer from Home Assistant in 40 s"));
+        QVERIFY(c->connected());
+        QCOMPARE(c->message(),
+                 QStringLiteral("Move Bosch camera: No answer from Home Assistant in 40 s"));
+    }
+
+    void aRejectedTokenDuringAHoldEndsIt()
+    {
+        connectAndSettle();
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        ht->answer(kSteer, 401, "{}");
+        QVERIFY(c->message().contains(QStringLiteral("rejected the saved token")));
+        holdTick();
+        QVERIFY(ht->pending.empty());
+    }
+
+    void theSameDirectionPressedAgainGoesOnTheAnswer()
+    {
+        connectAndSettle();
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        c->stopCamera();
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());   // first LEFT unanswered
+        ht->answer(kSteer, 200, kSteerOk);   // the first LEFT
+        QVERIFY(anyMoveSent());              // the new press goes now, not on the next tick
+    }
+
+    void aPressThatWaitsForATourStopEndsTheOlderHold()
+    {
+        connectAndSettle();
+        c->moveCamera(QStringLiteral("LEFT"), QString(), QString());
+        ht->answer(kSteer, 200, kSteerOk);
+        // HA reports a tour started elsewhere; the next press waits for its stop.
+        c->refresh();
+        settle(svc(R"({"status":"travelling","config":{}})"));
+        c->moveCamera(QString(), QStringLiteral("UP"), QString());
+        holdTick();   // the old LEFT is not resent while the tour stops
+        QVERIFY(!anyMoveSent());
+    }
+
+    void turningTOffKeepsTheRestoreMessage()
+    {
+        connectAndSettle();
+        QVERIFY(c->beginSelectionTour());
+        c->toggleSelectionTourPosition(QStringLiteral("1"));
+        c->toggleSelectionTourPosition(QStringLiteral("3"));
+        ht->answer(QStringLiteral("bosch_camera_stop_patrol"), 200, "");
+        ht->answer(QStringLiteral("bosch_camera_set_patrol"), 200, "{}");
+        ht->answer(QStringLiteral("bosch_camera_start_patrol"), 200, svc(R"({"status":"starting"})"));
+        c->endSelectionTour();
+        ht->answer(kSteer, 200, kSteerOk);
+        QVERIFY(c->message().startsWith(QStringLiteral("Stopping the tour and restoring")));
     }
 
     void irisPressHeartbeatAndRelease()
