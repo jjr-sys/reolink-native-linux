@@ -27,7 +27,7 @@ While the project is pre-1.0, minor versions may still change behaviour.
   `BoschTourController`'s tracking state: `bosch_camera_get_tracking` on the 1.5 s poll,
   `editTracking` / `saveTracking` / `switchTracking` (orders need `ok` and a parsed state,
   else the service's error; one out at a time; a read sent before an order's answer, a
-  confirmed steer or a tour start is dropped by `m_trackingRevision`); a successful
+  confirmed steer or a tour start is dropped by the tracking revision); a successful
   non-zero steer and a tour start mark tracking Off at once; a preset recall re-reads it;
   reset on connect, disconnect and a 401/403; an order overtaken by a steer or tour start is
   marked Off and read again; `trackingWhyNot` is the one refusal reason (tip and message);

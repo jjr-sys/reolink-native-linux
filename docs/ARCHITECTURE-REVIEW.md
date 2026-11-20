@@ -590,8 +590,8 @@ dropped if it changed. Interface: `busy()`, `beginRead()` / `endRead(captured)`,
 `beginOrder()` / `endOrder(sent)` (says whether it was overtaken), `invalidate()`, `reset()`.
 The wiper (`m_wiperControl`) and tracking (`m_trackingControl`) use it, one commit each;
 behaviour-preserving, with `test_boschtour` unchanged. Tracking's outside bumps stay where
-they were: `markTrackingOff()` (called by a confirmed steer, a tour start and a selection-tour
-start) bumps through `invalidate()`; a preset goto still only re-reads. `setWiper` keeps
+they were: `markTrackingOff()` (called by a confirmed steer, a tour start, a selection-tour
+start and an overtaken order's answer) bumps through `invalidate()`; a preset goto still only re-reads. `setWiper` keeps
 its exact emit rule by taking the pending seen before the caller changed it.
 
 Not converted, and why: scene mode has a pending and a read-pending but no revision (no read
