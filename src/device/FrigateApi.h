@@ -138,6 +138,28 @@ QByteArray sessionCookie(const QString &host, int port, int timeoutMs, QString *
 // Forget a host's cached session cookie (the server refused it); the next call signs in again.
 void forgetSession(const QString &host, int port);
 
+// ---- Fetches: one request and its parse, with what went wrong ------------------------
+// Why a fetch failed. Auth: Frigate refused the login ("Frigate sign-in failed"). Unreachable:
+// any other failed request (no answer, timed out, an HTTP error). BadReply: an answer that
+// isn't the JSON asked for. NoCameras: a config with no enabled camera (checkServer only).
+enum class ErrorKind { None, Auth, Unreachable, BadReply, NoCameras };
+template <typename T>
+struct Fetch {
+    T value{};
+    ErrorKind kind = ErrorKind::None;
+    QString error; // httpGet's wording for Auth and Unreachable; empty otherwise
+    bool ok() const { return kind == ErrorKind::None; }
+};
+// /api/config. Blocking, for worker threads.
+Fetch<Json> fetchConfig(const QString &host, int port, int timeoutMs);
+// /api/events after `after` (server clock), at most `limit`. Blocking, for worker threads.
+Fetch<QVector<Event>> fetchEvents(const QString &host, int port, double after, int limit,
+                                  int timeoutMs);
+// Adding, testing or re-reading a site: register its login (before any request), then read
+// its config; NoCameras when it lists no enabled camera.
+Fetch<Json> checkServer(const QString &host, int port, const QString &username,
+                        const QString &password, int timeoutMs);
+
 // Hand the media player the session cookie for Frigate URLs (Playback's VOD playlist and its
 // segments). Hosts without a registered login get nothing. Call once at startup.
 void installMediaAuth();

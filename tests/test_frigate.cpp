@@ -3,6 +3,9 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QThread>
 #include <QtTest>
 
 using namespace rl::frigate;
@@ -14,7 +17,127 @@ static Json J(QByteArray s) { return Json::parse(s.replace('\'', '"').toStdStrin
 class TestFrigate : public QObject
 {
     Q_OBJECT
+
+    // A Frigate stand-in (as test_recorderdays): answers each GET whose path starts with one
+    // of `answers`' keys with that status and body; anything else is taken and never answered.
+    struct FakeFrigate : QTcpServer
+    {
+        QHash<QString, QPair<int, QByteArray>> answers;
+        FakeFrigate()
+        {
+            listen(QHostAddress::LocalHost);
+            connect(this, &QTcpServer::newConnection, this, [this] {
+                QTcpSocket *s = nextPendingConnection();
+                connect(s, &QTcpSocket::readyRead, s, [this, s] {
+                    const QString path = QString::fromLatin1(s->readLine().split(' ').value(1));
+                    for (auto it = answers.cbegin(); it != answers.cend(); ++it)
+                        if (path.startsWith(it.key())) {
+                            const QByteArray &body = it.value().second;
+                            s->write("HTTP/1.1 " + QByteArray::number(it.value().first)
+                                     + " X\r\nContent-Type: application/json\r\nContent-Length: "
+                                     + QByteArray::number(body.size())
+                                     + "\r\nConnection: close\r\n\r\n" + body);
+                            s->disconnectFromHost();
+                            return;
+                        }
+                });
+            });
+        }
+    };
+
+    // The fetches block, so they run on a worker while this thread serves the fake.
+    template <typename F>
+    static auto offThread(F f)
+    {
+        decltype(f()) result;
+        QThread *worker = QThread::create([&] { result = f(); });
+        worker->start();
+        while (!worker->wait(5))
+            QCoreApplication::processEvents();
+        delete worker;
+        return result;
+    }
+
 private slots:
+    // A refused login is Auth, with the wording the Devices list shows.
+    void fetch_refusedIsAuth()
+    {
+        FakeFrigate frigate;
+        frigate.answers["/api/config"] = {401, "{}"};
+        const quint16 port = frigate.serverPort();
+        const auto r = offThread([port] { return fetchConfig("127.0.0.1", port, 5000); });
+        QVERIFY(!r.ok());
+        QCOMPARE(r.kind, ErrorKind::Auth);
+        QCOMPARE(r.error, QStringLiteral("Frigate sign-in failed"));
+    }
+    // An events reply that isn't a list is a bad reply, not an empty one.
+    void fetch_eventsNotAListIsBadReply()
+    {
+        FakeFrigate frigate;
+        frigate.answers["/api/events?after=0&limit=5"] = {200, R"({"detail":"nope"})"};
+        const quint16 port = frigate.serverPort();
+        const auto r = offThread([port] { return fetchEvents("127.0.0.1", port, 0, 5, 5000); });
+        QCOMPARE(r.kind, ErrorKind::BadReply);
+        QVERIFY(r.error.isEmpty());
+        QVERIFY(r.value.isEmpty());
+    }
+    void fetch_configNotJsonIsBadReply()
+    {
+        FakeFrigate frigate;
+        frigate.answers["/api/config"] = {200, "<html>router</html>"};
+        const quint16 port = frigate.serverPort();
+        const auto r = offThread([port] { return fetchConfig("127.0.0.1", port, 5000); });
+        QCOMPARE(r.kind, ErrorKind::BadReply);
+    }
+    void fetch_nothingListeningIsUnreachable()
+    {
+        quint16 port = 0;
+        {
+            QTcpServer gone;
+            gone.listen(QHostAddress::LocalHost);
+            port = gone.serverPort();
+        }
+        const auto r = offThread([port] { return fetchEvents("127.0.0.1", port, 0, 1, 5000); });
+        QCOMPARE(r.kind, ErrorKind::Unreachable);
+        QVERIFY(!r.error.isEmpty());
+        // Another HTTP error is Unreachable too (as the Devices list has always said).
+        FakeFrigate frigate;
+        frigate.answers["/api/config"] = {500, "{}"};
+        const quint16 p = frigate.serverPort();
+        const auto e = offThread([p] { return fetchConfig("127.0.0.1", p, 5000); });
+        QCOMPARE(e.kind, ErrorKind::Unreachable);
+        QCOMPARE(e.error, QStringLiteral("Frigate returned HTTP 500"));
+    }
+    // A config with no enabled camera is its own outcome ("Frigate has no enabled cameras").
+    void checkServer_noEnabledCameras()
+    {
+        FakeFrigate frigate;
+        frigate.answers["/api/config"] = {200, R"({"cameras":{"yard":{"enabled":false}}})"};
+        const quint16 port = frigate.serverPort();
+        const auto r = offThread([port] { return checkServer("127.0.0.1", port, {}, {}, 5000); });
+        QCOMPARE(r.kind, ErrorKind::NoCameras);
+        QVERIFY(r.error.isEmpty());
+    }
+    void checkServer_okHasTheConfig()
+    {
+        FakeFrigate frigate;
+        frigate.answers["/api/config"] = {200, R"({"cameras":{"yard":{}}})"};
+        const quint16 port = frigate.serverPort();
+        const auto r = offThread([port] { return checkServer("127.0.0.1", port, {}, {}, 5000); });
+        QVERIFY(r.ok());
+        QCOMPARE(parseCameraNames(r.value), QStringList{"yard"});
+    }
+    void fetch_eventsParsed()
+    {
+        FakeFrigate frigate;
+        frigate.answers["/api/events?after=100&limit=50"] =
+            {200, R"([{"id":"a","camera":"yard","label":"person","start_time":120.5}])"};
+        const quint16 port = frigate.serverPort();
+        const auto r = offThread([port] { return fetchEvents("127.0.0.1", port, 100, 50, 5000); });
+        QVERIFY(r.ok());
+        QCOMPARE(r.value.size(), 1);
+        QCOMPARE(r.value.first().camera, QStringLiteral("yard"));
+    }
     // /ws: {"topic":"events","payload":"<JSON string>"}; only "new" events count.
     void parsesANewLiveEvent()
     {

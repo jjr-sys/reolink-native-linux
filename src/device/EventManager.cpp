@@ -630,13 +630,11 @@ void EventManager::syncFrigateHistory(qint64 hostId)
         return;
 
     m_pending.addFuture(QtConcurrent::run([this, hostId, host, port, channelOf] {
-        QString error;
-        const QByteArray body = frigate::httpGet(
-            frigate::eventsUrl(host, port, 0.0, 500), 10000, &error);
-        const Json parsed = Json::parse(body.toStdString(), nullptr, false);
-        if (!error.isEmpty() || parsed.is_discarded() || !parsed.is_array())
+        const frigate::Fetch<QVector<frigate::Event>> got =
+            frigate::fetchEvents(host, port, 0.0, 500, 10000);
+        if (!got.ok())
             return;
-        const QVector<frigate::Event> events = frigate::parseEvents(parsed);
+        const QVector<frigate::Event> events = got.value;
         QMetaObject::invokeMethod(
             this, [this, hostId, channelOf, events] { applyFrigateHistory(hostId, channelOf, events); },
             Qt::QueuedConnection);

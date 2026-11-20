@@ -574,6 +574,31 @@ because T's saved route waits to be restored.
 
 Revert: the review-fix commit after `c65a4c1`, then `c65a4c1`.
 
+### Candidate 3 (first slice): Frigate fetches with a typed error
+
+**Built.** In `FrigateApi.{h,cpp}`: `Fetch<T> { value, kind, error, ok() }`, `ErrorKind
+{ None, Auth, Unreachable, BadReply, NoCameras }`, `fetchConfig`, `fetchEvents` and
+`checkServer` (register the login, then read the config; `NoCameras` when it lists none).
+`DeviceManager::validateFrigate` and `testFrigate` both stand on `checkServer` and only map the
+kind to their own wording (`Problem` / the add dialog's `"auth"|"transport"|"protocol"`);
+`pollFrigate` (events, then the 5-minute camera list) and `EventManager::syncFrigateHistory`
+use the fetches with their own limits and timeouts (50/1 at 8 s; 500 at 10 s; config 10 s).
+Auth is now told by the exact wording `httpGet` writes for a refused login, kept in one place
+in `FrigateApi.cpp`, rather than by callers matching "sign-in". Tests: `test_frigate`, against a
+`QTcpServer` stand-in (the `test_recorderdays` pattern).
+
+**Decisions / left as found.**
+1. No new class and no change to `httpGet`, the process-wide login map, `RecorderDays`,
+   `ClipLoader`, `FrigateLive`, `installMediaAuth`, channel numbering or the Inbox.
+2. Unreachable keeps meaning "any failed request" (an HTTP 500 included), as the Devices list
+   and the add dialog already treated it.
+3. One narrowing: a reply with an error and a body that still parsed into cameras used to
+   count as a success; it is now a failure. No Frigate answers that way.
+4. Deferred: a whole Frigate server module (one owner of login, fetches, live socket and
+   media). Trigger: a second server-side source, or a third fetch/parse drift bug.
+
+Revert: the commit on `arch/frigate-fetch`.
+
 ### Not built
 
 - **3c recorder media module:** day search built (above); DON'T for stream opening (one

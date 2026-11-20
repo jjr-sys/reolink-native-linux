@@ -347,6 +347,9 @@ void configureTls(QNetworkRequest &request)
     request.setSslConfiguration(ssl);
 }
 
+// What a refused login says; fetches tell Auth by it.
+QString signInFailed() { return QStringLiteral("Frigate sign-in failed"); }
+
 // How often a wait checks its caller's cancel flag.
 constexpr int kCancelCheckMs = 50;
 
@@ -386,7 +389,7 @@ QByteArray awaitReply(QNetworkReply *reply, int timeoutMs, QString *error,
         body = reply->readAll();
         if (reply->error() != QNetworkReply::NoError && error) {
             if (code == 401 || code == 403)
-                *error = QStringLiteral("Frigate sign-in failed");
+                *error = signInFailed();
             else if (code >= 400)
                 *error = QStringLiteral("Frigate returned HTTP %1").arg(code);
             else
@@ -437,7 +440,7 @@ QByteArray sessionCookie(const QUrl &target, QNetworkAccessManager &nam,
     if (status != 200 || cookie.isEmpty()) {
         if (error)
             *error = status == 401 || status == 403
-                         ? QStringLiteral("Frigate sign-in failed")
+                         ? signInFailed()
                          : status >= 400 ? QStringLiteral("Frigate login returned HTTP %1").arg(status)
                                          : loginError.isEmpty() ? QStringLiteral("Frigate login returned no session")
                                                                 : loginError;
@@ -587,6 +590,54 @@ QByteArray httpGet(const QString &url, int timeoutMs, QString *error,
     }
     const QByteArray body = result.first;
     return body;
+}
+
+namespace {
+// GET `url` and parse it; `parse` returns false when the JSON isn't what was asked for.
+template <typename T, typename Parse>
+Fetch<T> fetchJson(const QString &url, int timeoutMs, Parse parse)
+{
+    Fetch<T> f;
+    const QByteArray body = httpGet(url, timeoutMs, &f.error);
+    if (!f.error.isEmpty()) {
+        f.kind = f.error == signInFailed() ? ErrorKind::Auth : ErrorKind::Unreachable;
+        return f;
+    }
+    const Json json = Json::parse(body.toStdString(), nullptr, false);
+    if (json.is_discarded() || !parse(json, f.value))
+        f.kind = ErrorKind::BadReply;
+    return f;
+}
+} // namespace
+
+Fetch<Json> fetchConfig(const QString &host, int port, int timeoutMs)
+{
+    return fetchJson<Json>(configUrl(host, port), timeoutMs, [](const Json &j, Json &out) {
+        out = j;
+        return true;
+    });
+}
+
+Fetch<QVector<Event>> fetchEvents(const QString &host, int port, double after, int limit,
+                                  int timeoutMs)
+{
+    return fetchJson<QVector<Event>>(eventsUrl(host, port, after, limit), timeoutMs,
+                                     [](const Json &j, QVector<Event> &out) {
+                                         if (!j.is_array())
+                                             return false;
+                                         out = parseEvents(j);
+                                         return true;
+                                     });
+}
+
+Fetch<Json> checkServer(const QString &host, int port, const QString &username,
+                        const QString &password, int timeoutMs)
+{
+    setCredentials(host, port, username, password);
+    Fetch<Json> f = fetchConfig(host, port, timeoutMs);
+    if (f.ok() && parseCameraNames(f.value).isEmpty())
+        f.kind = ErrorKind::NoCameras;
+    return f;
 }
 
 } // namespace rl::frigate
