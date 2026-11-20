@@ -20,11 +20,12 @@ struct ConnectFact
     QVector<CameraRef> cameras;
 };
 
-// What this run's first connect of each host found (urgent-offline-alerts 05, 08): a host
-// unreachable at its first validation, a camera offline at its host's first listing, and a
-// host found unreachable that is listed later after all. Every later failure or listing is
-// a change, which the poll reports; this says nothing about it. Pure: DeviceManager hands
-// it each validation's outcome and emits what comes back as connectivityKnown, in order.
+// What this run's first connect of each host found (wayfinder/urgent-offline-alerts
+// ticket 05/08): a host unreachable at its first validation, a camera offline at its host's
+// first listing, and a host found unreachable that is listed later after all. Every later
+// failure or listing is a change, which the poll reports; this says nothing about it. Pure:
+// DeviceManager hands it each validation's outcome and emits what comes back as
+// connectivityKnown, in order.
 class FirstConnect
 {
 public:
@@ -41,7 +42,7 @@ public:
 
 private:
     QSet<qint64> m_seen;        // hosts whose first connect of this run has landed
-    QSet<qint64> m_downAtStart; // ... and found unreachable, until one is listed
+    QSet<qint64> m_downAtConnect; // ... and found unreachable, until one is listed
     QSet<qint64> m_listedOnce;  // hosts whose cameras this run has listed
 };
 

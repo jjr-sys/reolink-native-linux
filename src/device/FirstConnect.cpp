@@ -10,7 +10,7 @@ QVector<ConnectFact> FirstConnect::failed(qint64 hostId, const QString &hostName
     m_seen.insert(hostId);
     if (problem != Problem::Unreachable)
         return {};
-    m_downAtStart.insert(hostId);
+    m_downAtConnect.insert(hostId);
     return {{-1, hostName, false, known}};
 }
 
@@ -21,7 +21,7 @@ QVector<ConnectFact> FirstConnect::listed(qint64 hostId, const QString &hostName
     m_seen.insert(hostId);
     const bool firstListing = !m_listedOnce.contains(hostId);   // also after a failed start
     m_listedOnce.insert(hostId);
-    if (m_downAtStart.remove(hostId))
+    if (m_downAtConnect.remove(hostId))
         facts.append({-1, hostName, true, {}});
     if (firstListing)
         for (const CameraRef &cam : offline)

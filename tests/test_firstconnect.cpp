@@ -96,7 +96,8 @@ private slots:
         QVERIFY(fc.listed(1, "NVR", {{0, "Door"}}).isEmpty()); // not a recovery, not first
     }
 
-    void refusedLoginIsNotDown_data()
+    // A refused login (Auth, Locked) is not "down", nor is an empty listing (None).
+    void onlyUnreachableIsDown_data()
     {
         QTest::addColumn<Problem>("problem");
         QTest::newRow("auth") << Problem::Auth;
@@ -104,7 +105,7 @@ private slots:
         QTest::newRow("none (nothing listed)") << Problem::None;
         QTest::newRow("connecting") << Problem::Connecting;
     }
-    void refusedLoginIsNotDown()
+    void onlyUnreachableIsDown()
     {
         QFETCH(Problem, problem);
         FirstConnect fc;

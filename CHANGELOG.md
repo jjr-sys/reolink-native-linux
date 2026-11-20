@@ -273,11 +273,6 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Changed
 
-- **Internal:** the offline alerts' start-up rule (what this run's first connect of a host
-  found: unreachable, cameras offline at its first listing, back after all) moved out of
-  `DeviceManager::applyValidation` into `device::FirstConnect` (`test_firstconnect`). No
-  user-visible change.
-
 - **Bosch pad moves go through Home Assistant's Bosch steer service.** Pressing the pad or
   an arrow key now uses the same move as the Outpost phone app, so a manual move also cancels
   Bosch tracking (as it already stopped a tour). A held direction is sent again every second
@@ -324,6 +319,11 @@ While the project is pre-1.0, minor versions may still change behaviour.
 - **A camera's Push Notifications switch gates its own notices.** The switch was remembered
   by list row, so after the camera list changed (a camera added, a recorder's channels
   re-read) a notice could be allowed or stopped by another camera's switch.
+- **Internal:** the offline alerts' start-up rule (what this run's first connect of a host
+  found: unreachable, cameras offline at its first listing, back after all) moved out of
+  `DeviceManager::applyValidation` into `device::FirstConnect` (`test_firstconnect`). No
+  user-visible change.
+
 - **Internal:** a camera's settings commands (settings, quick replies, alert switches, the
   recording schedule, Baichuan config, floodlight, reboot) moved out of `DeviceManager` into
   a tested `DeviceSettings` (`Devices.settings`), named by camera key; their answers carry
