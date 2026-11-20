@@ -64,6 +64,10 @@ _Avoid_: view mode (code name only), layout
 Where each part of a fisheye view has been turned to by dragging or scrolling (pan, tilt and zoom; a panorama strip's slide). Remembered per camera and view; double-click or Reset aim puts it back.
 _Avoid_: zoom (digital zoom is a different thing)
 
+**Picture surface**:
+The picture rules of one video pane (Live View, Playback, the pop-out window, the Events clip player), kept in one place: how far the picture is zoomed and panned and where panning stops, how far a press must move before it picks the pane up, the picture's measured shape, and whether the picture is a fisheye circle drawn through its Fisheye view. A picture is drawn through a view only when it is a circle (square within 1 %) from a fisheye camera, a view other than Original is chosen, and it is not Frigate's flat copy; until a first picture is seen the camera's lens and view decide.
+_Avoid_: viewer, canvas
+
 ## Scene modes and schedule
 
 **Scene mode**:

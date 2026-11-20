@@ -2,6 +2,46 @@
 
 Each candidate appends its own section on its own branch.
 
+## Picture surface
+
+Branch `arch/picture-surface`. Each decision below is reversible on its own commit.
+
+**Problem.** Four pane files held the same picture rules in QML, none testable: `measureRatio()`
+(Live, Playback), `clampPan()` (Live, Playback, pop-out), `resetAimOrMaximize()` (Live, Playback), the
+zoom step and 8 px drag threshold, and the dewarp rule written two ways: `fisheyeLens && mode !== "fisheye"`
+(Live, Playback) against `!frigate && FrameShape.dewarps(...)`, which also requires a circle
+(Events clip player).
+
+**Module.** `rl::PictureSurface` (`src/ui/PictureSurface.{h,cpp}`), a QML type: each pane holds one. Its
+shape maths is `frameshape::` (unchanged), its aim store `FisheyeAims`. Interface: inputs `viewport`,
+`contentRect`, `pictureRatio`, `rotation`, `streaming`, `fisheyeLens`, `fisheyeMode`, `flatCopy`,
+`cameraKey`, `aims`; state `zoom`, `panX`, `panY` (writable: the pane bar and PlaybackPage set them),
+`panning`; answers `ratio`, `dewarp`, `circle`, `shownRatio`, `dragThreshold`; actions `zoomStep`,
+`panBy`, `toggleZoom`, `resetZoom`, `pastDragThreshold`, `aimed`, `resetAim`. Panes keep `zoom`,
+`panX`, `panY`, `frameRatio` and `dewarp` as aliases/readonly bindings, so the pages are untouched.
+Tests (`test_picturesurface`) call the interface directly; no QML.
+
+**Decision: the circle rule is the dewarp rule.** Git: Live and Playback's lens-only rule dates from
+the first fisheye views (when the only pictures were circles); the Events rule came later (`9f32a7f`,
+fisheye-and-framing ticket 10) after Frigate's flat copy of the Lascelles Kitchen (1280x1600, go2rtc
+`kitchen_flat`) turned up, and its ticket records "one tested rule `isCircle/shownRatio/dewarps`".
+The stricter rule is the later and tested one; the lens-only rule dewarps any picture of a camera ticked
+"Fisheye lens", including flat ones, into garbage. **Behaviour change:** a fisheye camera whose drawn
+picture is not square (within 1 %) is now shown as it is in Live and Playback, with no view icons
+doing anything to it. A real fisheye is unaffected as long as its picture is square: Lascelles
+Kitchen (RLN8, 2560x2560) and Woorabinda Kitchen (ticket 07 "learned 1:1") are. Woorabinda Entrance's
+picture shape is not recorded in the tickets: check it on screen.
+Safeguard: until a first picture has been seen (`pictureRatio` 0) the lens flag and view decide, so no
+flash of the flat picture. The Events clip player always has a ratio (snapshot or 16:9), so its
+behaviour is unchanged, except `shownRatio` now agrees with `dewarp` for Frigate's flat copy (it used
+to give the view's shape for a square Frigate clip it did not dewarp).
+**Source of the ratio:** `video.sourceRect` (the decoded frame's size), not `contentRect`, because a
+dewarp stretches the frame over the pane and `contentRect` then says nothing about the picture.
+
+**Left alone.** `Theme.dragThreshold` (EventsPage card press, a different gesture); the
+pane bar zoom toggle in `LiveReplayControls.qml` and `PlaybackPage.qml` (same rule as
+`toggleZoom()`, in files this change did not own; two lines each).
+
 ## Candidate 6: backoff
 
 **Module.** `src/core/Backoff.h` (header-only): `BackoffPolicy{start, cap, growth=2}` plus

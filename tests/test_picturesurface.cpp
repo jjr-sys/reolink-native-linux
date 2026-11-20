@@ -8,7 +8,7 @@
 
 using namespace rl;
 
-// The picture rules of a video pane (architecture review, candidate 7): zoom, pan limits, the
+// The picture rules of a video pane (architecture review, picture surface): zoom, pan limits, the
 // drag threshold, the measured shape and the dewarp / circle decision. Everything goes through
 // the interface the panes bind to; no QML.
 class TestPictureSurface : public QObject
