@@ -7,6 +7,7 @@
 #include "Detections.h"
 #include "EventHistory.h"
 #include "EventSwitches.h"
+#include "FirstConnect.h"
 #include "HostSession.h"
 #include "RecorderDays.h"
 #include "DownloadSource.h"
@@ -408,9 +409,8 @@ private:
     CredentialStore *m_credentials;
     EventSwitches *m_eventSwitches;
     QVector<Entry> m_entries;
-    QSet<qint64> m_connectSeen;    // hosts whose first connect of this run has landed
-    QSet<qint64> m_downAtConnect;  // ... and found unreachable, until one succeeds
-    QSet<qint64> m_listedOnce;     // hosts whose cameras this run has listed
+    // What this run's first connect of each host found, for the offline alerts.
+    device::FirstConnect m_firstConnect;
     QFutureSynchronizer<void> m_pending; // drains in-flight validations at teardown
     RecorderDays *m_days = nullptr;      // child; goes first at teardown (its searches stop)
     DeviceSettings *m_settings = nullptr; // child; its commands finish before the rows go

@@ -354,6 +354,12 @@ While the project is pre-1.0, minor versions may still change behaviour.
   (`ErrorKind`: sign-in refused, unreachable, a bad reply). Adding, testing and re-reading a
   Frigate site share `frigate::checkServer`, instead of two copies telling a refused sign-in
   by the words "sign-in" in the error. Messages on screen are unchanged.
+
+- **Internal:** the offline alerts' start-up rule (what this run's first connect of a host
+  found: unreachable, cameras offline at its first listing, back after all) moved out of
+  `DeviceManager::applyValidation` into `device::FirstConnect` (`test_firstconnect`). No
+  user-visible change.
+
 - **Internal:** a camera's settings commands (settings, quick replies, alert switches, the
   recording schedule, Baichuan config, floodlight, reboot) moved out of `DeviceManager` into
   a tested `DeviceSettings` (`Devices.settings`), named by camera key; their answers carry

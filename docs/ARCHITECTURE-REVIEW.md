@@ -669,6 +669,33 @@ in `FrigateApi.cpp`, rather than by callers matching "sign-in". Tests: `test_fri
 
 Revert: the commit on `arch/frigate-fetch`.
 
+### Leftover: FirstConnect, the offline alerts' start-up rule (`62d9e20`, review fixes)
+
+From the DeviceManager split (Candidate 1 above), first slice of the roster work.
+
+**Module.** `device::FirstConnect` (`src/device/FirstConnect.{h,cpp}`, `test_firstconnect`) owns
+the three sets that were only meaningful together in `DeviceManager` (`m_connectSeen`,
+`m_downAtConnect`, `m_listedOnce`). Its interface is two calls, each returning the
+`ConnectFact`s to emit as `connectivityKnown`, in order: `failed(host, name, problem, known
+cameras)` and `listed(host, name, offline cameras)`. `applyValidation` builds the camera lists
+from its rows and emits what comes back at the same two places as before (after
+`validationFailed`; after `countChanged`). The tests characterise the rule as found: only the
+first outcome counts, only Unreachable is "down", "back" once, offline cameras only at the
+first listing (a failed start does not use it up; a degraded Baichuan listing does).
+
+**Decisions**
+1. No `forget()`: nothing forgot these sets before (`removeDevice` doesn't; ids aren't reused).
+2. `Problem` is passed as is, so "a refused login isn't down" lives in the module. The header
+   includes `HostSession.h` for it, as `DeviceManager.h` already does.
+3. Not tested: the two `applyValidation` early returns (the degraded `same` and Unreachable
+   while degraded) never reach the module; they need a DeviceManager harness.
+
+**Deferred: a full roster module** (row building, the degraded/full merge, keep-rows-on-failure,
+the `same` early return). Trigger: another alert or roster bug in `applyValidation`, or the
+Frigate validate/test module leaving it separable.
+
+Revert: the review-fix commit after `62d9e20`, then `62d9e20`.
+
 ### Not built
 
 - **3c recorder media module:** day search built (above); DON'T for stream opening (one
