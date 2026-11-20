@@ -397,6 +397,9 @@ While the project is pre-1.0, minor versions may still change behaviour.
   event marks come from the store the same way.
 - Groundwork for the Events page on Site tabs: the app now notes which event types
   each camera supports, and when it was running.
+- **Internal:** the Bosch wiper and tracking keep their "order, read back, drop a stale read"
+  state in one tested `HaControlState` (`m_wiperControl`, `m_trackingControl`) instead of
+  each repeating a pending / read-pending / revision trio. No change in behaviour.
 
 ### Fixed
 

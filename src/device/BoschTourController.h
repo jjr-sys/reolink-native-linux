@@ -133,7 +133,7 @@ public:
     bool trackingKnown() const { return m_tracking.has_value(); }
     bool trackingReachable() const { return m_trackingReachable; }
     bool trackingOn() const { return m_tracking && m_tracking->enabled; }
-    bool trackingPending() const { return m_trackingPending; }
+    bool trackingPending() const { return m_trackingControl.pending; }
     QString trackingStatus() const { return m_tracking ? m_tracking->status : QString(); }
     QString trackingSaid() const;
     QString trackingLine() const;
@@ -366,11 +366,11 @@ private:
     std::optional<Tracking> m_tracking;                 // the last read (or order answer)
     std::optional<TrackingSettings> m_trackingDraft;    // the settings being edited
     bool m_trackingReachable = false;
-    bool m_trackingPending = false;       // a save, start or stop is out
-    bool m_trackingReadPending = false;
+    // A save, start or stop (pending), the poll read, and which is newer: a steer or tour
+    // start that ends tracking invalidates it too.
+    HaControlState m_trackingControl;
     bool m_tourStoppedForTracking = false;   // "Tour stopped · tracking on"
     QElapsedTimer m_tourStoppedClock;          // since a tour last stopped
-    quint64 m_trackingRevision = 0;   // each order or local change; older reads are dropped
 };
 
 } // namespace rl

@@ -579,3 +579,25 @@ Revert: the review-fix commit after `c65a4c1`, then `c65a4c1`.
 - **3c recorder media module:** day search built (above); DON'T for stream opening (one
   adapter; shared with HD live).
 - **Candidate 5 one press module:** built (above).
+
+### Bosch control state: wiper and tracking share `HaControlState`
+
+Built (the "next step" the wiper and tracking sections above deferred): `HaControlState`
+(`src/device/HaControlState.h`, header-only, `test_hacontrolstate`) is the one place for a
+Home Assistant-backed control's pending / read-pending / revision. Invariant: an order bumps
+the revision when sent and when answered; a read captures the revision when sent and is
+dropped if it changed. Interface: `busy()`, `beginRead()` / `endRead(captured)`,
+`beginOrder()` / `endOrder(sent)` (says whether it was overtaken), `invalidate()`, `reset()`.
+The wiper (`m_wiperControl`) and tracking (`m_trackingControl`) use it, one commit each;
+behaviour-preserving, with `test_boschtour` unchanged. Tracking's outside bumps stay where
+they were: `markTrackingOff()` (called by a confirmed steer, a tour start and a selection-tour
+start) bumps through `invalidate()`; a preset goto still only re-reads. `setWiper` keeps
+its exact emit rule by taking the pending seen before the caller changed it.
+
+Not converted, and why: scene mode has a pending and a read-pending but no revision (no read
+is dropped; a "stale" flag marks the shown mode), so adopting the type would add a drop rule
+and change behaviour; iris is a press-and-heartbeat protocol (start / stop / heartbeat
+pendings); steer is latest-press-wins with a queued press and a stop-after; patrol's read
+re-reads when `m_patrolMutationRevision` moved instead of dropping; the
+selection tour (T) is a session with its own restore. Forcing any of them into this type would
+widen it past "order, read back, drop a stale read".
