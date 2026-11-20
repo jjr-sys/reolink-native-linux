@@ -1420,6 +1420,10 @@ void runWorker(std::shared_ptr<Session> s)
         // flipping straight back to a "connecting" spinner that never explains itself.
         if (!s->lastWasError.load())
             postState(s, State::Connecting, QStringLiteral("reconnecting"));
+        // The pane now shows Connecting (or the error), so the next session's first frame
+        // must post Streaming again; otherwise a live pane that reconnected stays on
+        // "Connecting…" over a playing picture.
+        streaming = false;
         QDeadlineTimer wait(backoff.fail());
         while (!wait.hasExpired() && !s->abort.load())
             QThread::msleep(50);
