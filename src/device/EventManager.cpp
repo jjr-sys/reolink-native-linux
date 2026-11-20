@@ -2,9 +2,11 @@
 
 #include "DeviceManager.h"
 #include "device/EventHistory.h"
+#include "device/DetectionNotice.h"
 #include "device/DeviceKind.h"
 #include "device/EventSnapshot.h"
 #include "device/FrigateApi.h"
+#include "device/FrigateHistoryPlan.h"
 
 #include "core/Paths.h"
 
@@ -204,7 +206,7 @@ void EventManager::onDetection(qint64 hostId, int channel, const QString &type,
     // Grab a frame from the camera for the row's thumbnail (quiet; the row updates in
     // place when it lands): a new row, or the same event history filed without one —
     // unless Frigate's own snapshot for it is still on its way.
-    if (f.needsThumbnail && !m_snapshotsDue.contains(f.row.id))
+    if (device::fetchPictureFor(f, m_snapshotsDue))
         m_devices->captureEventThumbnail(hostId, channel, f.row.id);
     if (!f.announce)
         return; // not stored, or already known: nothing to count or announce
@@ -217,14 +219,8 @@ void EventManager::onDetection(qint64 hostId, int channel, const QString &type,
     const DeviceSettings *settings = m_devices->settings();
     if (m_desktopNotifications
         && (!settings || settings->pushEnabledFor(device::cameraKey(hostId, channel)))) {
-        QString what;
-        if (type == QLatin1String("person"))       what = tr("Person detected");
-        else if (type == QLatin1String("vehicle")) what = tr("Vehicle detected");
-        else if (type == QLatin1String("pet") || type == QLatin1String("dog_cat"))
-            what = tr("Pet detected");
-        else if (type == QLatin1String("visitor")) what = tr("Visitor at the door");
-        else                                        what = tr("Motion detected");
-        m_notifier.notify(camera.isEmpty() ? tr("Camera") : camera, what,
+        const device::DetectionNotice notice = device::DetectionNotice::of(type, camera);
+        m_notifier.notify(notice.title, notice.body,
                           QStringLiteral("io.github.todesengelx.ReolinkLinux"),
                           hostId, channel, f.row.timestamp);
     }
@@ -668,24 +664,13 @@ void EventManager::syncAllFrigateHistory()
 void EventManager::applyFrigateHistory(qint64 hostId, const QHash<QString, int> &channelOf,
                                        const QVector<frigate::Event> &events)
 {
-    QVector<Inbox::Candidate> batch;
-    QVector<QString> frigateIds;   // beside each candidate: Frigate's own event id
-    for (const frigate::Event &ev : events) {
-        const QString type = frigate::typeForLabel(ev.label);
-        if (type.isEmpty() || !channelOf.contains(ev.camera))
-            continue;
-        batch.append({hostId, channelOf.value(ev.camera), type,
-                      frigate::displayCameraName(ev.camera), ev.start});
-        frigateIds.append(ev.id);
-    }
+    const device::FrigateHistoryPlan plan(hostId, events, channelOf);
+    const QVector<Inbox::Filing> filed = m_inbox.fileHistory(plan.batch());
+    // A new row, or one already covering this moment (a rerun, or the live poller caught
+    // it) whose thumbnail never came.
     QVector<QPair<qint64, QString>> snapshots; // (local db id, Frigate's own event id)
-    const QVector<Inbox::Filing> filed = m_inbox.fileHistory(batch);
-    for (int i = 0; i < filed.size(); ++i) {
-        // A new row, or one already covering this moment (a rerun, or the live poller
-        // caught it) whose thumbnail never came.
-        if (filed.at(i).needsThumbnail && !m_snapshotsDue.contains(filed.at(i).row.id))
-            snapshots.append({filed.at(i).row.id, frigateIds.at(i)});
-    }
+    for (const device::SnapshotFetch &s : plan.snapshots(filed, m_snapshotsDue))
+        snapshots.append({s.rowId, s.frigateEventId});
     take(hostId, filed);
     fetchHistoryThumbnails(hostId, snapshots);
 }

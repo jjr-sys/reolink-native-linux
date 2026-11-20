@@ -196,6 +196,18 @@ _Avoid_: event inbox (the Events page and its list model, `EventManager`)
 A candidate that a stored row of the same camera and type already covers (within a burst's 30 seconds): a history sync run twice, or a live report of what the history filed.
 _Avoid_: duplicate
 
+**Snapshot due**:
+A stored row whose picture is Frigate's own snapshot, on its way from a history sync. Until it lands (or fails), neither a live report of that row nor a rerun of the history fetches another picture for it.
+_Avoid_: pending thumbnail
+
+**Frigate history plan**:
+What a Frigate host's history sync hands the Inbox (the events the app models, on cameras it knows, under their channel) and, once they are filed, which rows fetch Frigate's snapshot: those without a picture whose snapshot isn't already due.
+_Avoid_: history import
+
+**Detection notice**:
+The desktop notice a detection raises: the camera's name over what it saw ("Person detected", "Visitor at the door"; any other type reads "Motion detected").
+_Avoid_: alert (that is an offline alert)
+
 **Status row**:
 The stored Online or Offline event a connectivity change writes for each camera it touched. Status can't be switched off.
 _Avoid_: health event

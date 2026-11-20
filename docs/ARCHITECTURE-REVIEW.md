@@ -696,6 +696,31 @@ Frigate validate/test module leaving it separable.
 
 Revert: the review-fix commit after `62d9e20`, then `62d9e20`.
 
+### Candidate 5, first slice: the Frigate history plan and the detection notice (`arch/history-plan`)
+
+**Modules.** `device::FrigateHistoryPlan` (`src/device/FrigateHistoryPlan.{h,cpp}`,
+`test_frigatehistoryplan`), pure: built from a host's parsed `/api/events`, its cameras by
+Frigate name and the host id, it gives the `batch()` to file (modelled labels on known
+cameras, under their channel and display name) and, after `Inbox::fileHistory`,
+`snapshots(filed, snapshotsDue)`: the (row id, Frigate event id) pairs to fetch. Both that and
+`onDetection`'s camera-frame grab ask one `fetchPictureFor(filing, snapshotsDue)`, so the
+due-set guard is one rule, tested once. `device::DetectionNotice::of(type, camera)`
+(`test_detectionnotice`) is the notice's title and body; its strings keep the
+`rl::EventManager` translation context (the `.ts` files hold no entries yet, so nothing to
+lose either way). `EventManager` keeps the due set, the fetch and `fetchHistoryThumbnails`;
+the tests file through a real `Inbox` for the rerun and live-report cases.
+
+**Decisions.**
+1. Behaviour unchanged. As found and now pinned by a test: a live capture is not recorded as
+   due, so a history run after a live report (row still without a picture) fetches Frigate's
+   snapshot too, last write wins; and two live reports of one stored row before its frame
+   lands grab two frames. Harmless (the Frigate snapshot is the better picture), so left.
+   Also as found: two history events either side of one stored row (each within 30 s of it,
+   50 s apart) both match it, and both snapshots are fetched for that row.
+2. Deferred: one "event picture fetch" module owning the due set, the Frigate snapshot fetch
+   and the live frame grab. Trigger: the Frigate server module landing, or a "re-fetch
+   Frigate at full size" follow-up, whichever comes first.
+
 ### Not built
 
 - **3c recorder media module:** day search built (above); DON'T for stream opening (one
