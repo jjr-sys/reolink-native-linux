@@ -27,174 +27,58 @@ Item {
     property string maximizedKey: ""   // "hostId:channel" or ""
     property string selectedKey: ""    // the pane with sound
 
-    // ---- The selection ---------------------------------------------------------------
-    // Stored in [liveSelection]. On the first launch it is taken from the old grid's
-    // first page ([liveGrid], left in place for one release); with nothing there, the first
-    // four cameras once they have arrived.
-    SiteSelection {
-        id: selection
+    // ---- The camera-selection session ----------------------------------------------------
+    // One module (SelectionSession) owns the selection, its Site budget, the stored selection
+    // ([liveSelection]; taken on the first launch from the old grid's first page, [liveGrid],
+    // left in place for one release; with nothing there, the first four cameras once they have
+    // arrived), pruning, the cameras' remembered shapes and the mosaic panes in pane order.
+    // Each Site's link carries so many Mbit/s and every pane costs its camera's bitrate, sub or
+    // HD; Live View counts on its own (it stops streaming when hidden). A maximised pane is one
+    // stream alone and always goes HD. At launch the first mosaic waits up to 8 s for the
+    // selected cameras (NVRs answer a few seconds after the window opens), so it opens in its
+    // final layout rather than re-packing as each NVR answers.
+    SelectionSession {
+        id: session
         sites: Sites.map
-        onSaveRequested: (text) => selStore.setValue("keys", text)
-        onChanged: {
-            if (page.maximizedKey !== "" && !contains(page.maximizedKey))
-                page.maximizedKey = "";
-            // A camera taken out of the selection leaves the replay (ticket 15b).
-            liveReplay.cameraKeys.filter(k => !contains(k)).forEach(k => liveReplay.leave(k));
-            page.rebuildMosaic();
-        }
-        // A change after Clear all ends its Undo: the toast goes with it.
-        onUndoChanged: if (!canUndo) undoToast.dismiss()
-    }
-    // ---- The Site budget ----------------------------------------------------------------
-    // Each Site's link carries so many Mbit/s; every pane costs its camera's bitrate, sub or
-    // HD. Live View counts on its own (it stops streaming when hidden). A maximised pane is
-    // one stream alone and always goes HD.
-    SiteBudget {
-        id: budget
-        sites: Sites.map
-        selection: selection
+        devices: Devices
         budgets: Sites.budgets
         defaultBudget: Sites.defaultBudget
         costs: Sites.costs
         hd: PanePrefs.hd
+        large: PanePrefs.large
+        overBudgetAdvice: Sites.overBudgetAdvice
+        storeGroup: "liveSelection"
+        gridGroup: "liveGrid"
+        gridKey: "arrangement"
+        gridPresetKey: "preset"
+        seedCount: 4
+        waitMs: 8000
+        settleMs: 500
+    }
+    readonly property SiteSelection selection: session.selection
+    readonly property SiteBudget budget: session.budget
+    readonly property bool mosaicWaitOver: session.waitOver
+    Connections {
+        target: session.selection
+        function onChanged() {
+            if (page.maximizedKey !== "" && !session.selection.contains(page.maximizedKey))
+                page.maximizedKey = "";
+            // A camera taken out of the selection leaves the replay (ticket 15b).
+            liveReplay.cameraKeys.filter(k => !session.selection.contains(k)).forEach(k => liveReplay.leave(k));
+        }
+        // A change after Clear all ends its Undo: the toast goes with it.
+        function onUndoChanged() { if (!session.selection.canUndo) undoToast.dismiss(); }
     }
     // Why switching this pane to HD would go over its Site's budget; "" when it fits.
-    function hdRefusal(key) {
-        if (budget.canHd(key))
-            return "";
-        var site = Sites.siteOfKey(key);
-        return qsTr("%1 is at %2 / %3 Mbit/s; HD needs %4 more.")
-                .arg(site).arg(Sites.mbps(budget.used(site))).arg(Sites.mbps(budget.budgetOf(site)))
-                .arg(Sites.mbps(budget.hdExtra(key))) + " " + Sites.overBudgetAdvice;
-    }
-
-    property bool seedFirstCameras: false
-    Settings { id: selStore; category: "liveSelection" }   // keys, migrated
-    Settings { id: gridStore; category: "liveGrid" }        // read once, for the migration
-    function restoreSelection() {
-        if (String(selStore.value("migrated", false)) === "true") {
-            selection.saved = String(selStore.value("keys", ""));
-            return;
-        }
-        var keys = selection.fromGrid(String(gridStore.value("arrangement", "")),
-                                      parseInt(gridStore.value("preset", 4)));
-        selection.saved = keys.join(",");
-        selStore.setValue("keys", keys.join(","));
-        selStore.setValue("migrated", true);
-        seedFirstCameras = keys.length === 0;
-    }
-    function seedIfNeeded() {
-        if (!seedFirstCameras || Devices.count === 0)
-            return;
-        seedFirstCameras = false;
-        if (selection.count > 0)
-            return;
-        for (var r = 0; r < Devices.count && selection.count < 4; ++r) {
-            var k = cameraKey(r);
-            if (k && budget.canAdd(k))
-                selection.toggle(k);
-        }
-    }
-    // Keys of a recorder that has been removed are dropped once the device list settles
-    // (an NVR swaps its placeholder row for its channels while it connects), and keys of a
-    // camera removed from a Frigate server.
-    function pruneSelection() {
-        if (Devices.count > 0) {
-            selection.pruneHosts(Devices.hostIds());
-            selection.pruneCameras(Devices.listedCameras());
-        }
-    }
-    Timer { id: pruneTimer; interval: 8000; onTriggered: page.pruneSelection() }
+    function hdRefusal(key) { return session.hdRefusal(key); }
 
     // ---- Mosaic ------------------------------------------------------------------------
     property bool mosaicAnimate: false   // a re-pack from new panes or shapes slides
     property var mosaicRectByRow: ({})   // device row -> rect
-    property var paneRatios: ({})        // "hostId:channel" -> drawn width/height
 
-    function cameraKey(row) { return PanePrefs.cameraKey(row); }
-    function rowsByKey() {
-        var byKey = ({});
-        for (var r = 0; r < Devices.count; ++r)
-            byKey[cameraKey(r)] = r;
-        return byKey;
-    }
-    // The rows shown, in pane order. A selected camera whose recorder has not answered yet
-    // gets its pane when it arrives.
-    function mosaicRows() {
-        var byKey = rowsByKey(), rows = [];
-        selection.paneOrder.forEach(k => { if (byKey[k] !== undefined) rows.push(byKey[k]); });
-        return rows;
-    }
-    function selectionMissing() {
-        var byKey = rowsByKey();
-        return selection.paneOrder.some(k => byKey[k] === undefined);
-    }
-    // At launch the NVRs' cameras arrive a few seconds after the window opens. The first
-    // build waits for the selected cameras (at most 8 s), so the mosaic opens in its final
-    // layout rather than re-packing as each NVR answers.
-    property bool mosaicWaitOver: false
-    Timer {
-        id: mosaicWait
-        interval: 8000
-        running: true
-        onTriggered: {
-            page.mosaicWaitOver = true;
-            page.seedIfNeeded();
-            page.pruneSelection();
-            page.rebuildMosaic();
-        }
-    }
-    function rebuildMosaic() {
-        if (!mosaicWaitOver && selectionMissing())
-            return;
-        mosaicSettle.stop();
-        mosaic.panes = mosaicRows().map(r => ({ row: r,
-                                                large: PanePrefs.has("large", cameraKey(r)),
-                                                ratio: paneRatios[cameraKey(r)] || 16 / 9 }));
-    }
-    // Shape changes and cameras arriving are gathered for half a second, then re-packed
-    // together in one move (cameras connecting at launch cause one, not 18).
-    function scheduleMosaic() {
-        if (!mosaicSettle.running)
-            mosaicSettle.start();
-    }
-    Timer { id: mosaicSettle; interval: 500; onTriggered: page.rebuildMosaic() }
+    function cameraKey(row) { return session.keyOfRow(row); }
+    function cardRatio(key) { return session.ratioOf(key); }
     Timer { id: mosaicAnimateEnd; interval: 300; onTriggered: page.mosaicAnimate = false }
-
-    // The drawn shape from the decoded (or remembered) frame shape, the rotation override
-    // and the fisheye view, so a rotation or view change applies before any stream does.
-    function drawnRatio(frame, rotation, fisheye, mode) {
-        if (fisheye && mode)
-            return FrameShape.viewRatio(mode);       // one shapes table (frameshape::viewRatio)
-        return FrameShape.drawnRatio(frame, rotation);   // never seen: 16:9
-    }
-    function noteRatio(key, r) {
-        if (!key || !(r > 0))
-            return;
-        if (!FrameShape.shapeChanged(paneRatios[key] || 0, r))
-            return;
-        paneRatios[key] = r;
-        scheduleMosaic();
-    }
-    // Each camera's last decoded shape, kept between launches.
-    function rememberedFrame(key) {
-        var v = parseFloat(shapeStore.value(key, 0));
-        return v > 0 ? v : 0;
-    }
-    function rememberFrame(key, r) {
-        if (!key || !(r > 0))
-            return;
-        if (FrameShape.shapeChanged(rememberedFrame(key), r))
-            shapeStore.setValue(key, r.toFixed(4));
-    }
-    // A camera's shape for its drawer card: as drawn in a pane, else as remembered.
-    function cardRatio(key) {
-        if (paneRatios[key] > 0)
-            return paneRatios[key];
-        var row = rowsByKey()[key];
-        var c = row !== undefined ? Devices.cameraInfo(row) : null;
-        return drawnRatio(rememberedFrame(key), c ? c.rotationOverride || 0 : 0, false, "fisheye");
-    }
     function mapMosaicRects() {
         var m = ({});
         var p = mosaic.layoutPanes, r = mosaic.rects;
@@ -206,16 +90,10 @@ Item {
     // ← / →: a maximised pane steps to its neighbour in pane order, wrapping, over any
     // selected camera whose recorder has not answered yet.
     function step(dir) {
-        var byKey = rowsByKey(), k = maximizedKey;
-        for (var i = 0; i < selection.count; ++i) {
-            k = selection.neighbour(k, dir);
-            if (k === "" || k === maximizedKey)
-                return;
-            if (byKey[k] !== undefined) {
-                maximizedKey = k;
-                selectedKey = k;
-                return;
-            }
+        var k = session.stepFrom(maximizedKey, dir);
+        if (k !== "") {
+            maximizedKey = k;
+            selectedKey = k;
         }
     }
     readonly property bool canStep: maximizedKey !== "" && selection.count > 1
@@ -227,8 +105,8 @@ Item {
         id: liveReplay
         // Each replaying camera searches its own recorder (ticket 15a).
         onSearchWanted: (key, y, m, d) => {
-            var row = page.rowsByKey()[key];
-            if (row === undefined) { liveReplay.leave(key); return; }   // that camera is gone
+            var row = session.rowOf(key);
+            if (row < 0) { liveReplay.leave(key); return; }   // that camera is gone
             if (Devices.isDirectAt(row)) { liveReplay.dayFailed(key, y, m, d); return; }   // replay is for recorder cameras
             Devices.days.search(key, y, m, d);
         }
@@ -271,10 +149,10 @@ Item {
         if (!liveReplay.replaying || maximizedKey !== liveReplay.cameraKey)
             return [];
         var keys = Highlights.othersHighlighted(selection.keys, liveReplay.cameraKey);
-        var byKey = rowsByKey(), out = [];
+        var out = [];
         for (var i = 0; i < keys.length && out.length < 3; i++) {
-            var row = byKey[keys[i]];
-            if (row === undefined)
+            var row = session.rowOf(keys[i]);
+            if (row < 0)
                 continue;   // its recorder hasn't answered yet: no pane, no name
             var look = looks[keys[i]], item = paneRepeater.itemAt(row);
             out.push({ key: keys[i], colour: look.colour,
@@ -354,16 +232,16 @@ Item {
     function replayPane() {
         var k = liveReplay.replaying ? liveReplay.cameraKey
               : maximizedKey !== "" ? maximizedKey : selectedKey;
-        var row = rowsByKey()[k];
-        return row === undefined ? null : paneRepeater.itemAt(row);
+        var row = session.rowOf(k);
+        return row < 0 ? null : paneRepeater.itemAt(row);
     }
     function replayKey(k) {
         // While a replay runs, J or ← on a selected (or maximised) pane that isn't in it joins
         // it there (ticket 15b); the other keys act on the replay.
         if (liveReplay.replaying && (k === "J" || k === "Left")) {
             var own = maximizedKey !== "" ? maximizedKey : selectedKey;
-            var row = rowsByKey()[own];
-            var mine = row === undefined ? null : paneRepeater.itemAt(row);
+            var row = session.rowOf(own);
+            var mine = row < 0 ? null : paneRepeater.itemAt(row);
             if (mine && liveReplay.cameraKeys.indexOf(own) < 0)
                 return mine.replayKey(k);
         }
@@ -451,10 +329,6 @@ Item {
         }
     }
 
-    Settings {
-        id: shapeStore
-        category: "mosaicShapes"       // "hostId:channel" = decoded width/height
-    }
     // The Highlights switch (wayfinder/detection-highlights), remembered.
     Settings {
         id: highlightStore
@@ -462,19 +336,8 @@ Item {
         property bool on: true
     }
 
-    Connections {
-        target: Devices
-        function onRowsRemoved() { page.scheduleMosaic(); pruneTimer.restart(); }
-        function onRowsInserted() {
-            page.scheduleMosaic();
-            if (page.mosaicWaitOver)
-                page.seedIfNeeded();   // no cameras had arrived when the wait ended
-        }
-        function onModelReset() { page.scheduleMosaic(); }
-    }
-
     Component.onCompleted: {
-        restoreSelection();
+        session.start();
         Highlights.enabled = highlightStore.on;
     }
 
@@ -489,8 +352,8 @@ Item {
         height: implicitHeight
         y: page.tabsShown ? 0 : -height
         Behavior on y { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-        selection: selection
-        budget: budget
+        selection: session.selection
+        budget: session.budget
         menus: page.menus
         ratioOf: (key) => page.cardRatio(key)
         onCleared: (n) => undoToast.show(n === 1 ? qsTr("Cleared 1 camera ·") : qsTr("Cleared %1 cameras ·").arg(n))
@@ -499,8 +362,7 @@ Item {
         onRecalled: (name, skipped) => {
             if (skipped.length === 0)
                 return;
-            var byKey = page.rowsByKey();
-            var names = skipped.map(k => byKey[k] !== undefined ? Devices.nameAt(byKey[k]) : k);
+            var names = skipped.map(k => session.rowOf(k) >= 0 ? Devices.nameAt(session.rowOf(k)) : k);
             undoToast.show(qsTr("%1: left out %2 (over the Site budget)").arg(name).arg(names.join(", ")), false);
         }
 
@@ -709,6 +571,7 @@ Item {
 
         MosaicLayout {
             id: mosaic
+            panes: session.panes
             width: gridArea.width
             height: gridArea.height
             gap: gridArea.gap
@@ -761,13 +624,9 @@ Item {
                 offline: inMosaic && !online
                 keepLastFrame: true
 
-                // The shape this camera takes in the mosaic.
-                readonly property real mosaicRatio: page.drawnRatio(
-                    frameRatio > 0 ? frameRatio : page.rememberedFrame(cameraKey),
-                    rotationOverride, isFisheye, viewMode)
-                onFrameRatioChanged: page.rememberFrame(cameraKey, frameRatio)
-                onMosaicRatioChanged: page.noteRatio(cameraKey, mosaicRatio)
-                Component.onCompleted: page.noteRatio(cameraKey, mosaicRatio)
+                // The shape this camera takes in the mosaic: the session remembers what the
+                // pane decodes and re-packs (rotation and fisheye view changes it sees itself).
+                onFrameRatioChanged: session.noteFrame(cameraKey, frameRatio)
                 paneIndex: selection.paneOrder.indexOf(cameraKey)
                 deviceRow: index
                 cameraIdentity: ({ hostId: pane.hostId, channel: pane.channel })
@@ -792,10 +651,7 @@ Item {
                 }
                 showLarge: inMosaic && !isMaximized
                 large: PanePrefs.has("large", cameraKey)
-                onLargeToggled: {
-                    PanePrefs.toggle("large", cameraKey);
-                    page.rebuildMosaic();
-                }
+                onLargeToggled: PanePrefs.toggle("large", cameraKey)
                 // Drag a pane onto another of the same Site to swap their places.
                 dropFilter: (src => selection.sameSite(cameraKey, page.cameraKey(src)))
                 onCameraDropped: (targetPane, row) => selection.swap(cameraKey, page.cameraKey(row))

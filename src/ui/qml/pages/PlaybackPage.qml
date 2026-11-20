@@ -38,42 +38,44 @@ Item {
     }
     property bool _autoplayed: false // test hook guard
 
-    // ---- The selection ---------------------------------------------------------------
-    // Stored in [playbackSelection]. On the first launch it is taken from the old 4-pane
-    // grid ([playback] gridArrangement, left in place for one release).
-    SiteSelection {
-        id: selection
+    // ---- The camera-selection session ----------------------------------------------------
+    // One module (SelectionSession) owns the selection, its Site budget, the stored selection
+    // ([playbackSelection]; taken on the first launch from the old 4-pane grid, [playback]
+    // gridArrangement, left in place for one release), pruning, the cameras' remembered shapes
+    // and the mosaic panes in pane order. This is Playback's own budget count; HD is chosen
+    // per pane on this page only and not kept: Playback opens low quality.
+    property var hdKeys: []
+    SelectionSession {
+        id: session
         sites: Sites.map
-        onSaveRequested: (text) => selStore.setValue("keys", text)
-        onChanged: page.followSelection()
-        onUndoChanged: if (!canUndo) undoToast.dismiss()
+        devices: Devices
+        budgets: Sites.budgets
+        defaultBudget: Sites.defaultBudget
+        costs: Sites.costs
+        hd: page.hdKeys
+        overBudgetAdvice: Sites.overBudgetAdvice
+        storeGroup: "playbackSelection"
+        gridGroup: "playback"
+        gridKey: "gridArrangement"
+        settleMs: 300
+        settleOnSelection: true
     }
-    Settings { id: selStore; category: "playbackSelection" }   // keys, migrated
-    Settings { id: gridStore; category: "playback" }           // read once, for the migration
-    function restoreSelection() {
-        if (String(selStore.value("migrated", false)) === "true") {
-            selection.saved = String(selStore.value("keys", ""));
-            return;
-        }
-        var keys = selection.fromGrid(String(gridStore.value("gridArrangement", "")), 4);
-        selection.saved = keys.join(",");
-        selStore.setValue("keys", keys.join(","));
-        selStore.setValue("migrated", true);
+    readonly property SiteSelection selection: session.selection
+    readonly property SiteBudget budget: session.budget
+    Connections {
+        target: session.selection
+        function onChanged() { page.followSelection(); }
+        function onUndoChanged() { if (!session.selection.canUndo) undoToast.dismiss(); }
     }
-    // Keys of a recorder that has been removed, or of a camera removed from a Frigate server,
-    // are dropped once the device list settles. A bare stream (migrated, or picked before) is swapped for the recorder's copy, or dropped.
-    Timer {
-        id: pruneTimer
-        interval: 8000
-        onTriggered: {
-            if (Devices.count === 0)
-                return;
-            selection.pruneHosts(Devices.hostIds());
-            selection.pruneCameras(Devices.listedCameras());
+    // A bare stream (migrated, or picked before) is swapped for the recorder's copy, or dropped,
+    // once the device list settles.
+    Connections {
+        target: session
+        function onPruned() {
             selection.keys.filter(k => Sites.isBareStream(k)).forEach(k => {
                 selection.toggle(k);
                 var instead = Sites.playbackKey(k);
-                if (instead && page.rowsByKey()[instead] !== undefined)
+                if (instead && session.rowOf(instead) >= 0)
                     page.addCamera(instead);
             });
         }
@@ -82,50 +84,30 @@ Item {
     // The calendar union, the selected pane and the speed.
     PlaybackGroup {
         id: group
-        selection: selection
+        selection: session.selection
         reverseAvailable: true   // ticket 12
         // Frigate panes play at 1× forward only (wayfinder/playback-controls ticket 11).
-        directKeys: { Devices.count; selection.count;
-                      return selection.keys.filter(k => page.isDirectKey(k)); }
+        directKeys: { Devices.count; session.selection.count;
+                      return session.selection.keys.filter(k => page.isDirectKey(k)); }
         // Back at 1× forward, the frozen Frigate panes catch up at the playhead.
         onSpeedChanged: {
             if (offNormal || !page.isPlaying())
                 return;
-            selection.keys.filter(k => page.isDirectKey(k))
+            session.selection.keys.filter(k => page.isDirectKey(k))
                      .forEach(k => { page._resume[k] = "ifStopped"; });
             Qt.callLater(page.flushResume);
         }
     }
     function isDirectKey(key) {
-        var r = rowsByKey()[key];
-        return r !== undefined && Devices.isDirectAt(r);
+        var r = session.rowOf(key);
+        return r >= 0 && Devices.isDirectAt(r);
     }
     readonly property string selectedKey: group.selectedKey
     readonly property int selectedRow: { Devices.count; selection.count;
-                                         var r = rowsByKey()[selectedKey];
-                                         return r === undefined ? -1 : r; }
+                                         return session.rowOf(selectedKey); }
 
     // ---- The Site budget ---------------------------------------------------------------
-    // Playback's own count. HD is chosen per pane on this page only and not kept: Playback
-    // opens low quality.
-    property var hdKeys: []
-    SiteBudget {
-        id: budget
-        sites: Sites.map
-        selection: selection
-        budgets: Sites.budgets
-        defaultBudget: Sites.defaultBudget
-        costs: Sites.costs
-        hd: page.hdKeys
-    }
-    function hdRefusal(key) {
-        if (budget.canHd(key))
-            return "";
-        var site = Sites.siteOfKey(key);
-        return qsTr("%1 is at %2 / %3 Mbit/s; HD needs %4 more.")
-                .arg(site).arg(Sites.mbps(budget.used(site))).arg(Sites.mbps(budget.budgetOf(site)))
-                .arg(Sites.mbps(budget.hdExtra(key))) + " " + Sites.overBudgetAdvice;
-    }
+    function hdRefusal(key) { return session.hdRefusal(key); }
     function toggleHd(key) {
         if (!key)
             return;
@@ -147,8 +129,8 @@ Item {
         if (!Sites.isBareStream(key))
             return "";
         var instead = Sites.playbackKey(key);
-        var row = instead ? rowsByKey()[instead] : undefined;
-        if (row === undefined)
+        var row = instead ? session.rowOf(instead) : -1;
+        if (row < 0)
             return qsTr("A bare stream has no recordings of its own.");
         return qsTr("No recordings of its own. Play %1 › %2 instead (click).")
                 .arg(Sites.siteOfKey(instead)).arg(Devices.nameAt(row));
@@ -170,16 +152,10 @@ Item {
     }
 
     // ---- Cameras and rows ------------------------------------------------------------
-    function cameraKey(row) { return PanePrefs.cameraKey(row); }
-    function rowsByKey() {
-        var byKey = ({});
-        for (var r = 0; r < Devices.count; ++r)
-            byKey[cameraKey(r)] = r;
-        return byKey;
-    }
+    function cameraKey(row) { return session.keyOfRow(row); }
     function paneOf(key) {
-        var r = rowsByKey()[key];
-        return r === undefined ? null : paneRepeater.itemAt(r);
+        var r = session.rowOf(key);
+        return r < 0 ? null : paneRepeater.itemAt(r);
     }
 
     // ---- Recordings ------------------------------------------------------------------
@@ -201,8 +177,8 @@ Item {
     // A recorder that has just connected may answer its first search empty: an empty day is
     // asked again (PlaybackDay::wantSearch) as the device list changes.
     function search(key, force) {
-        var row = rowsByKey()[key];
-        if (row === undefined || !day.wantSearch(key, Date.now(), force))
+        var row = session.rowOf(key);
+        if (row < 0 || !day.wantSearch(key, Date.now(), force))
             return;
         if (TestHooks.mockRecordings) {
             Qt.callLater(() => page.mockAnswer(key, row));
@@ -230,11 +206,10 @@ Item {
     // The timeline: one lane per pane (who has footage where), and their union to scrub.
     function recomputeTimeline() {
         var lanes = [], union = [];
-        var byKey = rowsByKey();
         selection.paneOrder.forEach(k => {
             var segs = segsByKey[k] || [];
-            var r = byKey[k];
-            lanes.push({ name: r !== undefined ? Devices.nameAt(r) : k, segments: segs });
+            var r = session.rowOf(k);
+            lanes.push({ name: r >= 0 ? Devices.nameAt(r) : k, segments: segs });
             union = union.concat(segs);
         });
         timeline.lanes = lanes.length > 1 ? lanes : [];
@@ -271,7 +246,6 @@ Item {
         statusText.text = selection.count === 0 ? ""
                         : qsTr("Synced playback — %n camera(s)", "", selection.count);
         recomputeTimeline();
-        scheduleMosaic();
         flushResume();
     }
 
@@ -508,7 +482,7 @@ Item {
     // ---- The selected pane's tools ---------------------------------------------------
     readonly property bool selectedDirect: selectedRow >= 0 && Devices.isDirectAt(selectedRow)
     readonly property bool anyReolink: { Devices.count;
-        return selection.keys.some(k => { var r = rowsByKey()[k]; return r !== undefined && !Devices.isDirectAt(r); }); }
+        return selection.keys.some(k => { var r = session.rowOf(k); return r >= 0 && !Devices.isDirectAt(r); }); }
     readonly property bool audioAvailable: { paneRepeater.count;
                                              var p = selectedRow >= 0 ? paneRepeater.itemAt(selectedRow) : null;
                                              return !!p && p.hasAudio; }
@@ -601,7 +575,6 @@ Item {
         function onDataChanged() { page.searchMissing(); }
         function onRowsInserted() { page.rowsShifted(); page.searchMissing(); }
         function onRowsRemoved() { page.rowsShifted(); }
-        function onModelReset() { page.scheduleMosaic(); }
     }
     // A camera's day, keyed and dated (wayfinder/architecture ticket 01): the month's days
     // mark the calendar; the recordings are taken only for a pane's camera and the day shown.
@@ -632,8 +605,6 @@ Item {
     function rowsShifted() {
         if (streamingPanes > 0)
             selection.keys.forEach(k => { if (!_resume[k]) _resume[k] = "ifStopped"; });
-        scheduleMosaic();
-        pruneTimer.restart();
     }
     function gotSegments(key, segments) {
         if (!key || !selection.contains(key))
@@ -677,41 +648,8 @@ Item {
     // ---- Mosaic ------------------------------------------------------------------------
     property bool mosaicAnimate: false
     property var mosaicRectByRow: ({})
-    // Each camera's decoded shape, shared with Live View ("hostId:channel" = width/height).
-    // A pane measures its picture and saves it here, so a camera Live never measured (a
-    // dewarped fisheye) gets its own shape too (wayfinder/fisheye-and-framing step 07).
-    Settings { id: shapeStore; category: "mosaicShapes" }
-    function rememberedFrame(key) {
-        var v = parseFloat(shapeStore.value(key, 0));
-        return v > 0 ? v : 0;
-    }
-    function rememberFrame(key, r) {
-        if (!key || !FrameShape.shapeChanged(rememberedFrame(key), r))
-            return;
-        shapeStore.setValue(key, r.toFixed(4));
-        scheduleMosaic();
-    }
-    function paneRatio(row) {
-        var c = Devices.cameraInfo(row);
-        if (c && c.isFisheye && c.viewMode)
-            return FrameShape.viewRatio(c.viewMode);   // the view's shape (frameshape::viewRatio)
-        return FrameShape.drawnRatio(rememberedFrame(cameraKey(row)), c ? (c.rotationOverride || 0) : 0);
-    }
-    function cardRatio(key) {
-        var row = rowsByKey()[key];
-        return row === undefined ? 16 / 9 : paneRatio(row);
-    }
-    function rebuildMosaic() {
-        mosaicSettle.stop();
-        var byKey = rowsByKey(), panes = [];
-        selection.paneOrder.forEach(k => {
-            if (byKey[k] !== undefined)
-                panes.push({ row: byKey[k], large: false, ratio: paneRatio(byKey[k]) });
-        });
-        mosaic.panes = panes;
-    }
-    function scheduleMosaic() { if (!mosaicSettle.running) mosaicSettle.start(); }
-    Timer { id: mosaicSettle; interval: 300; onTriggered: page.rebuildMosaic() }
+    // Each camera's decoded shape is shared with Live View (the session remembers it).
+    function cardRatio(key) { return session.ratioOf(key); }
     Timer { id: mosaicAnimateEnd; interval: 300; onTriggered: page.mosaicAnimate = false }
     function mapMosaicRects() {
         var m = ({});
@@ -729,8 +667,7 @@ Item {
         selMonth = now.getMonth() + 1;
         selDay = now.getDate();
         group.setMonth(selYear, selMonth);
-        restoreSelection();
-        pruneTimer.start();   // the device list may be complete already (no rowsInserted)
+        session.start();   // the device list may be complete already (no rowsInserted)
         if (TestHooks.mockRecordings)
             playheadSecs = 32400;
     }
@@ -750,23 +687,22 @@ Item {
         z: 10
         width: parent.width
         height: implicitHeight
-        selection: selection
-        budget: budget
+        selection: session.selection
+        budget: session.budget
         menus: page.menus
         ratioOf: (key) => page.cardRatio(key)
         showSaved: true
         unavailable: (key) => page.unavailable(key)
         onUnavailableTapped: (key) => {
             var instead = Sites.playbackKey(key);
-            if (instead && page.rowsByKey()[instead] !== undefined && page.addCamera(instead))
+            if (instead && session.rowOf(instead) >= 0 && page.addCamera(instead))
                 group.select(instead);
         }
         onCleared: (n) => undoToast.show(n === 1 ? qsTr("Cleared 1 camera ·") : qsTr("Cleared %1 cameras ·").arg(n))
         onRecalled: (name, skipped) => {
             if (skipped.length === 0)
                 return;
-            var byKey = page.rowsByKey();
-            var names = skipped.map(k => byKey[k] !== undefined ? Devices.nameAt(byKey[k]) : k);
+            var names = skipped.map(k => session.rowOf(k) >= 0 ? Devices.nameAt(session.rowOf(k)) : k);
             undoToast.show(qsTr("%1: left out %2 (over the Site budget or no recordings)").arg(name).arg(names.join(", ")), false);
         }
     }
@@ -802,6 +738,7 @@ Item {
 
                 MosaicLayout {
                     id: mosaic
+                    panes: session.panes
                     width: mosaicArea.width
                     height: mosaicArea.height
                     gap: 4
@@ -846,9 +783,6 @@ Item {
                         viewRotation: rotationOverride
                         fisheyeLens: isFisheye
                         fisheyeMode: viewMode
-                        // A fisheye pane takes its view's shape: re-pack when it changes.
-                        onFisheyeLensChanged: page.scheduleMosaic()
-                        onFisheyeModeChanged: page.scheduleMosaic()
                         selected: page.selectedKey === cameraKey
                         // Sound plays at 1× forward only.
                         audioMuted: AudioPrefs.playbackMuted || group.offNormal
@@ -859,7 +793,7 @@ Item {
                         speedText: { group.speed; group.direction; return group.label(false); }
                         hdActive: page.hdKeys.indexOf(cameraKey) >= 0
                         segments: page.segsByKey[cameraKey] || []
-                        onFrameRatioChanged: page.rememberFrame(cameraKey, frameRatio)
+                        onFrameRatioChanged: session.noteFrame(cameraKey, frameRatio)
                         onStillDone: (picture) => stills.done(cameraKey, picture)
                         onStillModeChanged: page.countStreaming()
                         playheadSecs: page.playheadSecs
