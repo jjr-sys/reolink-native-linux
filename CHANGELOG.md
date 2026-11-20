@@ -349,6 +349,11 @@ While the project is pre-1.0, minor versions may still change behaviour.
 - **A camera's Push Notifications switch gates its own notices.** The switch was remembered
   by list row, so after the camera list changed (a camera added, a recorder's channels
   re-read) a notice could be allowed or stopped by another camera's switch.
+- **Internal:** Frigate's config and events are fetched through `frigate::fetchConfig` /
+  `fetchEvents` (tested against a stand-in server), which say why a fetch failed
+  (`ErrorKind`: sign-in refused, unreachable, a bad reply). Adding, testing and re-reading a
+  Frigate site share `frigate::checkServer`, instead of two copies telling a refused sign-in
+  by the words "sign-in" in the error. Messages on screen are unchanged.
 - **Internal:** a camera's settings commands (settings, quick replies, alert switches, the
   recording schedule, Baichuan config, floodlight, reboot) moved out of `DeviceManager` into
   a tested `DeviceSettings` (`Devices.settings`), named by camera key; their answers carry

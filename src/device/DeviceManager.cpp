@@ -1088,19 +1088,17 @@ DeviceManager::Validation DeviceManager::validateFrigate(const HostRecord &rec,
                                                           const QString &password)
 {
     Validation v;
-    frigate::setCredentials(rec.addr, rec.port, rec.username, password);
-    QString error;
-    const QByteArray body = frigate::httpGet(frigate::configUrl(rec.addr, rec.port), 10000, &error);
-    const Json cfg = Json::parse(body.toStdString(), nullptr, false);
-    const QStringList names = cfg.is_discarded() ? QStringList() : frigate::parseCameraNames(cfg);
-    if (names.isEmpty()) {
-        v.problem = error.contains(QStringLiteral("sign-in"), Qt::CaseInsensitive)
-                        ? Problem::Auth : Problem::Unreachable;
-        v.status = !error.isEmpty() ? error
-                   : cfg.is_discarded() ? tr("not a Frigate server")
-                                        : tr("Frigate has no enabled cameras");
+    const frigate::Fetch<Json> got =
+        frigate::checkServer(rec.addr, rec.port, rec.username, password, 10000);
+    if (!got.ok()) {
+        v.problem = got.kind == frigate::ErrorKind::Auth ? Problem::Auth : Problem::Unreachable;
+        v.status = got.kind == frigate::ErrorKind::BadReply    ? tr("not a Frigate server")
+                   : got.kind == frigate::ErrorKind::NoCameras ? tr("Frigate has no enabled cameras")
+                                                               : got.error;
         return v;
     }
+    const Json &cfg = got.value;
+    const QStringList names = frigate::parseCameraNames(cfg);
     v.online = true;
     v.problem = Problem::None;
     v.status = tr("online");
@@ -1195,22 +1193,21 @@ void DeviceManager::testFrigate(const QString &host, int port,
 {
     const int portv = port > 0 ? port : 8971;
     m_pending.addFuture(QtConcurrent::run([this, host, portv, username, password] {
-        frigate::setCredentials(host, portv, username.trimmed(), password);
-        QString error;
-        const QByteArray body = frigate::httpGet(frigate::configUrl(host, portv), 10000, &error);
-        const Json cfg = Json::parse(body.toStdString(), nullptr, false);
-        const QStringList names = cfg.is_discarded() ? QStringList() : frigate::parseCameraNames(cfg);
-        const bool ok = !names.isEmpty();
+        using frigate::ErrorKind;
+        const frigate::Fetch<Json> got =
+            frigate::checkServer(host, portv, username.trimmed(), password, 10000);
+        const bool ok = got.ok();
         QString problem, message;
         if (!ok) {
-            problem = error.contains(QStringLiteral("sign-in"), Qt::CaseInsensitive)
-                          ? QStringLiteral("auth")
-                          : error.isEmpty() ? QStringLiteral("protocol") : QStringLiteral("transport");
-            message = !error.isEmpty() ? error
-                      : cfg.is_discarded() ? tr("the address did not answer like a Frigate server")
-                                           : tr("Frigate has no enabled cameras");
+            problem = got.kind == ErrorKind::Auth          ? QStringLiteral("auth")
+                      : got.kind == ErrorKind::Unreachable ? QStringLiteral("transport")
+                                                           : QStringLiteral("protocol");
+            message = got.kind == ErrorKind::BadReply ? tr("the address did not answer like a Frigate server")
+                      : got.kind == ErrorKind::NoCameras ? tr("Frigate has no enabled cameras")
+                                                         : got.error;
         }
-        const QString model = ok ? tr("%n camera(s)", "", names.size()) : QString();
+        const QString model =
+            ok ? tr("%n camera(s)", "", frigate::parseCameraNames(got.value).size()) : QString();
         QMetaObject::invokeMethod(
             this,
             [this, ok, message, model, problem] { emit testDeviceResult(ok, message, QString(), model, problem); },
@@ -1246,22 +1243,17 @@ void DeviceManager::pollFrigate()
             m_frigateListCheckedAt.insert(hostId, now);
         m_pending.addFuture(QtConcurrent::run([this, hostId, host, port, channelOf, online,
                                                plan, readList] {
-            QString error;
-            const QByteArray body = frigate::httpGet(
-                frigate::eventsUrl(host, port, plan.after, plan.initialized ? 50 : 1), 8000, &error);
-            const Json parsed = Json::parse(body.toStdString(), nullptr, false);
-            const bool ok = error.isEmpty() && !parsed.is_discarded() && parsed.is_array();
-            const QVector<frigate::Event> events = ok ? frigate::parseEvents(parsed) : QVector<frigate::Event>();
+            const frigate::Fetch<QVector<frigate::Event>> got = frigate::fetchEvents(
+                host, port, plan.after, plan.initialized ? 50 : 1, 8000);
+            const bool ok = got.ok();
+            const QVector<frigate::Event> events = got.value;
             QStringList listed;
             if (ok && readList) {
-                QString cfgError;
-                const Json cfg = Json::parse(
-                    frigate::httpGet(frigate::configUrl(host, port), 10000, &cfgError).toStdString(),
-                    nullptr, false);
-                if (cfgError.isEmpty() && !cfg.is_discarded())
-                    listed = frigate::parseCameraNames(cfg);
+                const frigate::Fetch<Json> cfg = frigate::fetchConfig(host, port, 10000);
+                if (cfg.ok())
+                    listed = frigate::parseCameraNames(cfg.value);
                 else
-                    qCDebug(lcCore) << "Frigate camera list not read:" << cfgError;
+                    qCDebug(lcCore) << "Frigate camera list not read:" << cfg.error;
             }
             QMetaObject::invokeMethod(
                 this,
