@@ -25,6 +25,7 @@
 #include "ui/SiteMap.h"
 #include "ui/SiteSelection.h"
 #include "ui/SiteBudget.h"
+#include "ui/SelectionSession.h"
 #include "ui/SavedSelections.h"
 #include "ui/PlaybackGroup.h"
 #include "ui/LiveReplay.h"
@@ -219,6 +220,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::SiteMap>("ReolinkApp.Core", 1, 0, "SiteMap");
     qmlRegisterType<rl::SiteSelection>("ReolinkApp.Core", 1, 0, "SiteSelection");
     qmlRegisterType<rl::SiteBudget>("ReolinkApp.Core", 1, 0, "SiteBudget");
+    qmlRegisterType<rl::SelectionSession>("ReolinkApp.Core", 1, 0, "SelectionSession");
     qmlRegisterType<rl::SavedSelections>("ReolinkApp.Core", 1, 0, "SavedSelections");
     qmlRegisterType<rl::PlaybackGroup>("ReolinkApp.Core", 1, 0, "PlaybackGroup");
     qmlRegisterType<rl::LiveReplay>("ReolinkApp.Core", 1, 0, "LiveReplay");

@@ -58,6 +58,7 @@ add_library(reolink_core STATIC
     src/ui/SiteMap.h src/ui/SiteMap.cpp
     src/ui/SiteSelection.h src/ui/SiteSelection.cpp
     src/ui/SiteBudget.h src/ui/SiteBudget.cpp
+    src/ui/SelectionSession.h src/ui/SelectionSession.cpp
     src/ui/SavedSelections.h src/ui/SavedSelections.cpp
     src/ui/PlaybackGroup.h src/ui/PlaybackGroup.cpp
     src/ui/LiveReplay.h src/ui/LiveReplay.cpp
@@ -286,7 +287,7 @@ endforeach()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
-foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection test_sitebudget test_savedselections test_playbackgroup test_bcdownload test_bcmp4writer test_bcclipsave test_eventhistory test_eventfeed test_frigatevod test_eventswitches test_firstswitchoffs test_eventcameralist test_datebar test_unseencounts test_cameranoise test_eventclip test_frameshape test_stillqueue test_fisheyelens test_eventsnapshot test_fisheyedetect test_bcreplay test_frametime test_reverseplay test_livereplay test_panebarrules test_livebuffer test_catchup test_playbackday test_recorderdays test_inbox test_testhooks test_devicesettings test_offlinealerts test_hatransport)
+foreach(t IN ITEMS test_protocol test_database test_singleinstance test_tls test_audio test_talk test_playout test_version test_downloads test_quickreply test_highlights test_frigate test_clipremux test_baichuanchannels test_livestream test_mosaicpacker test_pushevents test_backoff test_livearrangement test_boschtour test_playbacksession test_devicekind test_hostsession test_detections test_sitemap test_siteselection test_sitebudget test_savedselections test_playbackgroup test_bcdownload test_bcmp4writer test_bcclipsave test_eventhistory test_eventfeed test_frigatevod test_eventswitches test_firstswitchoffs test_eventcameralist test_datebar test_unseencounts test_cameranoise test_eventclip test_frameshape test_stillqueue test_fisheyelens test_eventsnapshot test_fisheyedetect test_bcreplay test_frametime test_reverseplay test_livereplay test_panebarrules test_livebuffer test_catchup test_playbackday test_recorderdays test_inbox test_testhooks test_devicesettings test_offlinealerts test_hatransport test_selectionsession)
     qt_add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE reolink_core Qt6::Test)
     add_test(NAME ${t} COMMAND ${t})
