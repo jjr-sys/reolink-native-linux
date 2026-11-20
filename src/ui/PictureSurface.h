@@ -9,7 +9,7 @@ namespace rl {
 
 class FisheyeAims;
 
-// The picture rules of one video pane, once (architecture review, candidate 7): how far it is
+// The picture rules of one video pane, once (architecture review, picture surface): how far it is
 // zoomed and panned and where that stops, when a press has moved far enough to pick the pane
 // up, what shape its picture is, and whether the picture is a fisheye circle drawn through its
 // view. Live View, Playback, the pop-out window and the Events clip player each make one
