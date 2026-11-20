@@ -326,6 +326,10 @@ While the project is pre-1.0, minor versions may still change behaviour.
 - **Internal:** the on-screen check hooks QML reads (`RL_INITIAL_PAGE`, `RL_EVENTS_KEYS`,
   `RL_PLAYBACK_*`, `RL_LIVE_REPLAY`, ...) are one `TestHooks` singleton with their
   documentation, instead of 17 context properties in `main.cpp`.
+- **Internal:** which Frigate history events are filed and which filed rows fetch Frigate's
+  snapshot is planned by a tested `FrigateHistoryPlan`; the same `fetchPictureFor` check
+  decides whether a live report grabs a camera frame. A detection's desktop notice wording
+  moved into a tested `DetectionNotice` (same strings, same translation context).
 - **Internal:** every event reaches the store through one `Inbox` (tested): it decides what
   is stored (switch-offs, retention, a history batch's bursts, the same event, the cap) and
   what is announced. The Events list puts a history sync's rows at their place instead of
