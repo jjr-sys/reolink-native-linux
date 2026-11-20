@@ -29,13 +29,11 @@ Rectangle {
     property bool fisheyeLens: false
     property string fisheyeMode: "fisheye"
     property string cameraKey: ""
-    readonly property bool dewarp: fisheyeLens && fisheyeMode !== "fisheye"
-    onDewarpChanged: { if (dewarp) { zoom = 1.0; panX = 0; panY = 0; } }
+    // The picture rules (zoom, pan, shape, the dewarp decision) live in PictureSurface.
+    readonly property bool dewarp: surface.dewarp
     // Double-click on a turned view puts it back; otherwise the page maximises the pane.
     function resetAimOrMaximize() {
-        if (fisheyeLoader.item && FisheyeAims.aimed(cameraKey, fisheyeMode))
-            FisheyeAims.reset(cameraKey, fisheyeMode);
-        else if (hasSource)
+        if (!surface.resetAim() && hasSource)
             doubleClicked();
     }
     // Sound: the page owns the mute choice and says whether THIS pane is the one
@@ -120,22 +118,8 @@ Rectangle {
     readonly property bool showsPicture: streaming || holding || kept
 
     // The decoded picture's shape (width / height, turned by the rotation), for the mosaic
-    // to remember; 0 until a picture is on screen. Measured as Live View does, ignoring
-    // changes under 3 % so a re-pack resizing the pane doesn't read back as a new shape.
-    readonly property real frameRatio: measuredRatio
-    property real measuredRatio: 0
-    function measureRatio() {
-        var r = video.contentRect;
-        if (!streaming || dewarp || r.width < 2 || r.height < 2)   // a dewarp stretches the frame
-            return;
-        var m = (viewRotation % 180 !== 0) ? r.height / r.width : r.width / r.height;
-        if (!(measuredRatio > 0) || Math.abs(m - measuredRatio) / measuredRatio > 0.03)
-            measuredRatio = m;
-    }
-    Connections {
-        target: video
-        function onContentRectChanged() { root.measureRatio(); }
-    }
+    // to remember; 0 until a picture is on screen (PictureSurface measures it).
+    readonly property real frameRatio: surface.ratio
     property real speed: 1.0
     property int direction: 1
     property string speedText: ""   // "▶ 4×", from the page
@@ -412,9 +396,21 @@ Rectangle {
     Component.onDestruction: player.stop()
 
     // ---- Video with digital zoom (same interaction as a live pane) --------
-    property real zoom: 1.0
-    property real panX: 0
-    property real panY: 0
+    property alias zoom: surface.zoom
+    property alias panX: surface.panX
+    property alias panY: surface.panY
+    PictureSurface {
+        id: surface
+        viewport: Qt.size(video.width, video.height)
+        contentRect: video.contentRect
+        pictureRatio: video.sourceRect.height > 0 ? video.sourceRect.width / video.sourceRect.height : 0
+        rotation: root.viewRotation
+        streaming: root.streaming
+        fisheyeLens: root.fisheyeLens
+        fisheyeMode: root.fisheyeMode
+        cameraKey: root.cameraKey
+        aims: FisheyeAims
+    }
 
     Item {
         id: videoArea
@@ -622,15 +618,7 @@ Rectangle {
         property bool dragging: false
         // Zoomed in, dragging pans the image — the older and more frequent
         // gesture — so a pane can only be picked up at 1× (same rule as live).
-        readonly property bool canDrag: root.hasSource && root.zoom <= 1.0
-
-        // Keep the zoomed footage pinned to the viewport edges.
-        function clampPan() {
-            var mx = Math.max(0, (video.contentRect.width * root.zoom - video.width) / 2);
-            var my = Math.max(0, (video.contentRect.height * root.zoom - video.height) / 2);
-            root.panX = Math.max(-mx, Math.min(mx, root.panX));
-            root.panY = Math.max(-my, Math.min(my, root.panY));
-        }
+        readonly property bool canDrag: root.hasSource && !surface.panning
 
         onClicked: {
             if (dragging)      // the release that ended a drag isn't a click
@@ -652,17 +640,14 @@ Rectangle {
                 lastX = m.x; lastY = m.y;
                 return;
             }
-            if (root.zoom > 1.0) {
-                root.panX += (m.x - lastX);
-                root.panY += (m.y - lastY);
+            if (surface.panning) {
+                surface.panBy(m.x - lastX, m.y - lastY);
                 lastX = m.x; lastY = m.y;
-                clampPan();
                 return;
             }
             if (!canDrag)
                 return;
-            if (!dragging
-                && Math.hypot(m.x - pressX, m.y - pressY) > Theme.dragThreshold) {
+            if (!dragging && surface.pastDragThreshold(m.x - pressX, m.y - pressY)) {
                 dragging = true;
                 paneDrag.Drag.active = true;
             }
@@ -694,10 +679,7 @@ Rectangle {
                 }
                 return;
             }
-            var z = root.zoom * (w.angleDelta.y > 0 ? 1.15 : 0.87);
-            root.zoom = Math.max(1.0, Math.min(8.0, z));
-            if (root.zoom <= 1.0) { root.panX = 0; root.panY = 0; }
-            else clampPan();
+            surface.zoomStep(w.angleDelta.y > 0);
         }
     }
 
@@ -716,7 +698,7 @@ Rectangle {
         acceptedButtons: Qt.RightButton
         enabled: root.fisheyeLens && root.hasSource
         onTapped: (ev) => {
-            viewMenu.aimed = root.dewarp && FisheyeAims.aimed(root.cameraKey, root.fisheyeMode);
+            viewMenu.aimed = surface.aimed();
             viewMenu.popup(ev.position.x, ev.position.y);
         }
     }

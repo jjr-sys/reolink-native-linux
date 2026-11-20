@@ -289,6 +289,20 @@ While the project is pre-1.0, minor versions may still change behaviour.
   `LiveViewPage.qml` and `PlaybackPage.qml` lose their copies of `hdRefusal`,
   `restoreSelection`, pruning, `rowsByKey`, `rememberFrame` and the mosaic settle timers.
 
+- **A flat picture from a fisheye camera is no longer dewarped in Live View and Playback.**
+  Live and Playback now use the Events rule: a picture is drawn through a fisheye view (Quad,
+  Panorama, …) only when it is the camera's square circle. A camera ticked "Fisheye lens" whose
+  picture is not square (a flattened copy, for example) shows as it is instead of a garbled
+  dewarp. Fisheye cameras that send the circle (Lascelles Kitchen, Woorabinda Kitchen) are
+  unchanged, and so are zoom, panning limits and the drag threshold.
+  **Internal:** `PictureSurface` (`src/ui/PictureSurface.{h,cpp}`, QML type) owns zoom, pan
+  clamping, the drag threshold, the measured picture shape and the dewarp / circle decision;
+  `LivePane`, `PlaybackPane`, `PoppedWindow` and `EventClipPlayer` each hold one and lose their
+  copies of `measureRatio`, `clampPan`, the zoom step and the dewarp expression; the panes keep
+  `zoom`/`panX`/`panY` as aliases. The picture's shape for the circle test comes from
+  `video.sourceRect` (valid while dewarping); before a first frame the lens and view decide.
+  `test_picturesurface` (27 cases) covers it through the interface.
+
 - **Bosch pad moves go through Home Assistant's Bosch steer service.** Pressing the pad or
   an arrow key now uses the same move as the Outpost phone app, so a manual move also cancels
   Bosch tracking (as it already stopped a tour). A held direction is sent again every second

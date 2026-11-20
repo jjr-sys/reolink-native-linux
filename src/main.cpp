@@ -36,6 +36,7 @@
 #include "ui/PlaybackDay.h"
 #include "ui/EventFeed.h"
 #include "ui/FrameShape.h"
+#include "ui/PictureSurface.h"
 #include "ui/PaneBarRules.h"
 #include "ui/FisheyeLens.h"
 #include "ui/StillQueue.h"
@@ -232,6 +233,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<rl::PlaybackDay>("ReolinkApp.Core", 1, 0, "PlaybackDay");
     qmlRegisterType<rl::MosaicLayout>("ReolinkApp.Core", 1, 0, "MosaicLayout");
     qmlRegisterType<rl::StillQueue>("ReolinkApp.Core", 1, 0, "StillQueue");
+    qmlRegisterType<rl::PictureSurface>("ReolinkApp.Core", 1, 0, "PictureSurface");
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "FrameShape", &frameShape);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "PaneBarRules", &paneBarRules);
     qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "FisheyeAims", &fisheyeAims);

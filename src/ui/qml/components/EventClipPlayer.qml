@@ -38,11 +38,18 @@ Item {
     property string fisheyeMode: "fisheye"
     property string cameraKey: ""
     signal viewPicked(string view)
-    // A circle drawn through the view, at the view's shape (frameshape, tested).
+    // A circle drawn through the view, at the view's shape (PictureSurface, tested).
     // (Frigate's clips are its flat copy, never a circle.)
-    readonly property bool dewarp: !clip.frigate && FrameShape.dewarps(pictureRatio, fisheyeLens, fisheyeMode)
-    readonly property bool circle: !clip.frigate && FrameShape.isCircle(pictureRatio, fisheyeLens)
-    readonly property real shownRatio: FrameShape.shownRatio(pictureRatio, fisheyeLens, fisheyeMode)
+    readonly property bool dewarp: surface.dewarp
+    readonly property bool circle: surface.circle
+    readonly property real shownRatio: surface.shownRatio
+    PictureSurface {
+        id: surface
+        pictureRatio: root.pictureRatio
+        fisheyeLens: root.fisheyeLens
+        fisheyeMode: root.fisheyeMode
+        flatCopy: clip.frigate
+    }
     readonly property real pictureRatio: {
         const r = (clip.frigate ? mediaVideo : video).sourceRect;
         if (r.width > 0 && r.height > 0)

@@ -6,6 +6,7 @@
 #include "ui/FisheyeLens.h"
 #include "ui/LiveReplay.h"
 #include "ui/PaneBarRules.h"
+#include "ui/PictureSurface.h"
 #include "ui/TestHooks.h"
 
 #include <QGuiApplication>
@@ -59,6 +60,7 @@ private slots:
         qmlRegisterType<PlaybackSession>("ReolinkApp.Core", 1, 0, "PlaybackSession");
         qmlRegisterType<PlaybackGroup>("ReolinkApp.Core", 1, 0, "PlaybackGroup");
         qmlRegisterType<LiveReplay>("ReolinkApp.Core", 1, 0, "LiveReplay");
+        qmlRegisterType<PictureSurface>("ReolinkApp.Core", 1, 0, "PictureSurface");
         qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "Devices", m_devices.get());
         qmlRegisterSingletonInstance("ReolinkApp.Core", 1, 0, "BoschTour", m_bosch.get());
         qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(RL_QML_SOURCE_DIR "/Theme.qml")),
