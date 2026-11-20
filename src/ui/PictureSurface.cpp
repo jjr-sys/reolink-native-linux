@@ -3,8 +3,6 @@
 #include "ui/FisheyeLens.h"
 #include "ui/FrameShape.h"
 
-#include <QtMath>
-
 #include <algorithm>
 #include <cmath>
 
