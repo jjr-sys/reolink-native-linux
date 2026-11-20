@@ -8,6 +8,7 @@
 #include <QVariantList>
 
 #include "device/BoschTracking.h"
+#include "device/HaControlState.h"
 
 #include <functional>
 #include <optional>
@@ -127,7 +128,7 @@ public:
     bool selectionTourRestoring() const { return m_selectionTourSession && !m_selectionTourMode; }
     QString wiperState() const { return m_wiperState; }
     bool wiperOn() const { return m_wiperState == QLatin1String("on"); }
-    bool wiperPending() const { return m_wiperPending; }
+    bool wiperPending() const { return m_wiperControl.pending; }
     QString wiperError() const { return m_wiperError; }
     bool trackingKnown() const { return m_tracking.has_value(); }
     bool trackingReachable() const { return m_trackingReachable; }
@@ -240,7 +241,9 @@ private:
     void resetSteer();
     void refreshPatrol();
     void refreshWiper();
-    void setWiper(const QString &state, bool pending, const QString &error);
+    // Shows state and error; emits when they change or when pendingBefore (the order's pending
+    // before the caller changed it) differs from now.
+    void setWiper(const QString &state, const QString &error, bool pendingBefore);
     void showWiperRead(const QString &state);
     void resetWiper();
     void refreshTracking();
@@ -358,9 +361,7 @@ private:
 
     QString m_wiperState = QStringLiteral("unknown");
     QString m_wiperError;
-    bool m_wiperPending = false;
-    bool m_wiperReadPending = false;
-    quint64 m_wiperRevision = 0;   // each press; a read sent before one is dropped
+    HaControlState m_wiperControl;   // a press, a poll read, and which of the two is newer
 
     std::optional<Tracking> m_tracking;                 // the last read (or order answer)
     std::optional<TrackingSettings> m_trackingDraft;    // the settings being edited

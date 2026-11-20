@@ -110,6 +110,10 @@ _Avoid_: HA client, connection
 A test adapter for the Home Assistant transport that records requests and lets the test choose when and how each is answered.
 _Avoid_: mock server
 
+**Control state**:
+The order-and-read-back bookkeeping of a Bosch control that Home Assistant owns (the wiper, tracking): whether an order is out, whether a poll read is out, and a revision that says which answer is newer. An order bumps the revision when sent and when answered; a read keeps the revision it was sent at and is dropped if that changed. In code, `HaControlState`.
+_Avoid_: HA-backed control helper, revision counter
+
 ## Playback session
 
 **Playback session**:
