@@ -93,7 +93,6 @@ add_library(reolink_core STATIC
     src/device/Inbox.h src/device/Inbox.cpp
     src/device/OfflineAlerts.h src/device/OfflineAlerts.cpp
     src/device/FirstConnect.h src/device/FirstConnect.cpp
-
     src/device/FrigateHistoryPlan.h src/device/FrigateHistoryPlan.cpp
     src/device/DetectionNotice.h src/device/DetectionNotice.cpp
     src/device/RecorderDays.h src/device/RecorderDays.cpp
