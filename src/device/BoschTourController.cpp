@@ -729,14 +729,12 @@ void BoschTourController::refreshPatrol()
 
 void BoschTourController::refreshWiper()
 {
-    if (!configured() || m_wiperReadPending || m_wiperPending)
+    if (!configured() || m_wiperControl.busy())
         return;
-    m_wiperReadPending = true;
-    const quint64 revision = m_wiperRevision;
+    const quint64 revision = m_wiperControl.beginRead();
     request(QUrl(m_endpoint + QStringLiteral("/api/states/") + kWiperEntity), m_token, {},
             [this, revision](int status, const QByteArray &body, const QString &networkError) {
-        m_wiperReadPending = false;
-        if (revision != m_wiperRevision)
+        if (!m_wiperControl.endRead(revision))
             return;   // a press since: its answer decides
         if (status == 401 || status == 403) {
             operationFailed(QStringLiteral("Read the Bosch wiper"), status, body, networkError);
@@ -758,22 +756,24 @@ void BoschTourController::refreshWiper()
 
 bool BoschTourController::toggleWiper()
 {
-    if (!configured() || !m_connected || m_wiperPending)
+    if (!configured() || !m_connected || m_wiperControl.pending)
         return false;
     const QString want = wiperOn() ? QStringLiteral("off") : QStringLiteral("on");
-    ++m_wiperRevision;
-    setWiper(m_wiperState, true, {});
+    const quint64 sent = m_wiperControl.beginOrder();
+    setWiper(m_wiperState, {}, false);
     callService(QStringLiteral("bosch_camera_wiper"), {{QStringLiteral("state"), want}}, true,
                 false,
-                [this](int status, const QByteArray &body, const QString &networkError) {
-        ++m_wiperRevision;   // a read sent while the order was out is older than this answer
+                [this, sent](int status, const QByteArray &body, const QString &networkError) {
+        const bool pendingBefore = m_wiperControl.pending;
+        m_wiperControl.endOrder(sent);   // a read sent while it was out is older than this answer
         const QJsonObject response = serviceResponse(body);
         if (status == 200 && response.value(QStringLiteral("ok")).toBool(false)) {
             const QString state = response.value(QStringLiteral("state")).toString();
-            setWiper(state == QLatin1String("on") ? state : QStringLiteral("off"), false, {});
+            setWiper(state == QLatin1String("on") ? state : QStringLiteral("off"), {},
+                     pendingBefore);
             return;
         }
-        setWiper(m_wiperState, false, kWiperNoResponse);
+        setWiper(m_wiperState, kWiperNoResponse, pendingBefore);
         if (status == 401 || status == 403) {
             operationFailed(QStringLiteral("Bosch wiper"), status, body, networkError);
             return;
@@ -786,12 +786,11 @@ bool BoschTourController::toggleWiper()
     return true;
 }
 
-void BoschTourController::setWiper(const QString &state, bool pending, const QString &error)
+void BoschTourController::setWiper(const QString &state, const QString &error, bool pendingBefore)
 {
-    if (m_wiperState == state && m_wiperPending == pending && m_wiperError == error)
+    if (m_wiperState == state && m_wiperControl.pending == pendingBefore && m_wiperError == error)
         return;
     m_wiperState = state;
-    m_wiperPending = pending;
     m_wiperError = error;
     emit wiperChanged();
 }
@@ -799,27 +798,26 @@ void BoschTourController::setWiper(const QString &state, bool pending, const QSt
 void BoschTourController::showWiperRead(const QString &state)
 {
     // "Didn't respond" is about the state shown then: a change since (a phone, the auto-off)
-    // retires it.
-    setWiper(state, false, state == m_wiperState ? m_wiperError : QString());
+    // retires it. No order is out: a read is sent only when none is, and one sent since
+    // would have dropped this read.
+    setWiper(state, state == m_wiperState ? m_wiperError : QString(), m_wiperControl.pending);
 }
 
 void BoschTourController::resetWiper()
 {
-    ++m_wiperRevision;
-    m_wiperReadPending = false;
-    setWiper(kWiperUnknown, false, {});
+    const bool pendingBefore = m_wiperControl.pending;
+    m_wiperControl.reset();
+    setWiper(kWiperUnknown, {}, pendingBefore);
 }
 
 void BoschTourController::refreshTracking()
 {
-    if (!configured() || m_trackingReadPending || m_trackingPending)
+    if (!configured() || m_trackingControl.busy())
         return;
-    m_trackingReadPending = true;
-    const quint64 revision = m_trackingRevision;
+    const quint64 revision = m_trackingControl.beginRead();
     callService(QStringLiteral("bosch_camera_get_tracking"), {}, true, false,
                 [this, revision](int status, const QByteArray &body, const QString &networkError) {
-        m_trackingReadPending = false;
-        if (revision != m_trackingRevision)
+        if (!m_trackingControl.endRead(revision))
             return;   // an order or a steer since: it decides
         if (status == 401 || status == 403) {
             operationFailed(QStringLiteral("Read Bosch tracking"), status, body, networkError);
@@ -839,16 +837,14 @@ void BoschTourController::refreshTracking()
 void BoschTourController::orderTracking(const QString &service, const QJsonObject &data,
                                         const QString &action, std::function<void(bool)> done)
 {
-    m_trackingPending = true;
-    const quint64 sent = ++m_trackingRevision;
+    const quint64 sent = m_trackingControl.beginOrder();
     emit trackingChanged();
     callService(service, data, true, false,
                 [this, action, sent, done = std::move(done)](int status, const QByteArray &body,
                                                              const QString &networkError) {
-        m_trackingPending = false;
         // A confirmed steer or tour start since this was sent cancelled tracking after it.
-        const bool overtaken = m_trackingRevision != sent;
-        ++m_trackingRevision;   // a read sent while the order was out is older than this answer
+        // Either way, a read sent while the order was out is older than this answer.
+        const bool overtaken = m_trackingControl.endOrder(sent);
         if (status == 401 || status == 403) {
             emit trackingChanged();
             operationFailed(action, status, body, networkError);
@@ -901,7 +897,7 @@ void BoschTourController::acceptTracking(const Tracking &read)
 
 void BoschTourController::markTrackingOff()
 {
-    ++m_trackingRevision;
+    m_trackingControl.invalidate();
     if (!trackingOn())
         return;
     Tracking off = *m_tracking;
@@ -932,12 +928,10 @@ void BoschTourController::noteTourStopped(bool wasTouring)
 void BoschTourController::resetTracking()
 {
     const QString tourBefore = tourStatus();
-    ++m_trackingRevision;
+    m_trackingControl.reset();
     m_tracking.reset();
     m_trackingDraft.reset();
     m_trackingReachable = false;
-    m_trackingPending = false;
-    m_trackingReadPending = false;
     m_tourStoppedForTracking = false;
     emit trackingChanged();
     if (tourStatus() != tourBefore)
@@ -963,13 +957,13 @@ bool BoschTourController::trackingDirty() const
 
 bool BoschTourController::trackingEditable() const
 {
-    return m_connected && m_trackingReachable && m_trackingDraft && !m_trackingPending
+    return m_connected && m_trackingReachable && m_trackingDraft && !m_trackingControl.pending
            && !trackingOn();
 }
 
 bool BoschTourController::trackingCanSwitch() const
 {
-    if (!m_connected || m_trackingPending || !m_tracking)
+    if (!m_connected || m_trackingControl.pending || !m_tracking)
         return false;
     return trackingOn() || trackingWhyNot().isEmpty();
 }
@@ -978,7 +972,7 @@ QString BoschTourController::trackingWhyNot() const
 {
     if (!m_connected)
         return QStringLiteral("Home Assistant is disconnected");
-    if (m_trackingPending)
+    if (m_trackingControl.pending)
         return QStringLiteral("Waiting for the camera…");
     if (trackingOn())
         return {};
@@ -996,7 +990,7 @@ QString BoschTourController::trackingNote() const
 {
     if (!m_tracking)
         return QStringLiteral("Tracking service unavailable");
-    if (m_trackingPending)
+    if (m_trackingControl.pending)
         return QStringLiteral("Waiting for the camera…");
     if (!m_trackingReachable)
         return QStringLiteral("Settings unavailable until the camera reconnects.");
@@ -1035,7 +1029,7 @@ bool BoschTourController::saveTracking()
 
 bool BoschTourController::switchTracking(bool on)
 {
-    if (!configured() || !m_connected || m_trackingPending || on == trackingOn())
+    if (!configured() || !m_connected || m_trackingControl.pending || on == trackingOn())
         return false;
     if (on && !trackingCanSwitch()) {
         setMessage(trackingWhyNot());

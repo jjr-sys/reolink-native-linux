@@ -50,6 +50,7 @@ add_library(reolink_core STATIC
     src/protocol/WebSocketFrames.h
     src/device/BoschTourController.h src/device/BoschTourController.cpp
     src/device/BoschTracking.h src/device/BoschTracking.cpp
+    src/device/HaControlState.h
     src/device/HomeAssistantTransport.h src/device/HomeAssistantTransport.cpp
     src/device/Highlights.h src/device/Highlights.cpp
     src/ui/MosaicPacker.h src/ui/MosaicPacker.cpp
@@ -301,6 +302,13 @@ endforeach()
 # test_tls stands up a TLS server and drives a real FFmpeg open on a worker
 # thread; it needs longer than the default and its own network permission.
 set_tests_properties(test_tls PROPERTIES TIMEOUT 90)
+
+# The Bosch controls' order / read-back state (HaControlState), on its own line so the list
+# above stays untouched.
+qt_add_executable(test_hacontrolstate tests/test_hacontrolstate.cpp)
+target_link_libraries(test_hacontrolstate PRIVATE reolink_core Qt6::Test)
+add_test(NAME test_hacontrolstate COMMAND test_hacontrolstate)
+set_tests_properties(test_hacontrolstate PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 qt_add_executable(test_livestreamqml tests/test_livestreamqml.cpp)
 target_link_libraries(test_livestreamqml PRIVATE reolink_core Qt6::Test Qt6::QuickControls2)
