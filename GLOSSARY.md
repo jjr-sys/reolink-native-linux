@@ -189,3 +189,7 @@ _Avoid_: duplicate
 **Status row**:
 The stored Online or Offline event a connectivity change writes for each camera it touched. Status can't be switched off.
 _Avoid_: health event
+
+**First connect**:
+A host's first validation of this run, and its first listing of cameras. What they find down (the host unreachable, cameras offline) and a host found unreachable then being listed after all are told to the offline alerts only, never filed: they are not changes. A refused login is not "down". Every later outcome is a change, which the poll reports.
+_Avoid_: start-up check, initial state
