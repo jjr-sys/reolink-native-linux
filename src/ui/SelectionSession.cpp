@@ -97,7 +97,6 @@ void SelectionSession::setLarge(const QStringList &keys)
 
 void SelectionSession::start()
 {
-    m_started = true;
     restore();
     const qint64 t = now();
     m_pruneDue = t + kPruneMs;

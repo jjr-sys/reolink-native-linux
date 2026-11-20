@@ -78,7 +78,6 @@ class SelectionSession : public QObject
 
 public:
     static constexpr int kPruneMs = 8000;
-    static constexpr double kUnknownRatio = 16.0 / 9.0;
 
     explicit SelectionSession(QObject *parent = nullptr);
 
@@ -190,7 +189,7 @@ private:
     std::function<qint64()> m_clock;
     QTimer m_alarm;
     qint64 m_waitDue = 0, m_pruneDue = 0, m_settleDue = 0;   // 0: not pending
-    bool m_started = false, m_waitOver = true, m_seedPending = false;
+    bool m_waitOver = true, m_seedPending = false;
 
     mutable bool m_rowsValid = false;
     mutable QStringList m_keyByRow;
