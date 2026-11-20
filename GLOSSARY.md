@@ -100,6 +100,12 @@ _Avoid_: screen
 A camera in the saved arrangement whose host has not yet reported it. Its pane is held for it, and nothing is saved over the arrangement meanwhile, until it arrives or the wait is given up.
 _Avoid_: missing camera
 
+## Camera selection
+
+**Selection session**:
+One page's (Live View or Playback) whole handling of the cameras picked on the Site tabs: the selection, its Site budget, the stored selection and its one-time migration, pruning of cameras that are gone, each camera's remembered picture shape, and the mosaic panes in pane order. The page keeps only its transport. Live's launch wait, the gather time before a re-pack and whether a selection change re-packs at once are its parameters.
+_Avoid_: page state, selection store
+
 ## Home Assistant seam (Bosch controls)
 
 **Home Assistant transport**:

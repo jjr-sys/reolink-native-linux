@@ -273,6 +273,22 @@ While the project is pre-1.0, minor versions may still change behaviour.
 
 ### Changed
 
+- **Live View and Playback share one camera-selection session.** No change to what you see.
+  Two small differences were smoothed out: Live now waits for the device list to be still
+  (8 s after the last camera arrives or leaves, not only after one leaves) before dropping
+  cameras of a removed recorder, as Playback always did; and a fisheye camera's card in
+  Live's Site drawer shows its chosen view's shape before its pane has measured it, as
+  Playback's already did.
+  **Internal:** `SelectionSession.{h,cpp}` (`test_selectionsession`, 30 tests): owns the page's
+  `SiteSelection` and `SiteBudget`, the stored selection and its first-launch migration, pruning
+  (`pruned()` for Playback's bare-stream swap), the device rows by camera key (`rowOf`,
+  `keyOfRow`, `stepFrom`), the remembered shapes (`noteFrame`, `ratioOf`), the mosaic `panes`
+  and the HD refusal text. Time is a passed-in clock acted on in `tick()`. Parameters keep what
+  differs: Live's 8 s launch wait, first-four seeding, 500 ms gather time and immediate
+  re-pack on a selection change, against Playback's 300 ms and gathered change.
+  `LiveViewPage.qml` and `PlaybackPage.qml` lose their copies of `hdRefusal`,
+  `restoreSelection`, pruning, `rowsByKey`, `rememberFrame` and the mosaic settle timers.
+
 - **Bosch pad moves go through Home Assistant's Bosch steer service.** Pressing the pad or
   an arrow key now uses the same move as the Outpost phone app, so a manual move also cancels
   Bosch tracking (as it already stopped a tour). A held direction is sent again every second

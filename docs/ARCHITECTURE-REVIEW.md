@@ -574,6 +574,36 @@ because T's saved route waits to be restored.
 
 Revert: the review-fix commit after `c65a4c1`, then `c65a4c1`.
 
+### Feature: one camera-selection session for Live View and Playback
+
+**Module.** `SelectionSession` (`src/ui/SelectionSession.{h,cpp}`, QML `SelectionSession`,
+`test_selectionsession`) owns what both pages did with the Site-tab selection: its own
+`SiteSelection` and `SiteBudget` (exposed as `selection` and `budget`), the stored selection
+and its one-time migration from the old grid, pruning, the cameras' remembered shapes (the
+shared `[mosaicShapes]` store), the device rows by camera key, the mosaic `panes` in pane
+order, and the HD refusal wording. **Seam:** the device model (roles `hostId`, `channel`,
+`rotationOverride`, `isFisheye`, `viewMode`, and a `listedCameras()` invokable if it has one)
+and the clock. The clock is passed in as a function (default wall time) and acted on in
+`tick()`; the `QTimer` inside is only the alarm for the next deadline (as `OfflineAlerts` and
+`EventManager`). Tests drive a scripted model and a variable clock and never spin the event
+loop. Settings: like `BoschTourController` the module reads and writes `QSettings` itself
+(groups `liveSelection`, `playbackSelection`, the old grids, `mosaicShapes`); the test points
+`QSettings` at a temporary folder.
+
+**Per-page parameters** (kept because the pages differ on purpose or no ticket says they
+should not): `waitMs` (Live 8000, the launch wait; Playback 0), `seedCount` (Live 4),
+`gridPresetKey` (Live `preset`, Playback fixed 4), `settleMs` (Live 500, Playback 300),
+`settleOnSelection` (Playback re-packs a selection change after the gather time, Live at once).
+
+**Unified (drift treated as a bug or an accident):** one `rowOf` index kept right by the model's
+signals (was rebuilt per call in 5 places); prune countdown restarts on a row insert as well as
+a removal, and starts at launch, in both pages (Live did it only on removal and at the end of
+its wait); one shape rule: a fisheye camera's drawer card shows its view's shape in Live too
+(Live showed the raw picture until the pane measured), and a pane's rotation or view change
+re-packs in both (Live through a per-pane binding, Playback through two handlers).
+
+Revert: `git revert` the module commit and the two page commits in reverse order.
+
 ### Not built
 
 - **3c recorder media module:** day search built (above); DON'T for stream opening (one
